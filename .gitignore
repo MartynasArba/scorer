@@ -4,11 +4,15 @@ __pycache__/
 *$py.class
 
 #large files
-data/
-scorer/models/
+proj_data/
+*.pt
+*.pth
+*.npz
+*.pkl
+*.json
+*.txt
+*.csv
 
-#examples, unnecessary
-brant_examples/
 
 # C extensions
 *.so
