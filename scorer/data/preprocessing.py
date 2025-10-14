@@ -7,14 +7,14 @@ def from_Oslo_csv(path, sep = '\\'):
     """
     Converts Oslo .csv to pickle 
     """
-    xpath = path.split('\\')[:]
+    xpath = path.split(sep)[:]
     xpath[-2] = 'processed'
-    xpath = "\\".join(xpath)
+    xpath = sep.join(xpath)
     xpath = xpath[:-4] + '_X.pkl'
     
-    ypath = path.split('\\')[:]
+    ypath = path.split(sep)[:]
     ypath[-2] = 'processed'
-    ypath = "\\".join(ypath)
+    ypath = sep.join(ypath)
     ypath = ypath[:-4] + '_y.pkl'
     
     data = pd.read_csv(path)

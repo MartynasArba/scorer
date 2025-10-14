@@ -2,25 +2,23 @@
 import sys
 from PyQt5.QtWidgets import QApplication
 
-from data.loaders import SleepSignals
-from gui.main_window import SleepGUI
+from gui.main_window import SleepWindow
 # from data.preprocessing import from_Oslo_csv
 
 #load and chop data
 # path = r'data\raw\trial_1_mouse_b1aqm2.csv'
 # from_Oslo_csv(path)
 
-data_path = r'C:\Users\marty\Projects\scorer\data\processed\trial_1_mouse_b1aqm2_X.pkl'
-score_path = r'C:\Users\marty\Projects\scorer\data\processed\trial_1_mouse_b1aqm2_y.pkl'
+# data_path = r'C:\Users\marty\Projects\scorer\proj_data\processed\trial_1_mouse_b1aqm2_X.pkl'
+# score_path = r'C:\Users\marty\Projects\scorer\proj_data\processed\trial_1_mouse_b1aqm2_y.pkl'
 
 app = QApplication(sys.argv)
-dataset = SleepSignals(data_path = data_path, score_path = score_path, augment=False, compute_spectrogram=True)
-gui = SleepGUI(dataset)
+gui = SleepWindow(dataset = None)
 gui.show()
 sys.exit(app.exec_())
 
 #final workflow should be this:
-#1. chop data
+#1. chop data - added kinda
 #2. get predictions by some model
 #3. manually go through and confirm/deny
 #4. quality of life - autosaving, text file saving, track what scored what, etc
@@ -33,6 +31,7 @@ sys.exit(app.exec_())
 #add location bar
 #metadata display
 # jump to next unscored sample button
+# scale to more channels
 
 #add scoring part:
 # choice buttons or dropdown to select sleep stage for current sample - also highlight current sample
