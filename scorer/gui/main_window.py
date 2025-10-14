@@ -5,6 +5,7 @@ from PyQt5.QtWidgets import (
 
 import torch
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+import matplotlib.pyplot as plt
 
 from gui.plots import plot_signals, plot_spectrogram
 
@@ -15,6 +16,10 @@ class SleepGUI(QMainWindow):
         self.current_idx = 0
         self.scale = 1
 
+        #plotting params
+        self.ecog_ylim = [dataset.q01_0.item(), dataset.q99_0.item()]
+        self.emg_ylim = [dataset.q01_1.item(), dataset.q99_1.item()]
+        
         self.setWindowTitle("Viewer")
         self.setGeometry(100, 100, 1200, 800)
 
@@ -87,7 +92,7 @@ class SleepGUI(QMainWindow):
         # Handle tuple (signals, spectrogram)
         if isinstance(sample, tuple):
             signals, spect = sample
-            fig = plot_signals(signals.to("cpu"), label)
+            fig = plot_signals(signals.to("cpu"), label, ecog_ylim = self.ecog_ylim, emg_ylim = self.emg_ylim)
             fig2 = plot_spectrogram(spect.to("cpu"))
             figs = [fig, fig2]
         else:
@@ -105,6 +110,7 @@ class SleepGUI(QMainWindow):
             canvas = FigureCanvas(fig)
             self.canvas_layout.addWidget(canvas)
             canvas.draw()
+            plt.close(fig) #close fig after embedding
 
         self.status_label.setText(f"Index {self.current_idx}, Scale {self.scale}")
 
