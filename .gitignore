@@ -13,6 +13,8 @@ proj_data/
 *.txt
 *.csv
 
+#coding env
+.vscode
 
 # C extensions
 *.so
