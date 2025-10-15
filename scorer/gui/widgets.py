@@ -1,8 +1,10 @@
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QInputDialog, QLabel,
-    QFileDialog
+    QFileDialog, QSlider
 )
+
+from PyQt5 import QtCore
 
 import torch
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -21,6 +23,9 @@ class SleepGUI(QWidget):
         
         self.ecog_ylim = [0, 0]
         self.emg_ylim = [0, 0]
+        self.ecog_ylim_defaults = [0, 0]
+        self.emg_ylim_defaults = [0, 0]
+        self.yscale = 1
         
         layout = QVBoxLayout(self)
 
@@ -32,39 +37,61 @@ class SleepGUI(QWidget):
         control_layout = QHBoxLayout()
         layout.addLayout(control_layout)
         
-        btn_load = QPushButton("Load File")
+        #Sliders
+        slider_layout = QVBoxLayout()
+        layout.addLayout(slider_layout)
+        
+        btn_load = QPushButton("load file")
         btn_load.clicked.connect(self.select_dataset)
         control_layout.addWidget(btn_load)
 
-        btn_prev = QPushButton("Prev")
+        btn_prev = QPushButton("prev frame")
         btn_prev.clicked.connect(self.prev)
         control_layout.addWidget(btn_prev)
 
-        btn_next = QPushButton("Next")
+        btn_next = QPushButton("next frame")
         btn_next.clicked.connect(self.next)
         control_layout.addWidget(btn_next)
 
-        btn_jump = QPushButton("Jump")
+        btn_jump = QPushButton("jump to frame")
         btn_jump.clicked.connect(self.jump)
         control_layout.addWidget(btn_jump)
 
-        btn_plus = QPushButton("+ Scale")
+        btn_plus = QPushButton("+ time scale")
         btn_plus.clicked.connect(self.increase_scale)
         control_layout.addWidget(btn_plus)
 
-        btn_minus = QPushButton("- Scale")
+        btn_minus = QPushButton("- time scale")
         btn_minus.clicked.connect(self.decrease_scale)
         control_layout.addWidget(btn_minus)
+        
+        btn_y_plus = QPushButton("+ y scale")
+        btn_y_plus.clicked.connect(self.increase_yscale)
+        control_layout.addWidget(btn_y_plus)
+
+        btn_y_minus = QPushButton("- y scale")
+        btn_y_minus.clicked.connect(self.decrease_yscale)
+        control_layout.addWidget(btn_y_minus)
+        
+        self.slider_yscale = QSlider(value = 100, minimum = 5, maximum = 195, singleStep = 5, tracking = True)
+        self.slider_yscale.setOrientation(QtCore.Qt.Horizontal)
+        self.slider_yscale.valueChanged.connect(self.change_yscale)
+        self.yscale_label = QLabel("Y scale: 1")
+        # slider_yscale.valueChanged.connect(lambda v: self.yscale_label.setText(f"Y scale: {v/100}"))
+        slider_layout.addWidget(self.yscale_label)
+        slider_layout.addWidget(self.slider_yscale)
+       
+       
+        self.slider_frame = QSlider(value = 0, minimum = 0, maximum = 100, singleStep = 1, tracking = True)
+        self.slider_frame.setOrientation(QtCore.Qt.Horizontal)
+        self.slider_frame.valueChanged.connect(self.frame_slider_func)
+        self.slider_frame_label = QLabel("Frame: 0")
+        # self.slider_frame.valueChanged.connect(lambda v: self.slider_frame_label.setText(f"Frame: {v}"))
+        slider_layout.addWidget(self.slider_frame_label)
+        slider_layout.addWidget(self.slider_frame)
 
         self.status_label = QLabel("Ready")
         layout.addWidget(self.status_label)
-        
-        if self.dataset:
-            #set plotting params
-            self.ecog_ylim = [dataset.q01_0.item(), dataset.q99_0.item()]
-            self.emg_ylim = [dataset.q01_1.item(), dataset.q99_1.item()]
-            #start plotting
-            self.update_plot()
     
     def select_dataset(self):
         file_name, _ = QFileDialog.getOpenFileName(self, caption = "Select file to chop", directory = ".", filter = "Pickle files (*.pkl)")
@@ -77,6 +104,17 @@ class SleepGUI(QWidget):
                 self.scale = 1
                 self.update_plot()
                 self.status_label.setText(f"Loaded: {file_name}")
+                
+                self.ecog_ylim = [self.dataset.q01_0.item(), self.dataset.q99_0.item()]
+                self.emg_ylim = [self.dataset.q01_1.item(), self.dataset.q99_1.item()]
+                self.ecog_ylim_defaults = self.ecog_ylim.copy()
+                self.emg_ylim_defaults = self.emg_ylim.copy()
+                
+                self.slider_frame.setMaximum(len(self.dataset))
+                self.slider_frame.setValue(0)
+                
+                #start plotting
+                self.update_plot()
                 
             except Exception as e:
                 self.status_label.setText(f"Error loading file: {e}")
@@ -133,7 +171,18 @@ class SleepGUI(QWidget):
             canvas.draw()
             plt.close(fig) #close fig after embedding
 
-        self.status_label.setText(f"Index {self.current_idx}, Scale {self.scale}")
+        #update sliders and labels
+        self.slider_frame.blockSignals(True)
+        self.slider_yscale.blockSignals(True)
+
+        self.status_label.setText(f"frame index: {self.current_idx}, time scale: {self.scale} frames; y scale: {self.yscale}")
+        self.slider_frame.setValue(self.current_idx)
+        self.slider_frame_label.setText(f"frame: {self.current_idx}")
+        self.slider_yscale.setValue(int(self.yscale * 100))
+        self.yscale_label.setText(f"Y scale: {self.yscale}")
+
+        self.slider_frame.blockSignals(False)
+        self.slider_yscale.blockSignals(False)
 
     def next(self):
         self.current_idx = min(self.current_idx + 1, len(self.dataset) - 1)
@@ -148,7 +197,45 @@ class SleepGUI(QWidget):
         if ok and 0 <= idx < len(self.dataset):
             self.current_idx = idx
             self.update_plot()
+            
+    def frame_slider_func(self, value):
+        if 0 <= value < len(self.dataset):
+            self.current_idx = value
+            self.update_plot()
+            
+    def change_yscale(self, value):
+        self.yscale = value * 0.01
+        self.ecog_ylim[0] = (self.ecog_ylim_defaults[0] * self.yscale)
+        self.ecog_ylim[1] = (self.ecog_ylim_defaults[1] * self.yscale)
+        self.emg_ylim[0] = (self.emg_ylim_defaults[0] * self.yscale)
+        self.emg_ylim[1] = (self.emg_ylim_defaults[1] * self.yscale)
+        
+        self.update_plot()
+    
+    def increase_yscale(self):     
+        self.yscale += 0.05
 
+        self.ecog_ylim[0] = (self.ecog_ylim_defaults[0] * self.yscale)
+        self.ecog_ylim[1] = (self.ecog_ylim_defaults[1] * self.yscale)
+        self.emg_ylim[0] = (self.emg_ylim_defaults[0] * self.yscale)
+        self.emg_ylim[1] = (self.emg_ylim_defaults[1] * self.yscale)
+        
+        self.update_plot()
+        
+    def decrease_yscale(self):
+        self.yscale -= 0.05
+        
+        if self.yscale > 0:
+            self.ecog_ylim[0] = (self.ecog_ylim_defaults[0] * self.yscale)
+            self.ecog_ylim[1] = (self.ecog_ylim_defaults[1] * self.yscale)
+            self.emg_ylim[0] = (self.emg_ylim_defaults[0] * self.yscale)
+            self.emg_ylim[1] = (self.emg_ylim_defaults[1] * self.yscale)
+            
+            self.update_plot()
+        
+        else:
+            pass
+    
     def increase_scale(self):
         self.scale += 1
         self.update_plot()

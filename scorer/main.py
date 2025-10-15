@@ -18,17 +18,16 @@ gui.show()
 sys.exit(app.exec_())
 
 #final workflow should be this:
-#1. chop data - added kinda
+#1. chop data - added
 #2. get predictions by some model
 #3. manually go through and confirm/deny
 #4. quality of life - autosaving, text file saving, track what scored what, etc
 
 #viewer part:
+#split label/slider update into another function
+#add reset button
 #add fft or specific power options instead of spect, ideally all, then don't generate spectrograms
-#add ylim adjustment with reset option
 #add keyboard control
-#add direct scale control
-#add location bar
 #metadata display
 # jump to next unscored sample button
 # scale to more channels
