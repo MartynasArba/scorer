@@ -19,6 +19,8 @@ from data.loaders import SleepSignals
 class SleepGUI(QWidget):
     def __init__(self, dataset = None):
         super().__init__()
+        self.path = ''
+        
         self.dataset = dataset
         self.current_idx = 0
         self.scale = 1
@@ -185,7 +187,6 @@ class SleepGUI(QWidget):
             return torch.cat(samples, dim = 0), labels
         
     def label_data(self, value):
-        
         if self.label_whole_screen:
             self.states[self.current_idx:self.current_idx + self.scale] = value 
         else:

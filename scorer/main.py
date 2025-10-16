@@ -9,25 +9,15 @@ gui = SleepWindow(dataset = None)
 gui.show()
 sys.exit(app.exec_())
 
-#final workflow should be this:
-#1. chop data - added
-#2. get predictions by some model
-#3. manually go through and confirm/deny
-#4. quality of life - autosaving, text file saving, track what scored what, etc
+# add a reset settings button
+# this should be done in the dataset class:
+# add fft or specific power options instead of spect, ideally all, then don't generate spectrograms
 
-#viewer part:
-#split label/slider update into another function
-#add reset button
-#add fft or specific power options instead of spect, ideally all, then don't generate spectrograms
-#add keyboard control
-#metadata display
+# add an option to do metadata
 # jump to next unscored sample button
 # scale to more channels
 
-#add scoring part:
-# choice buttons or dropdown to select sleep stage for current sample - also highlight current sample
-# add an option to do scoring export to JSON or text file
-# keyboard shortcuts for quick scoring (1-4 for Wake/NREM/IS/REM)
+# add an option to do scoring export to JSON or text file, or load/save custom annotations generally
 
 # Save progress automatically every N scores
 # Restore last position on app startup
@@ -47,4 +37,11 @@ sys.exit(app.exec_())
 # Export/Analysis: Generate hypnograms, sleep-wake cycles, spectral analysis reports
 
 #change from_Oslo_data when loading
-#relevant to change data
+#most relevant when loading other data, but can be adjusted based on my recordings
+
+
+#final workflow should be this:
+#1. chop data - added
+#2. get predictions by some model
+#3. manually go through and confirm/deny
+#4. quality of life - autosaving, text file saving, track what scored what, etc

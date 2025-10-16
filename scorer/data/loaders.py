@@ -1,3 +1,8 @@
+# TODO: add other preprocessing options instead of Spectrogram
+# sum power, power in specific spectra, fft -> what is needed to  make decisions
+# think about scaling and calculation, whether to do it while loading or while retrieving samples
+# write as functions and import from preprocessing
+
 import random
 import numpy as np
 import torch
