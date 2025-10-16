@@ -3,14 +3,6 @@ import sys
 from PyQt5.QtWidgets import QApplication
 
 from gui.main_window import SleepWindow
-# from data.preprocessing import from_Oslo_csv
-
-#load and chop data
-# path = r'data\raw\trial_1_mouse_b1aqm2.csv'
-# from_Oslo_csv(path)
-
-# data_path = r'C:\Users\marty\Projects\scorer\proj_data\processed\trial_1_mouse_b1aqm2_X.pkl'
-# score_path = r'C:\Users\marty\Projects\scorer\proj_data\processed\trial_1_mouse_b1aqm2_y.pkl'
 
 app = QApplication(sys.argv)
 gui = SleepWindow(dataset = None)
@@ -53,3 +45,6 @@ sys.exit(app.exec_())
 # ML Integration: Show model predictions alongside user scoring; confidence visualizations
 # Signal Preprocessing: On-the-fly filtering, artifact detection, reference subtraction
 # Export/Analysis: Generate hypnograms, sleep-wake cycles, spectral analysis reports
+
+#change from_Oslo_data when loading
+#relevant to change data

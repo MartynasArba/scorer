@@ -1,7 +1,8 @@
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QInputDialog, QLabel,
-    QFileDialog, QSlider
+    QFileDialog, QSlider, QRadioButton, 
+    QButtonGroup, QCheckBox
 )
 
 from PyQt5 import QtCore
@@ -9,9 +10,10 @@ from PyQt5 import QtCore
 import torch
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 import matplotlib.pyplot as plt
+import numpy as np
 
 from gui.plots import plot_signals, plot_spectrogram
-from data.preprocessing import from_Oslo_csv
+from data.preprocessing import from_Oslo_csv, from_non_annotated_csv
 from data.loaders import SleepSignals
 
 class SleepGUI(QWidget):
@@ -27,42 +29,55 @@ class SleepGUI(QWidget):
         self.emg_ylim_defaults = [0, 0]
         self.yscale = 1
         
+        #empty copy array to store and load data
+        self.states = np.array([], dtype = int)
+        self.label_whole_screen = False
+        
         layout = QVBoxLayout(self)
 
-        # Canvas area (for matplotlib plots)
+        # canvas area for matplotlib plots
         self.canvas_layout = QVBoxLayout()
         layout.addLayout(self.canvas_layout)
 
-        # Controls       
+        #labeling layout
+        self.labeling_layout = QHBoxLayout()
+        layout.addLayout(self.labeling_layout)
+
+        # controls       
         control_layout = QHBoxLayout()
         layout.addLayout(control_layout)
         
-        #Sliders
+        #sliders
         slider_layout = QVBoxLayout()
         layout.addLayout(slider_layout)
-        
+    
+        # navigation
         btn_load = QPushButton("load file")
         btn_load.clicked.connect(self.select_dataset)
         control_layout.addWidget(btn_load)
-
-        btn_prev = QPushButton("prev frame")
+        
+        btn_prev = QPushButton("prev frame (<)")
         btn_prev.clicked.connect(self.prev)
+        btn_prev.setShortcut("<")
         control_layout.addWidget(btn_prev)
 
-        btn_next = QPushButton("next frame")
+        btn_next = QPushButton("next frame (>)")
         btn_next.clicked.connect(self.next)
+        btn_next.setShortcut(">")
         control_layout.addWidget(btn_next)
 
         btn_jump = QPushButton("jump to frame")
         btn_jump.clicked.connect(self.jump)
         control_layout.addWidget(btn_jump)
 
-        btn_plus = QPushButton("+ time scale")
+        btn_plus = QPushButton("increase time scale (+)")
         btn_plus.clicked.connect(self.increase_scale)
+        btn_plus.setShortcut("+")
         control_layout.addWidget(btn_plus)
 
-        btn_minus = QPushButton("- time scale")
+        btn_minus = QPushButton("decrease time scale (-)")
         btn_minus.clicked.connect(self.decrease_scale)
+        btn_minus.setShortcut("-")
         control_layout.addWidget(btn_minus)
         
         btn_y_plus = QPushButton("+ y scale")
@@ -73,11 +88,34 @@ class SleepGUI(QWidget):
         btn_y_minus.clicked.connect(self.decrease_yscale)
         control_layout.addWidget(btn_y_minus)
         
+        #labeling button group
+        
+        self.labeling_group = QButtonGroup()
+        
+        labeling_buttons = [QRadioButton('Unknown: 0'),
+                   QRadioButton('Awake: 1'),
+                   QRadioButton('NREM: 2'),
+                   QRadioButton('IS: 3'),
+                   QRadioButton('REM: 4')]
+        
+        for i, b in enumerate(labeling_buttons):
+            self.labeling_group.addButton(b, id = i)
+            b.setShortcut(str(i))
+            self.labeling_layout.addWidget(b)
+            
+        self.labeling_group.setExclusive(True)
+        self.labeling_group.buttonClicked[int].connect(self.label_data)
+        # checkbox whether to label the whole screen or just sample
+        whole_screen_check = QCheckBox("Label the whole screen?")
+        whole_screen_check.stateChanged.connect(self.label_screen_toggle)
+        self.labeling_layout.addWidget(whole_screen_check)
+        
+        
+        #slider widgets        
         self.slider_yscale = QSlider(value = 100, minimum = 5, maximum = 195, singleStep = 5, tracking = True)
         self.slider_yscale.setOrientation(QtCore.Qt.Horizontal)
         self.slider_yscale.valueChanged.connect(self.change_yscale)
         self.yscale_label = QLabel("Y scale: 1")
-        # slider_yscale.valueChanged.connect(lambda v: self.yscale_label.setText(f"Y scale: {v/100}"))
         slider_layout.addWidget(self.yscale_label)
         slider_layout.addWidget(self.slider_yscale)
        
@@ -86,7 +124,6 @@ class SleepGUI(QWidget):
         self.slider_frame.setOrientation(QtCore.Qt.Horizontal)
         self.slider_frame.valueChanged.connect(self.frame_slider_func)
         self.slider_frame_label = QLabel("Frame: 0")
-        # self.slider_frame.valueChanged.connect(lambda v: self.slider_frame_label.setText(f"Frame: {v}"))
         slider_layout.addWidget(self.slider_frame_label)
         slider_layout.addWidget(self.slider_frame)
 
@@ -94,15 +131,16 @@ class SleepGUI(QWidget):
         layout.addWidget(self.status_label)
     
     def select_dataset(self):
-        file_name, _ = QFileDialog.getOpenFileName(self, caption = "Select file to chop", directory = ".", filter = "Pickle files (*.pkl)")
+        file_name, _ = QFileDialog.getOpenFileName(self, caption = "Select file to load", directory = ".", filter = "Pickle files (*.pkl)")
         if file_name:
             try:
                 data_path = file_name
                 score_path = data_path[:-5] + 'y.pkl'
                 self.dataset = SleepSignals(data_path = data_path, score_path = score_path, augment=False, compute_spectrogram=True)
+                self.states = self.dataset.all_labels.to('cpu').numpy()
                 self.current_idx = 0
                 self.scale = 1
-                self.update_plot()
+                self.update_screen()
                 self.status_label.setText(f"Loaded: {file_name}")
                 
                 self.ecog_ylim = [self.dataset.q01_0.item(), self.dataset.q99_0.item()]
@@ -114,7 +152,7 @@ class SleepGUI(QWidget):
                 self.slider_frame.setValue(0)
                 
                 #start plotting
-                self.update_plot()
+                self.update_screen()
                 
             except Exception as e:
                 self.status_label.setText(f"Error loading file: {e}")
@@ -122,19 +160,21 @@ class SleepGUI(QWidget):
         
     def get_data(self):
         if self.scale == 1:
-            sample, label = self.dataset[self.current_idx]
-            return sample, [label.item()]   
+            sample = self.dataset[self.current_idx][0]
+            label = self.states[self.current_idx]
+            return sample, [label]   
         
         # Concatenate multiple consecutive samples
         samples, spects, labels = [], [], []
         for i in range(self.current_idx, min(self.current_idx + self.scale, len(self.dataset))):
-            sample, label = self.dataset[i]
+            sample = self.dataset[i][0]
+            label = self.states[i]
             if isinstance(sample, tuple):
                 samples.append(sample[0])
                 spects.append(sample[1])
             else:
                 samples.append(sample)
-            labels.append(label.item())
+            labels.append(label)
 
         # Concatenate along time dimension - time dimension is 0 here
         if isinstance(sample, tuple):
@@ -143,11 +183,42 @@ class SleepGUI(QWidget):
             return (signals, spectrograms), labels
         else:
             return torch.cat(samples, dim = 0), labels
-
-    def update_plot(self):
-
-        sample, label = self.get_data()
         
+    def label_data(self, value):
+        
+        if self.label_whole_screen:
+            self.states[self.current_idx:self.current_idx + self.scale] = value 
+        else:
+            self.states[self.current_idx] = value
+        
+        self.update_screen()
+        
+    def update_screen(self):
+        self.update_plot()
+        self.update_labels()
+
+    def update_labels(self):
+        #update sliders and labels
+        self.slider_frame.blockSignals(True)
+        self.slider_yscale.blockSignals(True)
+
+        self.status_label.setText(f"frame index: {self.current_idx}, time scale: {self.scale} frames; y scale: {self.yscale}")
+        self.slider_frame.setValue(self.current_idx)
+        self.slider_frame_label.setText(f"frame: {self.current_idx}")
+        self.slider_yscale.setValue(int(self.yscale * 100))
+        self.yscale_label.setText(f"Y scale: {self.yscale}")
+
+        self.slider_frame.blockSignals(False)
+        self.slider_yscale.blockSignals(False)
+        
+        #updating state buttons
+        self.labeling_group.blockSignals(True)
+        self.labeling_group.button(self.states[self.current_idx]).setChecked(True)
+        self.labeling_group.blockSignals(False)
+        
+    
+    def update_plot(self):
+        sample, label = self.get_data()
         # Handle tuple (signals, spectrogram)
         if isinstance(sample, tuple):
             signals, spect = sample
@@ -170,38 +241,29 @@ class SleepGUI(QWidget):
             self.canvas_layout.addWidget(canvas)
             canvas.draw()
             plt.close(fig) #close fig after embedding
-
-        #update sliders and labels
-        self.slider_frame.blockSignals(True)
-        self.slider_yscale.blockSignals(True)
-
-        self.status_label.setText(f"frame index: {self.current_idx}, time scale: {self.scale} frames; y scale: {self.yscale}")
-        self.slider_frame.setValue(self.current_idx)
-        self.slider_frame_label.setText(f"frame: {self.current_idx}")
-        self.slider_yscale.setValue(int(self.yscale * 100))
-        self.yscale_label.setText(f"Y scale: {self.yscale}")
-
-        self.slider_frame.blockSignals(False)
-        self.slider_yscale.blockSignals(False)
+            
+    def label_screen_toggle(self):
+        self.label_whole_screen = not self.label_whole_screen
+        
 
     def next(self):
         self.current_idx = min(self.current_idx + 1, len(self.dataset) - 1)
-        self.update_plot()
+        self.update_screen()
 
     def prev(self):
         self.current_idx = max(self.current_idx - 1, 0)
-        self.update_plot()
+        self.update_screen()
 
     def jump(self):
         idx, ok = QInputDialog.getInt(self, "Jump", "Enter frame index:", value=self.current_idx)
         if ok and 0 <= idx < len(self.dataset):
             self.current_idx = idx
-            self.update_plot()
+            self.update_screen()
             
     def frame_slider_func(self, value):
         if 0 <= value < len(self.dataset):
             self.current_idx = value
-            self.update_plot()
+            self.update_screen()
             
     def change_yscale(self, value):
         self.yscale = value * 0.01
@@ -209,18 +271,16 @@ class SleepGUI(QWidget):
         self.ecog_ylim[1] = (self.ecog_ylim_defaults[1] * self.yscale)
         self.emg_ylim[0] = (self.emg_ylim_defaults[0] * self.yscale)
         self.emg_ylim[1] = (self.emg_ylim_defaults[1] * self.yscale)
-        
-        self.update_plot()
+        self.update_screen()
     
     def increase_yscale(self):     
         self.yscale += 0.05
-
         self.ecog_ylim[0] = (self.ecog_ylim_defaults[0] * self.yscale)
         self.ecog_ylim[1] = (self.ecog_ylim_defaults[1] * self.yscale)
         self.emg_ylim[0] = (self.emg_ylim_defaults[0] * self.yscale)
         self.emg_ylim[1] = (self.emg_ylim_defaults[1] * self.yscale)
         
-        self.update_plot()
+        self.update_screen()
         
     def decrease_yscale(self):
         self.yscale -= 0.05
@@ -231,28 +291,49 @@ class SleepGUI(QWidget):
             self.emg_ylim[0] = (self.emg_ylim_defaults[0] * self.yscale)
             self.emg_ylim[1] = (self.emg_ylim_defaults[1] * self.yscale)
             
-            self.update_plot()
+            self.update_screen()
         
         else:
             pass
     
     def increase_scale(self):
         self.scale += 1
-        self.update_plot()
+        self.update_screen()
 
     def decrease_scale(self):
         if self.scale > 1:
             self.scale -= 1
-        self.update_plot()
-        
+        self.update_screen()
         
 #another widget to run data chopping on selected data
 class ChopWidget(QWidget):
     def __init__(self):
         super().__init__()
-        self.chopper = from_Oslo_csv
 
         layout = QVBoxLayout(self)
+        
+        self.chopper = from_Oslo_csv#default option
+        
+        #add radio buttons to toggle between annotated and raw data
+        self.label = QLabel("Select data to preprocess")
+        layout.addWidget(self.label)
+        
+        self.toggle_group = QButtonGroup()
+        self.toggle1 = QRadioButton('load Oslo data')
+        self.toggle1.setChecked(True)
+        # self.toggle1.toggled.connect(self.select_chopper)
+        
+        self.toggle2 = QRadioButton('load non-annotated data')
+        # self.toggle2.toggled.connect(self.select_chopper)
+        
+        self.toggle_group.addButton(self.toggle1, id = 0)
+        self.toggle_group.addButton(self.toggle2, id = 1)
+        self.toggle_group.setExclusive(True)
+        
+        layout.addWidget(self.toggle1)
+        layout.addWidget(self.toggle2)
+        
+        self.toggle_group.buttonClicked[int].connect(self.select_chopper)
 
         self.label = QLabel("No file selected")
         layout.addWidget(self.label)
@@ -260,11 +341,19 @@ class ChopWidget(QWidget):
         btn = QPushButton("Select file to chop")
         btn.clicked.connect(self.select_file)
         layout.addWidget(btn)
+    
+    def select_chopper(self, value):
+        funcmap = {
+            0 : from_Oslo_csv,
+            1 : from_non_annotated_csv
+        }
+        
+        self.chopper = funcmap.get(value, None)
 
     def select_file(self):
         file_name, _ = QFileDialog.getOpenFileName(self, caption = "Select file to chop", directory = ".", filter = "CSV files (*.csv)")
         if file_name:
-            self.label.setText(file_name)
+            self.label.setText(file_name)            
             if self.chopper:
                 print(file_name)
                 self.chopper(file_name, sep = '/')

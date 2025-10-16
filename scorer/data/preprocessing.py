@@ -28,6 +28,32 @@ def from_Oslo_csv(path, sep = '\\'):
         
     with open(ypath, 'wb') as f:
         pickle.dump(y, f)
+        
+def from_non_annotated_csv(path, sep = '\\'):
+    """
+    Converts non-annotated .csv to chopped pickle 
+    """
+    xpath = path.split(sep)[:]
+    xpath[-2] = 'processed'
+    xpath = sep.join(xpath)
+    xpath = xpath[:-4] + '_X.pkl'
+    
+    ypath = path.split(sep)[:]
+    ypath[-2] = 'processed'
+    ypath = sep.join(ypath)
+    ypath = ypath[:-4] + '_y.pkl'
+    
+    data = pd.read_csv(path)
+    signal = data[['ecog', 'emg']].values
+    labels = data['sleep_episode'].values
+    X, y = chop_data(states = labels, values = signal, win_len = 1000, labeled = False)
+    print(X.shape)
+
+    with open(xpath, 'wb') as f:
+        pickle.dump(X, f)
+        
+    with open(ypath, 'wb') as f:
+        pickle.dump(y, f)
 
 def chop_data(states, values, win_len = 1000, labeled = True):
     # in the file: time, ecog, emg, state
