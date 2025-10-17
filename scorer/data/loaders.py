@@ -1,8 +1,3 @@
-# TODO: add other preprocessing options instead of Spectrogram
-# sum power, power in specific spectra, fft -> what is needed to  make decisions
-# think about scaling and calculation, whether to do it while loading or while retrieving samples
-# write as functions and import from preprocessing
-
 import random
 import numpy as np
 import torch
@@ -21,7 +16,7 @@ class SleepSignals(Dataset):
           3:'IS',
           4:'REM'
     """
-    def __init__(self, data_path, score_path, device = 'cuda', transform = None, augment = False, resample_freq = 1000, compute_spectrogram = True):
+    def __init__(self, data_path, score_path, device = 'cuda', transform = None, augment = False, resample_freq = 1000, spectral_features = None):
         """        
             Args:
             file_path: path to the folder where chopped data is stored. Can handle one or multiple animals, but the recordings need to be in one file. 
@@ -29,8 +24,12 @@ class SleepSignals(Dataset):
             transform: optional transform to apply. Defaults to None.
             augment: whether to apply data augmentation, relevant when training models
             resample_freq: whether to resample the signal1
-            compute_spectrogram: whether to also compute a spectrogram
+            spectral_features: whether to compute frequency descriptors. options: spectrogram, fourier, band_powers, None
         """
+        #implement all options for calculate_freqs!
+        # think about scaling and calculation, whether to do it while loading or while retrieving samples
+        # write as functions and import from preprocessing
+
         
         with open(data_path, 'rb') as f:
             X_list = pickle.load(f)
@@ -63,9 +62,9 @@ class SleepSignals(Dataset):
         self.augment = augment
         self.resample_freq = resample_freq
         self.resampler = Resample(orig_freq = 1000, new_freq = resample_freq).to(device)
-        self.spectrogram = compute_spectrogram
+        self.spectral = spectral_features
         
-        if self.spectrogram:
+        if self.spectral == 'spectrogram':
             self.spect = Spectrogram(n_fft = 100, #changes freq bins
                                     hop_length = 10, #changes time bins
                                     pad = 0, 
@@ -94,7 +93,7 @@ class SleepSignals(Dataset):
             sample = self._augment(sample)
         if self.transform:
             sample = self.transform(sample)
-        if self.spectrogram:
+        if self.spectral == 'spectrogram':
             sample = (sample, self._spect(sample))
             
         return sample, label

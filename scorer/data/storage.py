@@ -42,11 +42,9 @@ def load_pickled_states(path):
 
 def save_json(states, path):  
     pass
-
-def save_array(states, path):
-    pass
+    #todo: implement saving as json with metadata
 
 #for testing
-# if __name__ == "main":
-y, save = construct_paths(r"C:\Users\marty\Projects\scorer\proj_data\processed\trial_1_mouse_b1aqm2_X.pkl")
-print(y, save)
+if __name__ == "main":
+    y, save = construct_paths(r"C:\Users\marty\Projects\scorer\proj_data\processed\trial_1_mouse_b1aqm2_X.pkl")
+    print(y, save)

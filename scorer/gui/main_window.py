@@ -1,5 +1,5 @@
 from PyQt5.QtWidgets import QMainWindow, QTabWidget
-from gui.widgets import SleepGUI, ChopWidget
+from gui.widgets import SleepGUI, PreprocessWidget, SettingsWidget, AutoScoringWidget, ReportWidget
 
 class SleepWindow(QMainWindow):
     def __init__(self, dataset = None):
@@ -14,9 +14,15 @@ class SleepWindow(QMainWindow):
         self.setCentralWidget(tabs)
 
         # initialize widgets
+        self.settings_tab = SettingsWidget()
+        self.preprocess_tab = PreprocessWidget()
+        self.auto_scoring_tab = AutoScoringWidget()
         self.scoring_tab = SleepGUI(dataset = None)
-        self.chopping_tab = ChopWidget()
+        self.report_tab = ReportWidget()
 
         #add as tabs
-        tabs.addTab(self.scoring_tab, "Score data")
-        tabs.addTab(self.chopping_tab, "Chop data")
+        tabs.addTab(self.settings_tab, "settings and metadata")
+        tabs.addTab(self.preprocess_tab, "preprocess data")
+        tabs.addTab(self.auto_scoring_tab, "automatically score data")
+        tabs.addTab(self.scoring_tab, "manual scoring")
+        tabs.addTab(self.report_tab, "report")

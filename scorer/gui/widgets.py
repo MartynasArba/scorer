@@ -65,6 +65,7 @@ class SleepGUI(QWidget):
         
         btn_save_states = QPushButton("save annotated sleep states")
         btn_save_states.clicked.connect(self.save_states)
+        btn_save_states.setShortcut("Ctrl+s")
         control_layout.addWidget(btn_save_states)
         
         btn_load_states = QPushButton("load saved states")
@@ -102,6 +103,10 @@ class SleepGUI(QWidget):
         btn_y_minus = QPushButton("- y scale")
         btn_y_minus.clicked.connect(self.decrease_yscale)
         control_layout.addWidget(btn_y_minus)
+        
+        btn_reset = QPushButton("reset")
+        btn_reset.clicked.connect(self.reset_settings)
+        control_layout.addWidget(btn_reset)
         
         #labeling button group
         
@@ -154,10 +159,10 @@ class SleepGUI(QWidget):
                 
                 score_path, self.score_save_path = construct_paths(self.data_path)
 
-                self.dataset = SleepSignals(data_path = self.data_path, score_path = score_path, augment=False, compute_spectrogram=True)
+                self.dataset = SleepSignals(data_path = self.data_path, score_path = score_path, augment = False, spectral_features = 'spectrogram')
                 self.states = self.dataset.all_labels.to('cpu').numpy()
                 self.current_idx = 0
-                self.scale = 1
+                
                 self.update_screen()
                 self.status_label.setText(f"Loaded: {file_name}")
                 
@@ -333,8 +338,20 @@ class SleepGUI(QWidget):
             self.scale -= 1
         self.update_screen()
         
+    def reset_settings(self):
+        
+        # self.current_idx = 0 #debatable whether it should change, probably not
+        self.scale = 1
+        self.ecog_ylim = self.ecog_ylim_defaults.copy()
+        self.emg_ylim = self.emg_ylim_defaults.copy()
+        self.yscale = 1
+        self.label_whole_screen = False
+        
+        self.update_screen()
+        
+        
 #another widget to run data chopping on selected data
-class ChopWidget(QWidget):
+class PreprocessWidget(QWidget):
     def __init__(self):
         super().__init__()
 
@@ -385,3 +402,23 @@ class ChopWidget(QWidget):
             if self.chopper:
                 print(file_name)
                 self.chopper(file_name)
+                
+                
+class SettingsWidget(QWidget):
+    
+    def __init__(self):
+        super().__init__()
+        pass
+    
+
+class AutoScoringWidget(QWidget):
+    
+    def __init__(self):
+        super().__init__()
+        pass
+    
+class ReportWidget(QWidget):
+    
+    def __init__(self):
+        super().__init__()
+        pass

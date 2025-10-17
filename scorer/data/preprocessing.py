@@ -111,4 +111,6 @@ def _chop(values, win_len): #need to also create labels of 0
     
     return np.stack(X), np.stack(y)
 
-_get_data_paths(r'C:\Users\marty\Projects\scorer\proj_data\raw\trial_2_mouse_b1aqm1.csv')
+
+if __name__ == "main":
+    _get_data_paths(r'C:\Users\marty\Projects\scorer\proj_data\raw\trial_2_mouse_b1aqm1.csv')
