@@ -2,20 +2,15 @@ import numpy as np
 from tqdm import tqdm
 import pandas as pd
 import pickle
+import os
+from pathlib import Path
 
 def from_Oslo_csv(path, sep = '\\'):
     """
     Converts Oslo .csv to pickle 
     """
-    xpath = path.split(sep)[:]
-    xpath[-2] = 'processed'
-    xpath = sep.join(xpath)
-    xpath = xpath[:-4] + '_X.pkl'
     
-    ypath = path.split(sep)[:]
-    ypath[-2] = 'processed'
-    ypath = sep.join(ypath)
-    ypath = ypath[:-4] + '_y.pkl'
+    xpath, ypath = _get_data_paths(path)
     
     data = pd.read_csv(path)
     signal = data[['ecog', 'emg']].values
@@ -29,19 +24,11 @@ def from_Oslo_csv(path, sep = '\\'):
     with open(ypath, 'wb') as f:
         pickle.dump(y, f)
         
-def from_non_annotated_csv(path, sep = '\\'):
+def from_non_annotated_csv(path):
     """
     Converts non-annotated .csv to chopped pickle 
     """
-    xpath = path.split(sep)[:]
-    xpath[-2] = 'processed'
-    xpath = sep.join(xpath)
-    xpath = xpath[:-4] + '_X.pkl'
-    
-    ypath = path.split(sep)[:]
-    ypath[-2] = 'processed'
-    ypath = sep.join(ypath)
-    ypath = ypath[:-4] + '_y.pkl'
+    xpath, ypath = _get_data_paths(path)
     
     data = pd.read_csv(path)
     signal = data[['ecog', 'emg']].values
@@ -61,6 +48,21 @@ def chop_data(states, values, win_len = 1000, labeled = True):
         return _chop_by_state(states, values, win_len)
     else: #if the data is not labeled, chops sequentially
         return _chop(values, win_len)
+    
+def _get_data_paths(csv_path):
+    
+    csv_path = Path(csv_path)
+    
+    #ensure processed data folder exists
+    processed_folder = csv_path.parent.parent / 'processed'
+    if not os.path.exists(processed_folder):
+        os.makedirs(processed_folder)
+    
+    base_name = csv_path.stem  # filename without extension
+    xpath = processed_folder / f"{base_name}_X.pkl"
+    ypath = processed_folder / f"{base_name}_y.pkl"
+    
+    return str(xpath), str(ypath)
     
 def _chop_by_state(states, values, win_len):
     X = []
@@ -108,3 +110,5 @@ def _chop(values, win_len): #need to also create labels of 0
             i += win_len
     
     return np.stack(X), np.stack(y)
+
+_get_data_paths(r'C:\Users\marty\Projects\scorer\proj_data\raw\trial_2_mouse_b1aqm1.csv')

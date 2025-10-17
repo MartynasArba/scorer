@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from gui.plots import plot_signals, plot_spectrogram
+from data.storage import construct_paths, save_pickled_states, load_pickled_states
 from data.preprocessing import from_Oslo_csv, from_non_annotated_csv
 from data.loaders import SleepSignals
 
@@ -20,6 +21,8 @@ class SleepGUI(QWidget):
     def __init__(self, dataset = None):
         super().__init__()
         self.path = ''
+        self.score_save_path = ''
+        self.data_path = ''
         
         self.dataset = dataset
         self.current_idx = 0
@@ -57,6 +60,14 @@ class SleepGUI(QWidget):
         btn_load = QPushButton("load file")
         btn_load.clicked.connect(self.select_dataset)
         control_layout.addWidget(btn_load)
+        
+        btn_save_states = QPushButton("save annotated sleep states")
+        btn_save_states.clicked.connect(self.save_states)
+        control_layout.addWidget(btn_save_states)
+        
+        btn_load_states = QPushButton("load saved states")
+        btn_load_states.clicked.connect(self.load_states)
+        control_layout.addWidget(btn_load_states)
         
         btn_prev = QPushButton("prev frame (<)")
         btn_prev.clicked.connect(self.prev)
@@ -136,9 +147,12 @@ class SleepGUI(QWidget):
         file_name, _ = QFileDialog.getOpenFileName(self, caption = "Select file to load", directory = ".", filter = "Pickle files (*.pkl)")
         if file_name:
             try:
-                data_path = file_name
-                score_path = data_path[:-5] + 'y.pkl'
-                self.dataset = SleepSignals(data_path = data_path, score_path = score_path, augment=False, compute_spectrogram=True)
+                #should automatically generate paths and metadata here
+                self.data_path = file_name
+                
+                score_path, self.score_save_path = construct_paths(self.data_path)
+
+                self.dataset = SleepSignals(data_path = self.data_path, score_path = score_path, augment=False, compute_spectrogram=True)
                 self.states = self.dataset.all_labels.to('cpu').numpy()
                 self.current_idx = 0
                 self.scale = 1
@@ -242,6 +256,17 @@ class SleepGUI(QWidget):
             self.canvas_layout.addWidget(canvas)
             canvas.draw()
             plt.close(fig) #close fig after embedding
+            
+    def save_states(self):
+        _, self.score_save_path = construct_paths(self.data_path)
+        print(f'saved in {self.score_save_path}')
+        save_pickled_states(self.states, self.score_save_path)
+    
+    def load_states(self):
+        file_name, _ = QFileDialog.getOpenFileName(self, caption = "Select states file to load", directory = ".", filter = "Pickle files (*.pkl)")
+        if file_name:
+            self.states = load_pickled_states(file_name)
+        self.update_screen()
             
     def label_screen_toggle(self):
         self.label_whole_screen = not self.label_whole_screen
@@ -357,4 +382,4 @@ class ChopWidget(QWidget):
             self.label.setText(file_name)            
             if self.chopper:
                 print(file_name)
-                self.chopper(file_name, sep = '/')
+                self.chopper(file_name)
