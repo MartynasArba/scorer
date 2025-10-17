@@ -24,6 +24,8 @@ class SleepGUI(QWidget):
         self.score_save_path = ''
         self.data_path = ''
         
+        self.metadata = {}
+        
         self.dataset = dataset
         self.current_idx = 0
         self.scale = 1
