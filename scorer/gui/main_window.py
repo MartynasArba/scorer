@@ -1,9 +1,9 @@
 from PyQt5.QtWidgets import QMainWindow, QTabWidget
-from scorer.gui.labeling_widgets import SleepGUI
-from scorer.gui.preprocessing_widgets import PreprocessWidget
-from scorer.gui.settings_widgets import SettingsWidget
-from scorer.gui.autoscoring_widgets import AutoScoringWidget
-from scorer.gui.report_widgets import ReportWidget
+from gui.labeling_widgets import SleepGUI
+from gui.preprocessing_widgets import PreprocessWidget
+from gui.settings_widgets import SettingsWidget
+from gui.autoscoring_widgets import AutoScoringWidget
+from gui.report_widgets import ReportWidget
 
 class SleepWindow(QMainWindow):
     """

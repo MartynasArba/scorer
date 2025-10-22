@@ -7,10 +7,6 @@ def plot_signals(selected_data: np.array, labels: list, sample_rate: int = 250, 
     plots selected "raw" signals and labels
     label plotting could be moved to a separate function
     """
-    #support for plotting multiple scorer results
-    #labels will always be a list?
-    # label_list = labels.copy()
-    # labels = labels[0]
 
     sleep_labels = {0:'Unlabeled',
           1:'Wake',
