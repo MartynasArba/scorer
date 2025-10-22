@@ -5,6 +5,7 @@ import pickle
 from torch.utils.data import Dataset
 from torchaudio.transforms import Resample
 from torchaudio.transforms import Spectrogram
+from typing import Tuple
 
 class SleepSignals(Dataset):
     """Dataset structure for chopped signals and labels, developed using 1000-datapoint windows
@@ -16,7 +17,7 @@ class SleepSignals(Dataset):
           3:'IS',
           4:'REM'
     """
-    def __init__(self, data_path, score_path, device = 'cuda', transform = None, augment = False, resample_freq = 1000, spectral_features = None):
+    def __init__(self, data_path, score_path, device = 'cuda', transform = None, augment = False, resample_freq = 1000, spectral_features = None) -> None:
         """        
             Args:
             file_path: path to the folder where chopped data is stored. Can handle one or multiple animals, but the recordings need to be in one file. 
@@ -51,7 +52,7 @@ class SleepSignals(Dataset):
         self.all_samples = self.all_samples.to(device)
         self.all_labels = self.all_labels.to(device)
         
-        #summary stats - will be useful
+        #summary stats - will be useful for setting limits on plots
         self.q99_0 = torch.quantile(self.all_samples[:, 0], q = .99)
         self.q01_0 = torch.quantile(self.all_samples[:, 0], q = .01)
         self.q99_1 = torch.quantile(self.all_samples[:, 1], q = .99)
@@ -60,6 +61,8 @@ class SleepSignals(Dataset):
         self.device = device
         self.transform = transform
         self.augment = augment
+        
+        #should move some transforms to preprocessing - if it can happen on raw data, it should. 
         self.resample_freq = resample_freq
         self.resampler = Resample(orig_freq = 1000, new_freq = resample_freq).to(device)
         self.spectral = spectral_features
@@ -72,10 +75,10 @@ class SleepSignals(Dataset):
                                     center = False,
                                     normalized = False).to(device)
         
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.all_labels)
     
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int]:
         
         if torch.is_tensor(idx):
             idx = idx.tolist()
@@ -99,7 +102,7 @@ class SleepSignals(Dataset):
         return sample, label
 
     
-    def _augment(self, x):
+    def _augment(self, x: torch.Tensor) -> torch.Tensor:
         """randomly apply time series augmentations - noise, scale, time shift"""
         x = x.clone()
         
@@ -123,7 +126,7 @@ class SleepSignals(Dataset):
                 x = torch.cat([x[shift:], x[:shift]], dim=0)
         return x
     
-    def _spect(self, x):
+    def _spect(self, x: torch.Tensor) -> torch.Tensor:
         """
         compute spectrogram for each channel
         input: 2, time or 2, resample_freq

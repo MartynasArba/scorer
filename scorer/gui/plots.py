@@ -1,8 +1,12 @@
 import matplotlib.pyplot as plt
 import numpy as np
+from typing import Tuple
 
-def plot_signals(selected_data, labels, sample_rate = 250, ecog_ylim = (None, None), emg_ylim = (None, None)):
-    
+def plot_signals(selected_data: np.array, labels: list, sample_rate: int = 250, ecog_ylim: Tuple[int, int] = (None, None), emg_ylim: Tuple[int, int] = (None, None)) -> plt.figure:
+    """
+    plots selected "raw" signals and labels
+    label plotting could be moved to a separate function
+    """
     #support for plotting multiple scorer results
     #labels will always be a list?
     # label_list = labels.copy()
@@ -50,8 +54,10 @@ def plot_signals(selected_data, labels, sample_rate = 250, ecog_ylim = (None, No
     plt.tight_layout()
     return fig
 
-def plot_spectrogram(spect_data, ylim = (0, 20)):
-    
+def plot_spectrogram(spect_data: np.array, ylim: Tuple[int, int] = (0, 20)) -> plt.figure:
+    """
+    plots pre-generated spectrogram
+    """
     fig, ax = plt.subplots(2, 1, figsize=(10, 5))
     
     im0 = ax[0].imshow(spect_data[0], aspect = 'auto', origin = 'lower', cmap = 'viridis')

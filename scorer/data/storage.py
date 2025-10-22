@@ -1,8 +1,10 @@
 import pickle
 import os
 from pathlib import Path
+from typing import Tuple
+from numpy import array
 
-def construct_paths(data_path: str, **metadata):    
+def construct_paths(data_path: str, **metadata) ->Tuple[str, str]:    
     """
     Gets data path from QFileDialog, returns save paths for pickle and state annotation arrays   
     """
@@ -33,7 +35,7 @@ def construct_paths(data_path: str, **metadata):
     
         return y_file_path, states_array_path
 
-def save_pickled_states(states: list, path: str):
+def save_pickled_states(states: list, path: str) -> None:
     """
     dumps states to pickle
     """
@@ -41,7 +43,7 @@ def save_pickled_states(states: list, path: str):
         print('TODO: change save_pickled_states to only dump states which are being scored by current scorer')
         pickle.dump(states, f)
 
-def load_pickled_states(path: str):
+def load_pickled_states(path: str) -> array:
     """
     loads scores from pickle
     """
@@ -50,7 +52,10 @@ def load_pickled_states(path: str):
         states = pickle.load(f)
     return states
 
-def save_json(states: list, path: str):  
+def save_json(states: list, path: str) -> None:  
+    """
+    should save json summary of state results, could be metadata, then state-duration format
+    """   
     print('TODO: save_json not implemented')
     pass
     #todo: implement saving as json with metadata
