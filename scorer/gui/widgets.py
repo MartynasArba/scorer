@@ -37,7 +37,8 @@ class SleepGUI(QWidget):
         self.yscale = 1
         
         #empty copy array to store and load data
-        self.states = np.array([], dtype = int)
+        #it should be a list of arrays to allow viewing multi scores
+        self.states = [np.array([], dtype = int)]
         self.label_whole_screen = False
         
         layout = QVBoxLayout(self)
@@ -160,7 +161,7 @@ class SleepGUI(QWidget):
                 score_path, self.score_save_path = construct_paths(self.data_path)
 
                 self.dataset = SleepSignals(data_path = self.data_path, score_path = score_path, augment = False, spectral_features = 'spectrogram')
-                self.states = self.dataset.all_labels.to('cpu').numpy()
+                self.states = [self.dataset.all_labels.to('cpu').numpy()]
                 self.current_idx = 0
                 
                 self.update_screen()

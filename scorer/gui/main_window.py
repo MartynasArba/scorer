@@ -2,6 +2,16 @@ from PyQt5.QtWidgets import QMainWindow, QTabWidget
 from gui.widgets import SleepGUI, PreprocessWidget, SettingsWidget, AutoScoringWidget, ReportWidget
 
 class SleepWindow(QMainWindow):
+    """
+    (WIP) Class that creates the main application window
+    Current tabs are:
+    - settings and metadata
+    - preprocessing
+    - automatic scoring
+    - manual scoring
+    - report generation
+    """
+    
     def __init__(self, dataset = None):
         super().__init__()
         

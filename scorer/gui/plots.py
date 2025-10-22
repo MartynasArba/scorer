@@ -3,6 +3,11 @@ import numpy as np
 
 def plot_signals(selected_data, labels, sample_rate = 250, ecog_ylim = (None, None), emg_ylim = (None, None)):
     
+    #support for plotting multiple scorer results
+    #labels will always be a list?
+    # label_list = labels.copy()
+    # labels = labels[0]
+
     sleep_labels = {0:'Unlabeled',
           1:'Wake',
           2:'NREM',

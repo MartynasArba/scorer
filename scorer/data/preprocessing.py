@@ -4,10 +4,12 @@ import pandas as pd
 import pickle
 import os
 from pathlib import Path
+from typing import Tuple
 
-def from_Oslo_csv(path, sep = '\\'):
+def from_Oslo_csv(path: str, sep: str = '\\') -> None:
     """
     Converts Oslo .csv to pickle 
+    shouldn't be used at all in the final version
     """
     
     xpath, ypath = _get_data_paths(path)
@@ -24,7 +26,7 @@ def from_Oslo_csv(path, sep = '\\'):
     with open(ypath, 'wb') as f:
         pickle.dump(y, f)
         
-def from_non_annotated_csv(path):
+def from_non_annotated_csv(path: str) -> None:
     """
     Converts non-annotated .csv to chopped pickle 
     """
@@ -42,14 +44,22 @@ def from_non_annotated_csv(path):
     with open(ypath, 'wb') as f:
         pickle.dump(y, f)
 
-def chop_data(states, values, win_len = 1000, labeled = True):
+def chop_data(states: np.array, values: np.array, win_len: int = 1000, labeled: bool = True) -> Tuple[np.array, np.array]:
+    """
+    runs helper functions to split data into win-length segments 
+    helper functions depend on labeled param
+    ideally, labeled shouldn't be used, as some data is skipped due to non-win-length labeling
+    """
     # in the file: time, ecog, emg, state
     if labeled: #if the data has been labeled, chops by label boundaries
         return _chop_by_state(states, values, win_len)
     else: #if the data is not labeled, chops sequentially
         return _chop(values, win_len)
     
-def _get_data_paths(csv_path):
+def _get_data_paths(csv_path: str) -> Tuple[str, str]:
+    """
+    helper: generates paths and folders to save processed data
+    """
     
     csv_path = Path(csv_path)
     
@@ -64,7 +74,7 @@ def _get_data_paths(csv_path):
     
     return str(xpath), str(ypath)
     
-def _chop_by_state(states, values, win_len):
+def _chop_by_state(states: np.array, values: np.array, win_len: int) -> Tuple[np.array, np.array]:
     X = []
     y = []
     #find all episodes of set len and return their indices
@@ -92,7 +102,12 @@ def _chop_by_state(states, values, win_len):
     #return stacked arrays
     return np.stack(X), np.stack(y)
 
-def _chop(values, win_len): #need to also create labels of 0 
+def _chop(values: np.array, win_len: int) -> Tuple[np.array, np.array]:
+    """
+    chops data into win-len pieces
+    state is always 0 (unknown)
+    """
+    
     X = []
     y = []
     #similar syntax for consistency, generally unnecessary
