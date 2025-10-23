@@ -16,12 +16,15 @@ class SleepWindow(QMainWindow):
     - report generation
     """
     
-    def __init__(self, dataset = None):
+    def __init__(self, dataset: SleepGUI = None) -> None:
+        """
+        initializes the main window
+        """
         super().__init__()
         
         #window options
         self.setWindowTitle("Scoring GUI")
-        self.setGeometry(100, 100, 1800, 1000)
+        self.setGeometry(100, 100, 1600, 800)
         
         #create multiple tabs
         tabs = QTabWidget()
@@ -29,7 +32,7 @@ class SleepWindow(QMainWindow):
 
         # initialize widgets
         self.settings_tab = SettingsWidget()
-        self.preprocess_tab = PreprocessWidget()
+        self.preprocess_tab = PreprocessWidget()        #should pass metadata here to __init__
         self.auto_scoring_tab = AutoScoringWidget()
         self.scoring_tab = SleepGUI(dataset = None)
         self.report_tab = ReportWidget()

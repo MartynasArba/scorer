@@ -1,5 +1,6 @@
 import pickle
 import os
+import json
 from pathlib import Path
 from typing import Tuple
 from numpy import array
@@ -59,6 +60,21 @@ def save_json(states: list, path: str) -> None:
     print('TODO: save_json not implemented')
     pass
     #todo: implement saving as json with metadata
+    
+def save_metadata(path: str, metadata: dict) -> None:
+    """
+    saves metadata to a json file
+    """
+    with open(path, 'wt') as f:
+        json.dump(metadata, f)
+
+def load_metadata(path: str) -> dict:
+    """
+    loads metadata from a json file
+    """
+    with open(path, 'rt') as f:
+        metadata = json.load(f)
+    return metadata
 
 # testing
 if __name__ == "main":
