@@ -11,9 +11,6 @@ sys.exit(app.exec_())
 
 #checkmark for whether to overlay new scoring, load alternatives etc
 #add option to load other scores, metadata should likely be reflected in file names
-
-#add typehints and descriptors, it's getting confusing
-
 #add metadata and settings widget which can return both as dicts, then pass dicts to labeling widget as params in __init__
 
 #track sample rate in metadata, relevant for time axis when plotting

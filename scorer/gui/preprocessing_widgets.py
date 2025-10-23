@@ -2,73 +2,83 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout,
     QPushButton, QLabel,
     QFileDialog, QRadioButton, 
-    QButtonGroup
+    QButtonGroup, QCheckBox
 )
 
 from data.preprocessing import from_Oslo_csv, from_non_annotated_csv
        
-#another widget to run data chopping on selected data
+# TODO: write more funcs in data.preprocessing to reflect checkmarks
+# TODO: add textboxes next to checks where values are needed
+
 class PreprocessWidget(QWidget):
     """
     class of the preprocessing widget. 
     ideally should do (most) of the preprocessing here that happens on the raw signal. 
     """
-    def __init__(self) -> None:
+    def __init__(self, metadata) -> None:
         """
         creates the widget and buttons
         """
         super().__init__()
+        #keep track of metadata
+        self.params = metadata
+        self.selected_file = None
 
-        layout = QVBoxLayout(self)
-        
-        self.chopper = from_Oslo_csv#default option
-        
-        #add radio buttons to toggle between annotated and raw data
-        self.label = QLabel("Select data to preprocess")
+        layout = QVBoxLayout(self)    
+        #add main info label
+        self.label = QLabel("select data to preprocess")
         layout.addWidget(self.label)
         
-        self.toggle_group = QButtonGroup()
-        self.toggle1 = QRadioButton('load Oslo data')
-        self.toggle1.setChecked(True)
-        # self.toggle1.toggled.connect(self.select_chopper)
+        #select input file, add support for other formats later if needed
+        btn_select_file = QPushButton('select file to load')
+        btn_select_file.clicked.connect(self.select_file)
+        layout.addWidget(btn_select_file)
         
-        self.toggle2 = QRadioButton('load non-annotated data')
-        # self.toggle2.toggled.connect(self.select_chopper)
+        #add checkboxes of what preprocessing steps should be done
+        #add textboxes next to some of these
+        self.chunk_check = QCheckBox("load in chunks?") #text: chunk size
+        self.resample_check = QCheckBox("resample data?") #add option to select sample rate to resample to
+        self.filter_check = QCheckBox("filter data 0.5-30 Hz?") #add option to select filter boundaries
+        self.notch_check = QCheckBox("use notch 50 filter?")    #add option to select custom notch filter
+        self.calculate_sum_power_check = QCheckBox("calculate sum power?") 
+        self.calculate_band_power_check = QCheckBox("calculate band power?")
+        self.save_processed_check = QCheckBox("save processed signal?")   
+        self.chop_check = QCheckBox("chop data into chunks for the next step")   #add option to select win length
+        self.testing_check = QCheckBox("use pre-scored states when chopping (for testing only)")
+        self.overwrite_files_check = QCheckBox("overwrite files")
         
-        self.toggle_group.addButton(self.toggle1, id = 0)
-        self.toggle_group.addButton(self.toggle2, id = 1)
-        self.toggle_group.setExclusive(True)
+        for box in [
+            self.chunk_check, self.resample_check, self.filter_check,
+            self.notch_check, self.calculate_sum_power_check,
+            self.calculate_band_power_check, self.save_processed_check,
+            self.chop_check, self.testing_check, self.overwrite_files_check
+        ]:
+            layout.addWidget(box)
         
-        layout.addWidget(self.toggle1)
-        layout.addWidget(self.toggle2)
-        
-        self.toggle_group.buttonClicked[int].connect(self.select_chopper)
+        #button that runs everything
+        main_btn = QPushButton("run preprocessing")
+        main_btn.clicked.connect(self.run_preprocessing)
+        layout.addWidget(main_btn)
 
-        self.label = QLabel("No file selected")
-        layout.addWidget(self.label)
-
-        btn = QPushButton("Select file to chop")
-        btn.clicked.connect(self.select_file)
-        layout.addWidget(btn)
+    def run_preprocessing(self) -> None:
+        """
+        reads what steps were selected and runs preprocessing
+        """
+        #TODO: implement actual preprocessing
+        pass
     
-    def select_chopper(self, value: int) -> None:
-        """
-        selects how to chop data: based on states (for model training) or just by time (for scoring)
-        """
-        funcmap = {
-            0 : from_Oslo_csv,
-            1 : from_non_annotated_csv
-        }
-        
-        self.chopper = funcmap.get(value, None)
+        #check that self.selected_file is set and exists
+        # read checkboxes (ex. if self.filter_check.isChecked(): do stuff)   
+        #maybe preprocessing safely in a background thread (eventually, to avoid UI freezing).
+        #write pop-up messages when done
+        #mark what was done in metadata
+        #add progress bar
 
     def select_file(self) -> None:
         """
-        opens file dialog and runs chopping, should split it into separate steps
+        opens file dialog and sets path
         """
-        file_name, _ = QFileDialog.getOpenFileName(self, caption = "Select file to chop", directory = ".", filter = "CSV files (*.csv)")
-        if file_name:
-            self.label.setText(file_name)            
-            if self.chopper:
-                print(file_name)
-                self.chopper(file_name)
+        filename, _ = QFileDialog.getOpenFileName(self, caption = "Select file to chop", directory = self.params.get('project_path', '.'), filter = "CSV files (*.csv)")
+        if filename:
+            self.label.setText(filename) 
+            self.selected_file = filename          

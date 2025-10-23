@@ -30,9 +30,26 @@ class SleepWindow(QMainWindow):
         tabs = QTabWidget()
         self.setCentralWidget(tabs)
 
-        # initialize widgets
-        self.settings_tab = SettingsWidget()
-        self.preprocess_tab = PreprocessWidget()        #should pass metadata here to __init__
+        # initialize metadata
+        # params to track in metadata
+        params =    [
+            'scoring_started', 
+            'project_path', 
+            'scorer', 
+            'date', 
+            'animal_id', 
+            'group', 
+            'trial', 
+            'sample_rate', 
+            'n_channels', 
+            'emg_channel'
+            ]
+        #create metadata dict ("global", to be shared across widgets)
+        self.metadata = {param : None for param in params}
+        
+        #initialize widgets
+        self.settings_tab = SettingsWidget(self.metadata)
+        self.preprocess_tab = PreprocessWidget(self.metadata)
         self.auto_scoring_tab = AutoScoringWidget()
         self.scoring_tab = SleepGUI(dataset = None)
         self.report_tab = ReportWidget()

@@ -10,13 +10,13 @@ class SettingsWidget(QWidget):
     """
     class for metadata and settings, wip
     """
-    def __init__(self, params: list = ['scoring_started', 'project_path', 'scorer', 'date', 'animal_id', 'group', 'trial']) -> None:
+    def __init__(self, metadata: dict) -> None:
         """
         creates settings window
         """
         super().__init__()
         
-        self.params = {param : None for param in params} 
+        self.params = metadata
         self.params['scoring_started'] = str(datetime.now().strftime('%Y%m%d%H%M%S')) #only generate once and can't be changed
         self.params['project_path'] = '.'
         self.params['date'] = str(datetime.now().strftime('%Y_%m_%d'))
@@ -37,7 +37,7 @@ class SettingsWidget(QWidget):
         btn_proj_path.clicked.connect(self.set_project_path)
         self.metadata_layout.addWidget(btn_proj_path)
     
-        for p in params:
+        for p in self.params.keys():
             if (p != 'scoring_started') & (p != 'project_path'):
                 self.add_param_row(p)
         
