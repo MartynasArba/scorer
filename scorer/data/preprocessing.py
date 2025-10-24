@@ -1,10 +1,18 @@
 import numpy as np
+import torch
 from tqdm import tqdm
 import pandas as pd
 import pickle
 import os
 from pathlib import Path
 from typing import Tuple
+
+def load_from_csv(path: str, metadata: dict = None) -> torch.Tensor:
+    """
+    loads data from csv into a torch tensor
+    """
+    pass
+    
 
 def from_Oslo_csv(path: str, sep: str = '\\') -> None:
     """
@@ -127,5 +135,5 @@ def _chop(values: np.array, win_len: int) -> Tuple[np.array, np.array]:
     return np.stack(X), np.stack(y)
 
 
-if __name__ == "main":
-    _get_data_paths(r'C:\Users\marty\Projects\scorer\proj_data\raw\trial_2_mouse_b1aqm1.csv')
+# if __name__ == "main":
+print(_get_data_paths(r'C:\Users\marty\Projects\scorer\proj_data\raw\trial_2_mouse_b1aqm1.csv'))
