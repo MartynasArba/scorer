@@ -92,9 +92,12 @@ class SettingsWidget(QWidget):
         """
         filename, _ = QFileDialog.getOpenFileName(self, 'load file', self.params['project_path'], 'Text files (*.json *.txt)')
         if filename:
-            self.params = load_metadata(filename)
-        self.update_label()
-        self.warn_if_not_set()
+            updated_data = load_metadata(filename)
+            if isinstance(updated_data, dict):
+                self.params.clear() #remove old keys but keep old object so sync is not broken
+                self.params.update(updated_data) #merge new values into existing dict
+            self.update_label()
+            self.warn_if_not_set()
         
     def warn_if_not_set(self) -> None:
         """

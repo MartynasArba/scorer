@@ -4,8 +4,8 @@ from PyQt5.QtWidgets import (
     QFileDialog, QLineEdit, QCheckBox
 )
 
-from data.preprocessing import from_Oslo_csv, from_non_annotated_csv
-from data.loaders import load_from_csv
+from data.preprocessing import from_Oslo_csv, from_non_annotated_csv, load_from_csv, load_from_csv_in_chunks
+from torchaudio.functional import resample
        
 # TODO: write more funcs in data.preprocessing to reflect checkmarks
 # TODO: add textboxes next to checks where values are needed
@@ -102,24 +102,63 @@ class PreprocessWidget(QWidget):
         
         if self.selected_file:      # if not set, will be None
             #load file, check if chunks are needed
-            if not self.chunk_check.isChecked():
-                raw = load_from_csv(self.selected_file) #paths also needed here
-                pass
-                
-            else:
-                #TODO: add support for loading chunks, probably rework to a for loop with an iterator
-                print('support for loading chunks not added yet')
+            chunk_size = None if not self.chunk_check.isChecked() else int(self.chunk_size_field.text()) #set chunk size if checked
+            states = None if not self.testing_check.isChecked() else -1 #mark last col as states if checked
+            if not self.chunk_check.isChecked():    
+                raw_ecog, raw_emg, states = load_from_csv(self.selected_file, metadata = self.params, states = states)
+                print('run further preprocessing on whole file')
+                self._preprocess(raw_ecog, raw_emg) #this should handle which preprocessing steps should be done 
                 pass
             
+            else:
+                for i, (ecog_chunk, emg_chunk, states_chunk) in enumerate(load_from_csv_in_chunks(self.selected_file, metadata = self.params, states = states, chunk_size = chunk_size)):
+                    print('run further preprocessing on chunks')
+                    self._preprocess(ecog_chunk, emg_chunk)
+                    if i > 5:
+                        break
+                    pass            
         else:
             self.label.setText('select a valid file!')
     
         #check that self.selected_file is set and exists
         # read checkboxes (ex. if self.filter_check.isChecked(): do stuff)   
-        #maybe preprocessing safely in a background thread (eventually, to avoid UI freezing).
+        #maybe preprocessing in a background thread (eventually, to avoid UI freezing).
         #write pop-up messages when done
         #mark what was done in metadata
         #add progress bar
+        
+    def _preprocess(self, ecog, emg):
+        """
+        check what's checked, run corresponding funcs
+        """
+        self.params['preprocessing'] = []
+        
+        if self.resample_check.isChecked():
+            print(f'before resampling: {ecog.size()}')
+            ecog, emg = self._resample(ecog, emg)
+            print(f'after resampling: {ecog.size()}')
+        
+        print(f'preprocessing steps done: {self.params['preprocessing']}')
+            
+        return ecog, emg
+    
+    def _resample(self, ecog, emg):
+        sample_rate = float(self.params.get('sample_rate', 0))
+        new_rate = int(self.sr_field.text())
+        self.params['preprocessing']+= ['resampling']
+        self.params['new_sample_rate'] = new_rate
+        ecog = ecog.T #initially shape is (sample, channel) because of how its saved, resample requires time to be last dim
+        emg = emg.T
+        ecog = resample(ecog, sample_rate, new_rate)
+        emg = resample(emg, sample_rate, new_rate)
+        return ecog, emg
+        
+    
+    def _chop(self, ecog, emg, states = None):
+        """
+        run chopping func
+        """ 
+        pass
 
     def select_file(self) -> None:
         """

@@ -41,8 +41,9 @@ class SleepWindow(QMainWindow):
             'group', 
             'trial', 
             'sample_rate', 
-            'n_channels', 
-            'emg_channel'
+            'ecog_channels', 
+            'emg_channels',
+            'device'
             ]
         #create metadata dict ("global", to be shared across widgets)
         self.metadata = {param : None for param in params}

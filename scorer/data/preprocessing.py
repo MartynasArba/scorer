@@ -7,12 +7,55 @@ import os
 from pathlib import Path
 from typing import Tuple
 
-def load_from_csv(path: str, metadata: dict = None) -> torch.Tensor:
+def load_from_csv(path: str, metadata: dict = None, states: int = None):
     """
     loads data from csv into a torch tensor
     """
-    pass
+    ecog_channels = metadata.get('ecog_channels', None)
+    emg_channels = metadata.get('emg_channels', None)
+    device = metadata.get('device', 'cuda')
+    #if cuda is not available
+    device = "cpu" if not torch.cuda.is_available() else device
+    #should be changed later to support chunks // could also move to numpy, but it's probably not necessary now and questionable in general
+    data = pd.read_csv(path)
+    try:
+        ecog_channels = [int(ch) for ch in ecog_channels.split(',')]
+        emg_channels = [int(ch) for ch in emg_channels.split(',')]
+    except Exception as e:
+        print(f'Something went wrong when parsing metadata of channel numbers in load_from_csv: {e}')
+        return None, None, None
+
+    ecog = torch.tensor(data.iloc[:, ecog_channels].values, device = device)
+    emg = torch.tensor(data.iloc[:, emg_channels].values, device = device)
+
+    if states:
+        states = torch.tensor(data.iloc[:, states].values, device = device)
     
+    del data
+    return ecog, emg, states
+            
+            
+def load_from_csv_in_chunks(path: str, metadata: dict = None, states: int = None, chunk_size: int = None):
+    """
+    loads data from csv into a torch tensor in chunks, returns a generator
+    """
+    ecog_channels = metadata.get('ecog_channels', None)
+    emg_channels = metadata.get('emg_channels', None)
+    device = metadata.get('device', 'cuda')
+    #if cuda is not available
+    device = "cpu" if not torch.cuda.is_available() else device
+    try:
+        ecog_channels = [int(ch) for ch in ecog_channels.split(',')]
+        emg_channels = [int(ch) for ch in emg_channels.split(',')]
+    except Exception as e:
+        print(f'Something went wrong when parsing metadata of channel numbers in load_from_csv: {e}')
+        return None, None, None
+    
+    for chunk in pd.read_csv(path, chunksize = chunk_size):
+        ecog_chunk = torch.tensor(chunk.iloc[:, ecog_channels].values, device=device)
+        emg_chunk = torch.tensor(chunk.iloc[:, emg_channels].values, device=device)
+        states_chunk = torch.tensor(chunk.iloc[:, states].values, device=device) if states else None 
+        yield ecog_chunk, emg_chunk, states_chunk
 
 def from_Oslo_csv(path: str, sep: str = '\\') -> None:
     """
@@ -134,6 +177,3 @@ def _chop(values: np.array, win_len: int) -> Tuple[np.array, np.array]:
     
     return np.stack(X), np.stack(y)
 
-
-# if __name__ == "main":
-print(_get_data_paths(r'C:\Users\marty\Projects\scorer\proj_data\raw\trial_2_mouse_b1aqm1.csv'))
