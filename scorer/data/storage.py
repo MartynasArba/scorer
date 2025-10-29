@@ -76,6 +76,12 @@ def load_metadata(path: str) -> dict:
         metadata = json.load(f)
     return metadata
 
+def save_preprocessed(path: str) -> dict:
+    """
+    WIP: saves preprocessed data
+    """
+    pass
+
 # testing
 if __name__ == "main":
     y, save = construct_paths(r"C:\Users\marty\Projects\scorer\proj_data\processed\trial_1_mouse_b1aqm2_X.pkl")

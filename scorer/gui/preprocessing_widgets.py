@@ -102,13 +102,13 @@ class PreprocessWidget(QWidget):
         
         if self.selected_file:      # if not set, will be None
             #load file, check if chunks are needed
-            #
             if not self.chunk_check.isChecked():
-                
                 raw = load_from_csv(self.selected_file) #paths also needed here
+                pass
                 
             else:
-                #TODO: add support for loading chunks
+                #TODO: add support for loading chunks, probably rework to a for loop with an iterator
+                print('support for loading chunks not added yet')
                 pass
             
         else:
