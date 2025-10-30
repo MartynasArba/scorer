@@ -1,10 +1,10 @@
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel,
+    QPushButton, QLabel, QMessageBox,
     QFileDialog, QLineEdit, QCheckBox
 )
 
-from data.preprocessing import from_Oslo_csv, from_non_annotated_csv, load_from_csv, load_from_csv_in_chunks
+from data.preprocessing import load_from_csv, load_from_csv_in_chunks, bandpass_filter
 from torchaudio.functional import resample
        
 # TODO: write more funcs in data.preprocessing to reflect checkmarks
@@ -38,7 +38,7 @@ class PreprocessWidget(QWidget):
         #add textboxes next to some of these
         self.chunk_check = QCheckBox("load in chunks? set size:") #text: chunk size
         self.chunk_size_field = QLineEdit(self)
-        self.chunk_size_field.setText("100000")
+        self.chunk_size_field.setText("1000000")
         chunk_layout = QHBoxLayout()
         chunk_layout.addWidget(self.chunk_check)
         chunk_layout.addWidget(self.chunk_size_field)
@@ -50,7 +50,7 @@ class PreprocessWidget(QWidget):
         sr_layout.addWidget(self.resample_check)
         sr_layout.addWidget(self.sr_field)   
         
-        self.filter_check = QCheckBox("bandpass filter data? limits:") #add option to select filter boundaries
+        self.filter_check = QCheckBox("bandpass filter ecog data? limits:") #add option to select filter boundaries
         self.low_bound_field = QLineEdit(self)
         self.high_bound_field = QLineEdit(self)
         self.low_bound_field.setText("0.5")
@@ -59,6 +59,16 @@ class PreprocessWidget(QWidget):
         filter_layout.addWidget(self.filter_check)
         filter_layout.addWidget(self.low_bound_field)
         filter_layout.addWidget(self.high_bound_field)  
+        
+        self.emg_filter_check = QCheckBox("bandpass filter emg data? limits:") #add option to select filter boundaries
+        self.emg_low_bound_field = QLineEdit(self)
+        self.emg_high_bound_field = QLineEdit(self)
+        self.emg_low_bound_field.setText("10")
+        self.emg_high_bound_field.setText("100")
+        emg_filter_layout = QHBoxLayout()
+        emg_filter_layout.addWidget(self.emg_filter_check)
+        emg_filter_layout.addWidget(self.emg_low_bound_field)
+        emg_filter_layout.addWidget(self.emg_high_bound_field)  
         
         self.notch_check = QCheckBox("use notch filter? freq to remove:")    #add option to select custom notch filter
         self.notch_value_field = QLineEdit(self)
@@ -82,7 +92,7 @@ class PreprocessWidget(QWidget):
         self.testing_check = QCheckBox("use pre-scored states when chopping (for testing only)")
         self.overwrite_files_check = QCheckBox("overwrite files")
         
-        for l in [chunk_layout, sr_layout, filter_layout, notch_layout, chop_layout]:
+        for l in [chunk_layout, sr_layout, filter_layout, emg_filter_layout, notch_layout, chop_layout]:
             layout.addLayout(l)
         
         for box in [self.calculate_sum_power_check, self.calculate_band_power_check, 
@@ -106,16 +116,16 @@ class PreprocessWidget(QWidget):
             states = None if not self.testing_check.isChecked() else -1 #mark last col as states if checked
             if not self.chunk_check.isChecked():    
                 raw_ecog, raw_emg, states = load_from_csv(self.selected_file, metadata = self.params, states = states)
-                print('run further preprocessing on whole file')
+                print('read data')
                 self._preprocess(raw_ecog, raw_emg) #this should handle which preprocessing steps should be done 
                 pass
             
             else:
                 for i, (ecog_chunk, emg_chunk, states_chunk) in enumerate(load_from_csv_in_chunks(self.selected_file, metadata = self.params, states = states, chunk_size = chunk_size)):
-                    print('run further preprocessing on chunks')
+                    print(f'read chunk {i}')
                     self._preprocess(ecog_chunk, emg_chunk)
-                    if i > 5:
-                        break
+                    # if i > 5:
+                        # break
                     pass            
         else:
             self.label.setText('select a valid file!')
@@ -138,11 +148,55 @@ class PreprocessWidget(QWidget):
             ecog, emg = self._resample(ecog, emg)
             print(f'after resampling: {ecog.size()}')
         
+        if self.filter_check.isChecked():
+            if not self.chunk_check.isChecked():
+                #warn that the system might run out of memory
+                response = QMessageBox.warning(self, 'warning',
+                    'chunk loading is not selected, so filtering might cause the system to run out of memory\ncontinue?',
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
+                if response == QMessageBox.StandardButton.Cancel:
+                    print('filtering cancelled')
+                    return None
+                else:
+                    freqs = (self.low_bound_field.text(), self.high_bound_field.text())
+                    ecog = self._bandpass(ecog, freqs)
+                    print('ecog data filtered')
+                                
+            else:
+                    freqs = (self.low_bound_field.text(), self.high_bound_field.text())
+                    ecog = self._bandpass(ecog, freqs)
+                    print('ecog data filtered')
+                    
+        print('preprocessing done')
+                
+        if self.emg_filter_check.isChecked():
+            if not self.chunk_check.isChecked():
+                #warn that the system might run out of memory
+                response = QMessageBox.warning(self, 'warning',
+                    'chunk loading is not selected, so filtering might cause the system to run out of memory\ncontinue?',
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
+                if response == QMessageBox.StandardButton.Cancel:
+                    print('filtering cancelled')
+                    return None
+                else:
+                    freqs = (self.emg_low_bound_field.text(), self.emg_high_bound_field.text())
+                    emg = self._bandpass(emg, freqs)
+                    print('emg data filtered')
+                                
+            else:
+                    freqs = (self.emg_low_bound_field.text(), self.emg_high_bound_field.text())
+                    emg = self._bandpass(emg, freqs)
+                    print('emg data filtered')
+        
         print(f'preprocessing steps done: {self.params['preprocessing']}')
             
         return ecog, emg
     
     def _resample(self, ecog, emg):
+        """
+        applies resample func
+        """
+        
         sample_rate = float(self.params.get('sample_rate', 0))
         new_rate = int(self.sr_field.text())
         self.params['preprocessing']+= ['resampling']
@@ -153,6 +207,22 @@ class PreprocessWidget(QWidget):
         emg = resample(emg, sample_rate, new_rate)
         return ecog, emg
         
+    def _bandpass(self, signal, freqs):
+        """
+        applies bandpass filtering func
+        """
+        self.params['preprocessing']+= ['bandpass']
+        if 'filter_freqs' in self.params.keys():
+            self.params['filter_params'] += [freqs]
+        else:
+            self.params['filter_params'] = [freqs]
+            
+        signal = bandpass_filter(signal = signal, 
+                                 sr = self.params.get('sample_rate', 250), 
+                                 freqs = freqs, 
+                                 metadata = self.params)
+        return signal
+    
     
     def _chop(self, ecog, emg, states = None):
         """

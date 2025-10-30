@@ -6,6 +6,24 @@ import pickle
 import os
 from pathlib import Path
 from typing import Tuple
+from scipy.signal import firwin
+from torchaudio.functional import filtfilt
+
+def bandpass_filter(signal: torch.Tensor, sr: int = 250, freqs: Tuple[int, int] = (0.5, 30), metadata = {'device': 'cuda'}) -> torch.Tensor:
+    """
+    designs a FIR bandpass filter based on passed freqs, then uses torch filtfilt to apply it on the signal
+    """
+    #create filter coefs with scipy
+    coefs = firwin(numtaps = 501, 
+                   cutoff = freqs, 
+                   window = 'hamming',
+                   pass_zero = False,
+                   fs = sr)
+    b = torch.tensor(coefs, dtype=torch.float32).to(device = metadata['device'])
+    a = torch.ones_like(b, dtype=torch.float32).to(device = metadata['device']) #filtfilt required denominator param, but in FIR no adaptation so = 1
+    signal = signal.to(dtype = torch.float32, device = metadata['device'])
+    signal = filtfilt(signal, a, b)
+    return signal
 
 def load_from_csv(path: str, metadata: dict = None, states: int = None):
     """
@@ -25,11 +43,11 @@ def load_from_csv(path: str, metadata: dict = None, states: int = None):
         print(f'Something went wrong when parsing metadata of channel numbers in load_from_csv: {e}')
         return None, None, None
 
-    ecog = torch.tensor(data.iloc[:, ecog_channels].values, device = device)
-    emg = torch.tensor(data.iloc[:, emg_channels].values, device = device)
+    ecog = torch.tensor(data.iloc[:, ecog_channels].values, device = device, dtype = torch.float32)
+    emg = torch.tensor(data.iloc[:, emg_channels].values, device = device, dtype = torch.float32)
 
     if states:
-        states = torch.tensor(data.iloc[:, states].values, device = device)
+        states = torch.tensor(data.iloc[:, states].values, device = device, dtype = torch.float32)
     
     del data
     return ecog, emg, states
@@ -176,4 +194,3 @@ def _chop(values: np.array, win_len: int) -> Tuple[np.array, np.array]:
             i += win_len
     
     return np.stack(X), np.stack(y)
-
