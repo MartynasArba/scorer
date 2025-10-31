@@ -160,7 +160,7 @@ def save_windowed(tensors: tuple,
             prev_data = torch.load(f)
             if not isinstance(prev_data, torch.Tensor):
                 prev_data = torch.from_numpy(prev_data).to(dtype = torch.float32).to(metadata.get('device', 'cpu'))
-            to_save = torch.cat((prev_data, to_save), dim = 0)
+            to_save = torch.cat((prev_data.to(device = to_save.device), to_save), dim = 0)
             
     with open(save_path, 'wb') as f:
         torch.save(to_save, f) 
@@ -175,7 +175,7 @@ def save_windowed(tensors: tuple,
             prev_states = torch.load(f)
             if not isinstance(prev_states, torch.Tensor):
                 prev_states = torch.from_numpy(prev_states).to(dtype = torch.long).to(metadata.get('device', 'cpu'))
-            states = torch.cat((prev_states, states.to(dtype = torch.long)), dim  = 0)
+            states = torch.cat((prev_states.to(device = states.device), states.to(dtype = torch.long)), dim  = 0)
 
     with open(states_path, 'wb') as f:
         torch.save(states, f)
@@ -225,8 +225,9 @@ def _chop_by_state(states: torch.Tensor,
             i = start_idx
             while i + win_len <= end_idx:
                 segment = values[..., i:i + win_len]
-                X.append(segment)
-                y.append(current_state)
+                if segment.size(-1) == win_len:
+                    X.append(segment)
+                    y.append(current_state)
                 i += win_len
     if len(X) == 0:
         return torch.empty(0), torch.empty(0)

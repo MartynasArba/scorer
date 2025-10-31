@@ -8,14 +8,14 @@ from torchaudio.functional import resample
 from data.preprocessing import load_from_csv, load_from_csv_in_chunks, bandpass_filter, notch_filter
 from data.storage import save_tensor, save_windowed
 
-#TODO: finish preprocessing funcs
+#TODO: finish preprocessing funcs, missing sum and band powers
+#TODO: write warning if chunk size is not divisible by window that was chopped
 #TODO: add status bar instead of printing
 #TODO: to avoid freezing, move to thread
-#TODO: move to .h5 for chunked data or .pt / current option might not be efficient and cause crashing if files become too large
+#TODO: move to .h5 for chunked data (or rethink otherwise): current option might not be efficient and cause crashing if files become too large
 #TODO: in storage, move path construction to a helper function
 #states are saved together with processed data (except in windows) because whole file viewing is impossible in this GUI, so preprocess/raw saving is only for exporting
 #print what was done and in what order is the tensor stacked, should always be ecog [num_channels], emg [num_channels], extracted features, states
-
 class PreprocessWidget(QWidget):
     """
     class of the preprocessing widget. 
@@ -157,8 +157,7 @@ class PreprocessWidget(QWidget):
             else:
                 for i, (ecog_chunk, emg_chunk, states_chunk) in enumerate(load_from_csv_in_chunks(self.selected_file, metadata = self.params, states = states, chunk_size = chunk_size)):
                     print(f'read chunk {i}')
-                    tensor_seq = (ecog_chunk, emg_chunk) if not self.testing_check.isChecked() else (ecog_chunk, emg_chunk, states_chunk)
-                    
+                    tensor_seq = (ecog_chunk, emg_chunk) if not self.testing_check.isChecked() else (ecog_chunk, emg_chunk, states_chunk.unsqueeze(-1))
                     if self.save_raw_check.isChecked():
                         save_tensor(tensor_seq = tensor_seq, 
                                 metadata = self.params,
@@ -167,7 +166,7 @@ class PreprocessWidget(QWidget):
                                 raw = True)
                     
                     ecog, emg = self._preprocess(ecog_chunk, emg_chunk)
-                    tensor_seq = (ecog, emg) if not self.testing_check.isChecked() else (ecog, emg, states_chunk)   #change so states are saved separatelly
+                    tensor_seq = (ecog, emg) if not self.testing_check.isChecked() else (ecog, emg, states_chunk.unsqueeze(-1))   #change so states are saved separatelly
                     print(f'preprocessing chunk {i}')
                     
                     if self.save_preprocessed_check.isChecked():
