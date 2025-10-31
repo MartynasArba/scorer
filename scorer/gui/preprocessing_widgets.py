@@ -4,11 +4,17 @@ from PyQt5.QtWidgets import (
     QFileDialog, QLineEdit, QCheckBox
 )
 
-from data.preprocessing import load_from_csv, load_from_csv_in_chunks, bandpass_filter
 from torchaudio.functional import resample
-       
-# TODO: write more funcs in data.preprocessing to reflect checkmarks
-# TODO: add textboxes next to checks where values are needed
+from data.preprocessing import load_from_csv, load_from_csv_in_chunks, bandpass_filter, notch_filter
+from data.storage import save_tensor, save_windowed
+
+#TODO: finish preprocessing funcs
+#TODO: add status bar instead of printing
+#TODO: to avoid freezing, move to thread
+#TODO: move to .h5 for chunked data or .pt / current option might not be efficient and cause crashing if files become too large
+#TODO: in storage, move path construction to a helper function
+#states are saved together with processed data (except in windows) because whole file viewing is impossible in this GUI, so preprocess/raw saving is only for exporting
+#print what was done and in what order is the tensor stacked, should always be ecog [num_channels], emg [num_channels], extracted features, states
 
 class PreprocessWidget(QWidget):
     """
@@ -77,26 +83,29 @@ class PreprocessWidget(QWidget):
         notch_layout.addWidget(self.notch_check)
         notch_layout.addWidget(self.notch_value_field)   
         
-        
-        self.chop_check = QCheckBox("chop data into chunks for the next step? window size: ")   #add option to select win length
-        self.win_len_field = QLineEdit(self)
-        self.win_len_field.setText("1000")
-        chop_layout = QHBoxLayout()
-        chop_layout.addWidget(self.chop_check)
-        chop_layout.addWidget(self.win_len_field)  
-        
         #no param options        
         self.calculate_sum_power_check = QCheckBox("calculate sum power?") 
-        self.calculate_band_power_check = QCheckBox("calculate band power?")
-        self.save_processed_check = QCheckBox("save processed signal?")   
+        self.calculate_band_power_check = QCheckBox("calculate band power?") 
         self.testing_check = QCheckBox("use pre-scored states when chopping (for testing only)")
-        self.overwrite_files_check = QCheckBox("overwrite files")
         
-        for l in [chunk_layout, sr_layout, filter_layout, emg_filter_layout, notch_layout, chop_layout]:
+        #checkmarks for saving options
+        saving_layout = QHBoxLayout()
+        self.save_raw_check = QCheckBox('save raw tensors?')
+        self.save_preprocessed_check = QCheckBox('save preprocessed tensors?')
+        self.save_windowed_check = QCheckBox('save windowed data for scoring? window size:')
+        self.win_len_field = QLineEdit(self)
+        self.win_len_field.setText("1000")
+        self.save_overwrite_check = QCheckBox("overwrite files")
+        saving_layout.addWidget(self.save_raw_check)
+        saving_layout.addWidget(self.save_preprocessed_check)
+        saving_layout.addWidget(self.save_windowed_check)
+        saving_layout.addWidget(self.win_len_field)
+        saving_layout.addWidget(self.save_overwrite_check)
+        
+        for l in [chunk_layout, sr_layout, filter_layout, emg_filter_layout, notch_layout, saving_layout]:
             layout.addLayout(l)
         
-        for box in [self.calculate_sum_power_check, self.calculate_band_power_check, 
-                    self.save_processed_check, self.testing_check, self.overwrite_files_check]:
+        for box in [self.calculate_sum_power_check, self.calculate_band_power_check, self.testing_check]:
             layout.addWidget(box)
         
         #button that runs everything
@@ -106,36 +115,96 @@ class PreprocessWidget(QWidget):
 
     def run_preprocessing(self) -> None:
         """
-        reads what steps were selected and runs preprocessing
-        """
-        #TODO: implement actual preprocessing
+        reads what steps were selected and runs reading, preprocessing, saving
         
+        """
         if self.selected_file:      # if not set, will be None
             #load file, check if chunks are needed
             chunk_size = None if not self.chunk_check.isChecked() else int(self.chunk_size_field.text()) #set chunk size if checked
             states = None if not self.testing_check.isChecked() else -1 #mark last col as states if checked
             if not self.chunk_check.isChecked():    
                 raw_ecog, raw_emg, states = load_from_csv(self.selected_file, metadata = self.params, states = states)
-                print('read data')
-                self._preprocess(raw_ecog, raw_emg) #this should handle which preprocessing steps should be done 
-                pass
-            
+                tensor_seq = (raw_ecog, raw_emg) if not self.testing_check.isChecked() else (raw_ecog, raw_emg, states)
+                print('data read done')
+                
+                if self.save_raw_check.isChecked():
+                    save_tensor(tensor_seq = tensor_seq, 
+                                metadata = self.params,
+                                overwrite = self.save_overwrite_check.isChecked(),
+                                chunk = None,
+                                raw = True)
+                    
+                ecog, emg = self._preprocess(raw_ecog, raw_emg) #this should handle which preprocessing steps should be done 
+                tensor_seq = (ecog, emg) if not self.testing_check.isChecked() else (ecog, emg, states)
+                print('preprocessing done')
+                
+                if self.save_preprocessed_check.isChecked():
+                    save_tensor(tensor_seq = tensor_seq, 
+                                metadata = self.params,
+                                overwrite = self.save_overwrite_check.isChecked(),
+                                chunk = None,
+                                raw = False)
+                    
+                if self.save_windowed_check.isChecked():
+                    save_windowed(tensors = (ecog, emg), 
+                                    states = states, 
+                                    metadata = self.params, 
+                                    win_len = int(self.win_len_field.text()),
+                                    chunked = False, 
+                                    overwrite = self.save_overwrite_check.isChecked(),
+                                    testing = self.testing_check.isChecked())
+    
             else:
                 for i, (ecog_chunk, emg_chunk, states_chunk) in enumerate(load_from_csv_in_chunks(self.selected_file, metadata = self.params, states = states, chunk_size = chunk_size)):
                     print(f'read chunk {i}')
-                    self._preprocess(ecog_chunk, emg_chunk)
-                    # if i > 5:
-                        # break
-                    pass            
+                    tensor_seq = (ecog_chunk, emg_chunk) if not self.testing_check.isChecked() else (ecog_chunk, emg_chunk, states_chunk)
+                    
+                    if self.save_raw_check.isChecked():
+                        save_tensor(tensor_seq = tensor_seq, 
+                                metadata = self.params,
+                                overwrite = self.save_overwrite_check.isChecked(),
+                                chunk = i,
+                                raw = True)
+                    
+                    ecog, emg = self._preprocess(ecog_chunk, emg_chunk)
+                    tensor_seq = (ecog, emg) if not self.testing_check.isChecked() else (ecog, emg, states_chunk)   #change so states are saved separatelly
+                    print(f'preprocessing chunk {i}')
+                    
+                    if self.save_preprocessed_check.isChecked():
+                        save_tensor(tensor_seq = tensor_seq, 
+                                metadata = self.params,
+                                overwrite = self.save_overwrite_check.isChecked(),
+                                chunk = i,
+                                raw = False)
+                        
+                    if self.save_windowed_check.isChecked():
+                        save_windowed(tensors = (ecog, emg), 
+                                    states = states_chunk, 
+                                    metadata = self.params, 
+                                    win_len = int(self.win_len_field.text()),
+                                    chunked = True, 
+                                    overwrite = self.save_overwrite_check.isChecked(),
+                                    testing = self.testing_check.isChecked())
+                    #TODO: remove testing
+                    if i >= 5:
+                        break
+
         else:
             self.label.setText('select a valid file!')
-    
-        #check that self.selected_file is set and exists
-        # read checkboxes (ex. if self.filter_check.isChecked(): do stuff)   
-        #maybe preprocessing in a background thread (eventually, to avoid UI freezing).
-        #write pop-up messages when done
-        #mark what was done in metadata
-        #add progress bar
+        
+    def _not_chunked_warning(self):
+        """
+        warning that the system might run out of memory because data isn't being loaded in chunks
+        """
+        
+        if not self.chunk_check.isChecked():
+                #warn that the system might run out of memory 
+                response = QMessageBox.warning(self, 'warning',
+                    'chunk loading is not selected, so filtering might cause the system to run out of memory\ncontinue?',
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
+                return response
+        else:
+            return None
         
     def _preprocess(self, ecog, emg):
         """
@@ -147,50 +216,42 @@ class PreprocessWidget(QWidget):
             print(f'before resampling: {ecog.size()}')
             ecog, emg = self._resample(ecog, emg)
             print(f'after resampling: {ecog.size()}')
+            
+        if ((self.filter_check.isChecked() | self.emg_filter_check.isChecked()) | self.notch_check.isChecked()) & (not self.chunk_check.isChecked()):
+            warn = self._not_chunked_warning()
+        else: 
+            warn = None
         
         if self.filter_check.isChecked():
-            if not self.chunk_check.isChecked():
-                #warn that the system might run out of memory
-                response = QMessageBox.warning(self, 'warning',
-                    'chunk loading is not selected, so filtering might cause the system to run out of memory\ncontinue?',
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
-                if response == QMessageBox.StandardButton.Cancel:
-                    print('filtering cancelled')
-                    return None
-                else:
-                    freqs = (self.low_bound_field.text(), self.high_bound_field.text())
-                    ecog = self._bandpass(ecog, freqs)
-                    print('ecog data filtered')
-                                
+            if warn == QMessageBox.StandardButton.Cancel:
+                print('ecog filtering cancelled')
+                return ecog
             else:
-                    freqs = (self.low_bound_field.text(), self.high_bound_field.text())
-                    ecog = self._bandpass(ecog, freqs)
-                    print('ecog data filtered')
-                    
-        print('preprocessing done')
+                freqs = (float(self.low_bound_field.text()), float(self.high_bound_field.text()))
+                ecog = self._bandpass(ecog, freqs)
+                print('ecog data filtered')
                 
         if self.emg_filter_check.isChecked():
-            if not self.chunk_check.isChecked():
-                #warn that the system might run out of memory
-                response = QMessageBox.warning(self, 'warning',
-                    'chunk loading is not selected, so filtering might cause the system to run out of memory\ncontinue?',
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
-                if response == QMessageBox.StandardButton.Cancel:
-                    print('filtering cancelled')
-                    return None
-                else:
-                    freqs = (self.emg_low_bound_field.text(), self.emg_high_bound_field.text())
-                    emg = self._bandpass(emg, freqs)
-                    print('emg data filtered')
-                                
+            if warn == QMessageBox.StandardButton.Cancel:
+                print('emg filtering cancelled')
+                return emg                                
             else:
-                    freqs = (self.emg_low_bound_field.text(), self.emg_high_bound_field.text())
+                    freqs = (float(self.emg_low_bound_field.text()), float(self.emg_high_bound_field.text()))
                     emg = self._bandpass(emg, freqs)
                     print('emg data filtered')
-        
-        print(f'preprocessing steps done: {self.params['preprocessing']}')
+                    
+        if self.notch_check.isChecked():
+            if warn == QMessageBox.StandardButton.Cancel:
+                print('notch filtering cancelled')
+                return ecog, emg                                
+            else:
+                freq = int(self.notch_value_field.text())
+                ecog, emg = self._notch(ecog, freq), self._notch(emg, freq)
+                print('notch filtering done')
+    
+        print(f'preprocessing steps done: {self.params["preprocessing"]}')
             
-        return ecog, emg
+        return ecog, emg        
     
     def _resample(self, ecog, emg):
         """
@@ -200,11 +261,12 @@ class PreprocessWidget(QWidget):
         sample_rate = float(self.params.get('sample_rate', 0))
         new_rate = int(self.sr_field.text())
         self.params['preprocessing']+= ['resampling']
-        self.params['new_sample_rate'] = new_rate
+        self.params['old_sample_rate'] = self.params['sample_rate']
+        self.params['sample_rate'] = new_rate
         ecog = ecog.T #initially shape is (sample, channel) because of how its saved, resample requires time to be last dim
         emg = emg.T
-        ecog = resample(ecog, sample_rate, new_rate)
-        emg = resample(emg, sample_rate, new_rate)
+        ecog = resample(ecog.contiguous(), sample_rate, new_rate)
+        emg = resample(emg.contiguous(), sample_rate, new_rate)
         return ecog, emg
         
     def _bandpass(self, signal, freqs):
@@ -223,6 +285,19 @@ class PreprocessWidget(QWidget):
                                  metadata = self.params)
         return signal
     
+    def _notch(self, signal, freq):
+        """
+        applies notch filtering for the specified freq
+        """
+        self.params['preprocessing']+= ['notch']
+        if 'notch_freq' not in self.params.keys():
+            self.params['notch_freq'] = [freq]
+            
+        signal = notch_filter(signal = signal,
+                              sr = self.params.get('sample_rate', 250),
+                              freq_to_remove = freq,
+                              metadata = self.params)
+        return signal
     
     def _chop(self, ecog, emg, states = None):
         """

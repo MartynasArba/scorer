@@ -17,7 +17,7 @@ class SettingsWidget(QWidget):
         super().__init__()
         
         self.params = metadata
-        self.params['scoring_started'] = str(datetime.now().strftime('%Y%m%d%H%M%S')) #only generate once and can't be changed
+        self.params['scoring_started'] = str(datetime.now().strftime('%Y%m%d%H%M%S')) #only generate once per file, otherwise should reset
         self.params['project_path'] = '.'
         self.params['date'] = str(datetime.now().strftime('%Y_%m_%d'))
         
@@ -49,6 +49,11 @@ class SettingsWidget(QWidget):
         btn_load = QPushButton('load params from .json file')
         btn_load.clicked.connect(self.load_metadata_func)
         self.metadata_layout.addWidget(btn_load)
+        
+        
+        btn_reset_metadata = QPushButton('reset metadata params')
+        btn_reset_metadata.clicked.connect(self.reset_metadata)
+        self.metadata_layout.addWidget(btn_reset_metadata)
             
         self.update_label()
 
@@ -121,4 +126,14 @@ class SettingsWidget(QWidget):
         """
         if param in self.params.keys():
             self.params[param] = new_val
+        self.update_label()
+
+    def reset_metadata(self):
+        """
+        resets metadata
+        """
+        for param in self.params.keys():
+            self.params[param] = None
+        self.params['scoring_started'] = str(datetime.now().strftime('%Y%m%d%H%M%S'))
+        
         self.update_label()

@@ -3,8 +3,8 @@ import numpy as np
 import torch
 import pickle
 from torch.utils.data import Dataset
-from torchaudio.transforms import Resample
 from torchaudio.transforms import Spectrogram
+from pathlib import Path
 from typing import Tuple
 
 class SleepSignals(Dataset):
@@ -24,7 +24,6 @@ class SleepSignals(Dataset):
             device: device to use (torch), default cuda
             transform: optional transform to apply. Defaults to None.
             augment: whether to apply data augmentation, relevant when training models
-            resample_freq: whether to resample the signal1
             spectral_features: whether to compute frequency descriptors. options: spectrogram, fourier, band_powers, None
         """
         #implement all options for calculate_freqs!
@@ -33,20 +32,33 @@ class SleepSignals(Dataset):
 
         
         with open(data_path, 'rb') as f:
-            X_list = pickle.load(f)
-            #check whether it's a list of arrays or already concatenated
-            if isinstance(X_list, list):                         
-                self.all_samples = torch.from_numpy(np.concatenate(X_list)).to(dtype = torch.float32)
+            if Path(data_path).suffix == '.pt':
+                self.all_samples = torch.load(data_path)
+                self.all_samples = self.all_samples.to(dtype = torch.float32, device = device)
             else:
-                self.all_samples = torch.from_numpy(X_list).to(dtype = torch.float32)
-                
+                X_list = pickle.load(f)
+                #check whether it's a list of arrays or already concatenated
+                if not isinstance(X_list, torch.Tensor):
+                    if isinstance(X_list, list):                         
+                        self.all_samples = torch.from_numpy(np.concatenate(X_list)).to(dtype = torch.float32)
+                    else:
+                        self.all_samples = torch.from_numpy(X_list).to(dtype = torch.float32)
+                else:
+                    self.all_samples = self.all_samples.to(dtype = torch.float32)
+                    
         with open(score_path, 'rb') as f:
-            y_list = pickle.load(f)
-    
-            if isinstance(y_list, list):
-                self.all_labels = torch.from_numpy(np.concatenate(y_list)).to(dtype=torch.long)
+            if Path(score_path).suffix == '.pt':
+                self.all_labels = torch.load(score_path)
+                self.all_labels = self.all_labels.to(dtype = torch.float32, device = device)
             else:
-                self.all_labels = torch.from_numpy(y_list).to(dtype=torch.long)
+                y_list = pickle.load(f)
+                if not isinstance(X_list, torch.Tensor):
+                    if isinstance(y_list, list):
+                        self.all_labels = torch.from_numpy(np.concatenate(y_list)).to(dtype=torch.long)
+                    else:
+                        self.all_labels = torch.from_numpy(y_list).to(dtype=torch.long)
+                else:
+                    self.all_labels = self.all_labels.to(dtype = torch.long)
                 
         #move to device after loading        
         self.all_samples = self.all_samples.to(device)
@@ -61,10 +73,7 @@ class SleepSignals(Dataset):
         self.device = device
         self.transform = transform
         self.augment = augment
-        
-        #should move some transforms to preprocessing - if it can happen on raw data, it should. 
-        self.resample_freq = resample_freq
-        self.resampler = Resample(orig_freq = 1000, new_freq = resample_freq).to(device)
+
         self.spectral = spectral_features
         
         if self.spectral == 'spectrogram':
@@ -85,12 +94,6 @@ class SleepSignals(Dataset):
             
         sample = self.all_samples[idx, :, :] #should be 1000, 2
         label = self.all_labels[idx]
-        
-        if self.resample_freq != 1000:
-            # Resample each channel separately
-            channel_0 = self.resampler(sample[:, 0])  # [1000] -> [resample_freq]
-            channel_1 = self.resampler(sample[:, 1])  # [1000] -> [resample_freq]
-            sample = torch.stack([channel_0, channel_1], dim=0)  # [2, resample_freq]
         
         if self.augment:
             sample = self._augment(sample)
