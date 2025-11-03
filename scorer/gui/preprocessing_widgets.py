@@ -5,11 +5,15 @@ from PyQt5.QtWidgets import (
 )
 
 from torchaudio.functional import resample
-from data.preprocessing import load_from_csv, load_from_csv_in_chunks, bandpass_filter, notch_filter, sum_power
+from data.preprocessing import load_from_csv, load_from_csv_in_chunks, bandpass_filter, sum_power, band_powers
 from data.storage import save_tensor, save_windowed
 
+#TODO: critical: adapt filters (and everything else) to transposed format
 #TODO: adapt run_preprocessing to new _preprocessing output
-#TODO: finish preprocessing funcs, missing sum and band powers
+#TODO: fix saving
+#TODO: something is wrong in chunked loading windwed saving
+#TODO: fix band pws and sum pows
+#TODO: update metadata to reflect saved data shape, if powers were added, this needs to somehow be reflected
 #TODO: add status bar instead of printing
 #TODO: to avoid freezing, move to thread
 #TODO: move to .h5 for chunked data (or rethink otherwise): current option might not be efficient and cause crashing if files become too large
@@ -134,8 +138,11 @@ class PreprocessWidget(QWidget):
                                 chunk = None,
                                 raw = True)
                     
-                ecog, emg = self._preprocess(raw_ecog, raw_emg) #this should handle which preprocessing steps should be done 
-                tensor_seq = (ecog, emg) if not self.testing_check.isChecked() else (ecog, emg, states.unsqueeze(-1))
+                tensor_seq = self._preprocess(raw_ecog, raw_emg) #this should handle which preprocessing steps should be done 
+                ecog, emg = tensor_seq[0], tensor_seq[1]
+                print('really needs to be changed!!!')
+                    #TODO: change 
+                tensor_seq = (ecog, emg) if not self.testing_check.isChecked() else (ecog, emg, states.unsqueeze(0))# data dim is channels x time here
                 print('preprocessing done')
                 
                 if self.save_preprocessed_check.isChecked():
@@ -165,8 +172,11 @@ class PreprocessWidget(QWidget):
                                 chunk = i,
                                 raw = True)
                     
-                    ecog, emg = self._preprocess(ecog_chunk, emg_chunk)
-                    tensor_seq = (ecog, emg) if not self.testing_check.isChecked() else (ecog, emg, states_chunk.unsqueeze(-1))   #change so states are saved separatelly
+                    tensor_seq = self._preprocess(ecog_chunk, emg_chunk)
+                    ecog, emg = tensor_seq[0], tensor_seq[1]
+                    print('really needs to be changed!!!')
+                    #TODO: change 
+                    tensor_seq = (ecog, emg) if not self.testing_check.isChecked() else (ecog, emg, states_chunk.unsqueeze(0))   #change so states are saved separatelly
                     print(f'preprocessing chunk {i}')
                     
                     if self.save_preprocessed_check.isChecked():
@@ -210,13 +220,16 @@ class PreprocessWidget(QWidget):
         check what's checked, run corresponding funcs
         """
         self.params['preprocessing'] = []
+        ecog, emg = ecog.T, emg.T       #torch usually requires channels x time
+        print(f'sizes before preprocessing:{ecog.size()}, {emg.size()}')
         
         if self.resample_check.isChecked():
             print(f'before resampling: {ecog.size()}')
-            ecog, emg = self._resample(ecog, emg)
+            ecog, emg = self._resample(ecog, emg)   #should be fine here still
             print(f'after resampling: {ecog.size()}')
             
-        if ((self.filter_check.isChecked() | self.emg_filter_check.isChecked()) | self.notch_check.isChecked()) & (not self.chunk_check.isChecked()):
+        if ((self.filter_check.isChecked() | self.emg_filter_check.isChecked()) | self.notch_check.isChecked() | 
+            self.calculate_band_power_check.isChecked() | self.calculate_sum_power_check.isChecked()) & (not self.chunk_check.isChecked()):
             warn = self._not_chunked_warning()
         else: 
             warn = None
@@ -252,14 +265,21 @@ class PreprocessWidget(QWidget):
             if warn == QMessageBox.StandardButton.Cancel:
                 print('notch filtering cancelled')
             else:
-                ecog_power = sum_power(ecog, smoothing = 0.2, sr = self.params['sample_rate'], device = self.params['device'], normalize = True)
-                emg_power = sum_power(emg, smoothing = 0.2, sr = self.params['sample_rate'], device = self.params['device'], normalize = True)
+                ecog_power = sum_power(ecog, smoothing = 0.2, sr = int(self.params.get('sample_rate', 250)), device = self.params['device'], normalize = True)
+                emg_power = sum_power(emg, smoothing = 0.2, sr = int(self.params.get('sample_rate', 250)), device = self.params['device'], normalize = True)
         else:
             ecog_power, emg_power = None, None
         
         if self.calculate_band_power_check.isChecked():
-            pass
-    
+            if warn == QMessageBox.StandardButton.Cancel:
+                print('notch filtering cancelled')
+            bands = band_powers(signal = ecog, bands = {'delta': (0.5, 4),
+                                                        'theta': (5, 9),
+                                                        'sigma': (9, 16)}, 
+                                sr = int(self.params.get('sample_rate', 250)), 
+                                device= self.params['device'], smoothen = 0.2)
+            print(bands.keys())
+            
         print(f'preprocessing steps done: {self.params["preprocessing"]}')
             
         return (ecog, emg, ecog_power, emg_power)
@@ -274,8 +294,6 @@ class PreprocessWidget(QWidget):
         self.params['preprocessing']+= ['resampling']
         self.params['old_sample_rate'] = self.params['sample_rate']
         self.params['sample_rate'] = new_rate
-        ecog = ecog.T #initially shape is (sample, channel) because of how its saved, resample requires time to be last dim
-        emg = emg.T
         ecog = resample(ecog.contiguous(), sample_rate, new_rate)
         emg = resample(emg.contiguous(), sample_rate, new_rate)
         return ecog, emg
@@ -289,11 +307,13 @@ class PreprocessWidget(QWidget):
             self.params['filter_params'] += [freqs]
         else:
             self.params['filter_params'] = [freqs]
-            
-        signal = bandpass_filter(signal = signal, 
-                                 sr = self.params.get('sample_rate', 250), 
-                                 freqs = freqs, 
-                                 metadata = self.params)
+        print(f'in bandpass filter signal size: {signal.size()}')
+        signal = bandpass_filter(signal,
+                        sr = int(self.params.get('sample_rate', 250)),
+                        freqs = freqs,
+                        numtaps = 501,
+                        device = self.params.get('device', 'cuda'),
+                        zero_phase = True)
         return signal
     
     def _notch(self, signal, freq):
@@ -304,17 +324,13 @@ class PreprocessWidget(QWidget):
         if 'notch_freq' not in self.params.keys():
             self.params['notch_freq'] = [freq]
             
-        signal = notch_filter(signal = signal,
-                              sr = self.params.get('sample_rate', 250),
-                              freq_to_remove = freq,
-                              metadata = self.params)
+        signal = bandpass_filter(signal,
+                        sr = int(self.params.get('sample_rate', 250)),
+                        freqs = (freq-1, freq+1),
+                        numtaps = 501,
+                        device = self.params.get('device', 'cuda'),
+                        zero_phase = True)
         return signal
-    
-    def _chop(self, ecog, emg, states = None):
-        """
-        run chopping func
-        """ 
-        pass
 
     def select_file(self) -> None:
         """
