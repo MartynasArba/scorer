@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Tuple
 from scipy.signal import firwin
 from torchaudio.functional import filtfilt
+import torch.functional as F
 
 def notch_filter(signal: torch.Tensor, sr: int = 250, freq_to_remove: float = 50., metadata = {'device': 'cuda'}) -> torch.Tensor:
     """
@@ -41,6 +42,26 @@ def bandpass_filter(signal: torch.Tensor, sr: int = 250, freqs: Tuple[float, flo
     signal = signal.to(dtype = torch.float32, device = metadata['device'])
     signal = filtfilt(signal, a, b)
     return signal
+
+def sum_power(signal: torch.Tensor, smoothing: float = 0.2, sr: int = 250, device: str = 'cuda', normalize = True):
+    """
+    calculates sum power by rms with moving average smoothing kernel
+    """
+    
+    if signal is not None:
+        if device is not None:
+            signal = signal.copy().to(device)
+        if signal.ndim == 1:
+            signal = signal.unsqueeze(0)
+        power = signal ** 2    #get power by squaring
+        win_len = max(1, int(round(smoothing * sr))) #moving average window size
+        kernel = torch.ones(1, 1, win_len, device = power.device) / win_len #construct kernel, pytorch requires shape ch_in, ch_out, size. division to get average instead of sum
+        pad = win_len // 2  #add some padding
+        avg_power = F.conv1d(power.unsqueeze(1), kernel, padding=pad)
+        rms = torch.sqrt(avg_power.squeeze(1) + 1e-12)  #very small value ensures float smoothing is never <0
+        if normalize:
+            rms = (rms - torch.min(rms)) / (torch.max(rms) - torch.min(rms))    #scale
+        return rms
 
 def load_from_csv(path: str, metadata: dict = None, states: int = None):
     """

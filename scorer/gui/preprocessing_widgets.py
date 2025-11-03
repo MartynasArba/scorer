@@ -5,11 +5,11 @@ from PyQt5.QtWidgets import (
 )
 
 from torchaudio.functional import resample
-from data.preprocessing import load_from_csv, load_from_csv_in_chunks, bandpass_filter, notch_filter
+from data.preprocessing import load_from_csv, load_from_csv_in_chunks, bandpass_filter, notch_filter, sum_power
 from data.storage import save_tensor, save_windowed
 
+#TODO: adapt run_preprocessing to new _preprocessing output
 #TODO: finish preprocessing funcs, missing sum and band powers
-#TODO: write warning if chunk size is not divisible by window that was chopped
 #TODO: add status bar instead of printing
 #TODO: to avoid freezing, move to thread
 #TODO: move to .h5 for chunked data (or rethink otherwise): current option might not be efficient and cause crashing if files become too large
@@ -124,7 +124,7 @@ class PreprocessWidget(QWidget):
             states = None if not self.testing_check.isChecked() else -1 #mark last col as states if checked
             if not self.chunk_check.isChecked():    
                 raw_ecog, raw_emg, states = load_from_csv(self.selected_file, metadata = self.params, states = states)
-                tensor_seq = (raw_ecog, raw_emg) if not self.testing_check.isChecked() else (raw_ecog, raw_emg, states)
+                tensor_seq = (raw_ecog, raw_emg) if not self.testing_check.isChecked() else (raw_ecog, raw_emg, states.unsqueeze(-1))
                 print('data read done')
                 
                 if self.save_raw_check.isChecked():
@@ -135,7 +135,7 @@ class PreprocessWidget(QWidget):
                                 raw = True)
                     
                 ecog, emg = self._preprocess(raw_ecog, raw_emg) #this should handle which preprocessing steps should be done 
-                tensor_seq = (ecog, emg) if not self.testing_check.isChecked() else (ecog, emg, states)
+                tensor_seq = (ecog, emg) if not self.testing_check.isChecked() else (ecog, emg, states.unsqueeze(-1))
                 print('preprocessing done')
                 
                 if self.save_preprocessed_check.isChecked():
@@ -177,19 +177,19 @@ class PreprocessWidget(QWidget):
                                 raw = False)
                         
                     if self.save_windowed_check.isChecked():
+                        win_len = int(self.win_len_field.text())
+                        if chunk_size % win_len != 0:
+                            print('some data will be lost, chunk size is not divisible by window length')
                         save_windowed(tensors = (ecog, emg), 
                                     states = states_chunk, 
                                     metadata = self.params, 
-                                    win_len = int(self.win_len_field.text()),
+                                    win_len = win_len,
                                     chunked = True, 
                                     overwrite = self.save_overwrite_check.isChecked(),
                                     testing = self.testing_check.isChecked())
                     #TODO: remove testing
                     if i >= 5:
                         break
-
-        else:
-            self.label.setText('select a valid file!')
         
     def _not_chunked_warning(self):
         """
@@ -248,9 +248,21 @@ class PreprocessWidget(QWidget):
                 ecog, emg = self._notch(ecog, freq), self._notch(emg, freq)
                 print('notch filtering done')
     
+        if self.calculate_sum_power_check.isChecked():
+            if warn == QMessageBox.StandardButton.Cancel:
+                print('notch filtering cancelled')
+            else:
+                ecog_power = sum_power(ecog, smoothing = 0.2, sr = self.params['sample_rate'], device = self.params['device'], normalize = True)
+                emg_power = sum_power(emg, smoothing = 0.2, sr = self.params['sample_rate'], device = self.params['device'], normalize = True)
+        else:
+            ecog_power, emg_power = None, None
+        
+        if self.calculate_band_power_check.isChecked():
+            pass
+    
         print(f'preprocessing steps done: {self.params["preprocessing"]}')
             
-        return ecog, emg        
+        return (ecog, emg, ecog_power, emg_power)
     
     def _resample(self, ecog, emg):
         """
