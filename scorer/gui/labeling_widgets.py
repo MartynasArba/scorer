@@ -16,6 +16,11 @@ from gui.plots import plot_signals, plot_spectrogram
 from data.storage import construct_paths, save_pickled_states, load_pickled_states
 from data.loaders import SleepSignals
 
+#TODO: fix quantiles 
+# fix plotting
+# add fft instead of spect
+# integrate metadata
+
 class SleepGUI(QWidget):
     """
     class of the labeling GUI tab
@@ -164,19 +169,18 @@ class SleepGUI(QWidget):
             try:
                 #should automatically generate paths and metadata here
                 self.data_path = file_name
-                
                 score_path, self.score_save_path = construct_paths(self.data_path)
 
                 self.dataset = SleepSignals(data_path = self.data_path, 
                                             score_path = score_path, 
                                             augment = False, 
                                             spectral_features = 'spectrogram')
+                
+                #think here - maybe I can just flatten everything
                 self.states = self.dataset.all_labels.to('cpu').numpy()
                 self.current_idx = 0
                 
-                self.update_screen()
-                self.status_label.setText(f"Loaded: {file_name}")
-                
+                #this doesn't exist anymore, and will have consequences for later where its used
                 self.ecog_ylim = [self.dataset.q01_0.item(), self.dataset.q99_0.item()]
                 self.emg_ylim = [self.dataset.q01_1.item(), self.dataset.q99_1.item()]
                 self.ecog_ylim_defaults = self.ecog_ylim.copy()
@@ -187,6 +191,7 @@ class SleepGUI(QWidget):
                 
                 #start plotting
                 self.update_screen()
+                self.status_label.setText(f"Loaded: {file_name}")
                 
             except Exception as e:
                 self.status_label.setText(f"Error loading file: {e}")

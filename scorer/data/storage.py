@@ -44,7 +44,7 @@ def save_pickled_states(states: list, path: str) -> None:
     dumps states to pickle
     """
     with open(path, 'wb') as f:
-        print('TODO: change save_pickled_states to only dump states which are being scored by current scorer')
+        print('TODO: change save_pickled_states to only dump states which are being scored by current scorer or delete this message')
         pickle.dump(states, f)
 
 def load_pickled_states(path: str) -> array:
@@ -52,7 +52,7 @@ def load_pickled_states(path: str) -> array:
     loads scores from pickle
     """
     with open(path, 'rb') as f:
-        print('TODO: change load_pickled_states usage to have list of states or delete this')
+        print('TODO: change load_pickled_states usage to have list of states or delete this message')
         states = pickle.load(f)
     return states
 
