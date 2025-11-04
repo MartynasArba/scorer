@@ -50,7 +50,6 @@ class SettingsWidget(QWidget):
         btn_load.clicked.connect(self.load_metadata_func)
         self.metadata_layout.addWidget(btn_load)
         
-        
         btn_reset_metadata = QPushButton('reset metadata params')
         btn_reset_metadata.clicked.connect(self.reset_metadata)
         self.metadata_layout.addWidget(btn_reset_metadata)
@@ -98,6 +97,7 @@ class SettingsWidget(QWidget):
         filename, _ = QFileDialog.getOpenFileName(self, 'load file', self.params['project_path'], 'Text files (*.json *.txt)')
         if filename:
             updated_data = load_metadata(filename)
+            print(updated_data)
             if isinstance(updated_data, dict):
                 self.params.clear() #remove old keys but keep old object so sync is not broken
                 self.params.update(updated_data) #merge new values into existing dict

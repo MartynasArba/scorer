@@ -159,7 +159,7 @@ class SleepGUI(QWidget):
         """
         pop up window to select pre-processed data, then loads it to the scorer
         """
-        file_name, _ = QFileDialog.getOpenFileName(self, caption = "Select file to load", directory = ".", filter = "Pickle files (*.pkl)")
+        file_name, _ = QFileDialog.getOpenFileName(self, caption = "Select file to load", directory = ".", filter = "Data files (*.pt *.pkl)")
         if file_name:
             try:
                 #should automatically generate paths and metadata here
@@ -167,7 +167,10 @@ class SleepGUI(QWidget):
                 
                 score_path, self.score_save_path = construct_paths(self.data_path)
 
-                self.dataset = SleepSignals(data_path = self.data_path, score_path = score_path, augment = False, spectral_features = 'spectrogram')
+                self.dataset = SleepSignals(data_path = self.data_path, 
+                                            score_path = score_path, 
+                                            augment = False, 
+                                            spectral_features = 'spectrogram')
                 self.states = self.dataset.all_labels.to('cpu').numpy()
                 self.current_idx = 0
                 

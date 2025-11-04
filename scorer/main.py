@@ -11,20 +11,12 @@ sys.exit(app.exec_())
 
 #TODO:
 #
+#add user defined optional name in settings to be more readable next to unique ID
+#
+#overwrite doesn't fully overwrite as appending happens in chunk mode. should be fixed.
+#
 #preprocessing:
-#calculate sum powers:
-#To compare ECoG power across genotypes and different mice, 
-# raw data were normalized to the average total power in the 
-# 0.5–30 Hz frequency range during NREM sleep per mouse 
-# and average power was calculated using the MATLAB bandpower() function.
-#calculate band power:
-#get abs Hilbert transform after filtering (following Bojarskaite 2020)
-#smoothen with Gaussian filter, sigma = .2s
-# NREM sleep was defined as high-amplitude delta (0.5–4 Hz) ECoG activity and low EMG activity; 
-# IS was defined as an increase in theta (5–9 Hz) and sigma (9–16 Hz) ECoG activity, 
-# and a concomitant decrease in delta ECoG activity; 
-# REM sleep was defined as low-amplitude theta ECoG activity with theta/delta ratio >0.5 and low EMG activity.
-# 
+#
 #add status bar or label instead of prints
 #make sure the output is compatible with the data loader
 #future development: implement threading to prevent freezing, 
@@ -36,6 +28,7 @@ sys.exit(app.exec_())
 #implement at least one model
 #
 #manual labeling:
+#fix - something is still wrong with loading data
 #change spectrogram to multi-channel viewing
 #these channels can then include sum/band power
 #add an option to load and plot multiple scores

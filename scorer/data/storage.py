@@ -7,7 +7,7 @@ from numpy import array
 import torch
 import numpy as np
 
-def construct_paths(data_path: str, **metadata) ->Tuple[str, str]:    
+def construct_paths(data_path: str, format: str = '.pkl', **metadata) ->Tuple[str, str]:    
     """
     Gets data path from QFileDialog, returns save paths for pickle and state annotation arrays   
     """
@@ -30,12 +30,12 @@ def construct_paths(data_path: str, **metadata) ->Tuple[str, str]:
         if not os.path.exists(score_folder):
             os.makedirs(score_folder)
         
-        states_array_path = score_folder / f'{unique_id}_scores_{scorer}_{date}_{animal}_{trial}_{repetition_id}.pkl'
+        states_array_path = score_folder / f'{unique_id}{metadata.get('optional_tag', '')}_scores_{scorer}_{date}_{animal}_{trial}_{repetition_id}{format}'
         
         #don't overwrite existing files
         while states_array_path.exists():
             repetition_id += 1
-            states_array_path = score_folder / f'{unique_id}_scores_{scorer}_{date}_{animal}_{trial}_{repetition_id}.pkl'
+            states_array_path = score_folder / f'{unique_id}{metadata.get('optional_tag', '')}_scores_{scorer}_{date}_{animal}_{trial}_{repetition_id}{format}'
     
         return y_file_path, states_array_path
 
@@ -88,22 +88,23 @@ def save_tensor(tensor_seq: tuple = (),
     saves tensors that were passed in a sequence
     path is set according to metadata
     """
+
     proj_path = Path(metadata.get('project_path', '.'))
     
     if raw:
         if isinstance(chunk, int):
-            file_name = f'{metadata.get('scoring_started', 'noID')}_chunk{chunk}_raw.pt' 
+            file_name = f'{metadata.get('scoring_started', 'noID')}{metadata.get('optional_tag', '')}_chunk{chunk}_raw.pt' 
         else:
-            file_name = f'{metadata.get('scoring_started', 'noID')}_raw.pt' 
+            file_name = f'{metadata.get('scoring_started', 'noID')}{metadata.get('optional_tag', '')}_raw.pt' 
         save_folder = proj_path / "raw"
         if not os.path.exists(save_folder):
             os.makedirs(save_folder)
         save_path = save_folder / file_name
     else:
         if isinstance(chunk, int):
-            file_name = f'{metadata.get('scoring_started', 'noID')}_chunk{chunk}_processed.pt' 
+            file_name = f'{metadata.get('scoring_started', 'noID')}{metadata.get('optional_tag', '')}_chunk{chunk}_processed.pt' 
         else:
-            file_name = f'{metadata.get('scoring_started', 'noID')}_processed.pt' 
+            file_name = f'{metadata.get('scoring_started', 'noID')}{metadata.get('optional_tag', '')}_processed.pt' 
         save_folder = proj_path / "processed"
         if not os.path.exists(save_folder):
             os.makedirs(save_folder)
@@ -113,7 +114,21 @@ def save_tensor(tensor_seq: tuple = (),
         if os.path.exists(save_path):
             print('file already exists, not saving')
             return None
+    
+    #ensure everything is a tensor
+    tensor_seq = [tensor for tensor in tensor_seq if isinstance(tensor, torch.Tensor)]
+    #ensure lengths match
+    min_len = min(t.size(1) for t in tensor_seq)
+    tensor_seq = [tensor[:, : min_len] for tensor in tensor_seq]
+    
+    if len(set(t.size(1) for t in tensor_seq)) > 1:
+        print(f"length mismatch in save_tensor: {[t.size(1) for t in tensor_seq]}, truncating to {min_len}")
+    
+    if len(tensor_seq) == 0:
+        print('no tensors to save')
+        return None
 
+    
     to_save = torch.cat(tensor_seq, dim = 0)
     with open(save_path, 'wb') as f:
         torch.save(to_save, f)
@@ -129,7 +144,7 @@ def save_windowed(tensors: tuple,
     
     #get path
     proj_path = Path(metadata.get('project_path', '.'))
-    file_name = f'{metadata.get('scoring_started', 'noID')}_X.pt' 
+    file_name = f'{metadata.get('scoring_started', 'noID')}{metadata.get('optional_tag', '')}_X.pt' 
     save_folder = proj_path / "processed"
     if not os.path.exists(save_folder):
         os.makedirs(save_folder)
@@ -140,8 +155,21 @@ def save_windowed(tensors: tuple,
             print('file already exists, not saving')
             return None
 
-    #here it's still channels x time
-    to_save = torch.cat(tensors, dim = 0)
+    tensors = [tensor for tensor in tensors if isinstance(tensor, torch.Tensor)]
+    if len(tensors) == 0:
+        print('no tensors to save')
+        return None
+    #do the same as in save_tensor to align times
+    min_len = min(t.size(1) for t in tensors)
+    tensors = [tensor[:, : min_len] for tensor in tensors]
+    
+    if len(set(t.size(1) for t in tensors)) > 1:
+        print(f"length mismatch in save_windowed: {[t.size(1) for t in tensors]}, truncating to {min_len}")
+
+    #here it should still be channels x time
+    if len(tensors) > 1:
+        to_save = torch.cat(tensors, dim = 0)
+        
     if states is None:
         states = torch.zeros(size = (1, to_save.size()[-1]), dtype=torch.long, device=to_save.device)
     else:
@@ -155,27 +183,33 @@ def save_windowed(tensors: tuple,
     else:
         to_save, states = _chop_by_state(states, to_save, win_len)
     
+    if to_save.size(0) == 0:
+        print("Warning: to_save has 0 channels — skipping save.")
+        return
+
     if chunked & os.path.exists(save_path):
         with open(save_path, 'rb') as f:
             prev_data = torch.load(f)
-            if not isinstance(prev_data, torch.Tensor):
+            print(f'shape of prev_data: {prev_data.size()}')
+            print(f'shape of to_save: {to_save.size()}')
+            if isinstance(prev_data, np.ndarray):
                 prev_data = torch.from_numpy(prev_data).to(dtype = torch.float32).to(metadata.get('device', 'cpu'))
-            to_save = torch.cat((prev_data.to(device = to_save.device), to_save), dim = 0)
+            to_save = torch.cat((prev_data.to(device = to_save.device), to_save), dim = 1)
             
     with open(save_path, 'wb') as f:
         torch.save(to_save, f) 
 
     #handle states       
-        
-    states_name = f'{metadata.get('scoring_started', 'noID')}_y.pt'
+    states_name = f'{metadata.get('scoring_started', 'noID')}{metadata.get('optional_tag', '')}_y.pt'
     states_path = save_folder / states_name
 
     if chunked & os.path.exists(states_path):
         with open(states_path, 'rb') as f:
             prev_states = torch.load(f)
-            if not isinstance(prev_states, torch.Tensor):
+            print(f'prev_states shape: {prev_states.size()}')
+            if isinstance(prev_states, np.ndarray):
                 prev_states = torch.from_numpy(prev_states).to(dtype = torch.long).to(metadata.get('device', 'cpu'))
-            states = torch.cat((prev_states.to(device = states.device), states.to(dtype = torch.long)), dim  = 0)
+            states = torch.cat((prev_states.to(device = states.device), states.to(dtype = torch.long)), dim  = 1)
 
     with open(states_path, 'wb') as f:
         torch.save(states, f)
@@ -224,7 +258,7 @@ def _chop_by_state(states: torch.Tensor,
         if end_idx - start_idx >= win_len:
             i = start_idx
             while i + win_len <= end_idx:
-                segment = values[..., i:i + win_len]
+                segment = values[..., i : i + win_len]
                 if segment.size(-1) == win_len:
                     X.append(segment)
                     y.append(current_state)

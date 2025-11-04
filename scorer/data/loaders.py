@@ -35,6 +35,7 @@ class SleepSignals(Dataset):
             if Path(data_path).suffix == '.pt':
                 self.all_samples = torch.load(data_path)
                 self.all_samples = self.all_samples.to(dtype = torch.float32, device = device)
+                print(f'loaded tensor: {self.all_samples.size()}')
             else:
                 X_list = pickle.load(f)
                 #check whether it's a list of arrays or already concatenated
@@ -45,11 +46,13 @@ class SleepSignals(Dataset):
                         self.all_samples = torch.from_numpy(X_list).to(dtype = torch.float32)
                 else:
                     self.all_samples = self.all_samples.to(dtype = torch.float32)
+                print(f'loaded tensor from numpy: {self.all_samples.size()}')
                     
         with open(score_path, 'rb') as f:
             if Path(score_path).suffix == '.pt':
                 self.all_labels = torch.load(score_path)
-                self.all_labels = self.all_labels.to(dtype = torch.float32, device = device)
+                self.all_labels = self.all_labels.to(dtype = torch.long, device = device)
+                print(f'loaded tensor: {self.all_labels.size()}')
             else:
                 y_list = pickle.load(f)
                 if not isinstance(X_list, torch.Tensor):
@@ -59,6 +62,7 @@ class SleepSignals(Dataset):
                         self.all_labels = torch.from_numpy(y_list).to(dtype=torch.long)
                 else:
                     self.all_labels = self.all_labels.to(dtype = torch.long)
+                print(f'loaded tensor from numpy: {self.all_labels.size()}')
                 
         #move to device after loading        
         self.all_samples = self.all_samples.to(device)

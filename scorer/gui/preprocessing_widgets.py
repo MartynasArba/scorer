@@ -8,12 +8,6 @@ from torchaudio.functional import resample
 from data.preprocessing import load_from_csv, load_from_csv_in_chunks, bandpass_filter, sum_power, band_powers
 from data.storage import save_tensor, save_windowed
 
-#TODO: critical: adapt filters (and everything else) to transposed format
-#TODO: adapt run_preprocessing to new _preprocessing output
-#TODO: fix saving
-#TODO: something is wrong in chunked loading windwed saving
-#TODO: fix band pws and sum pows
-#TODO: update metadata to reflect saved data shape, if powers were added, this needs to somehow be reflected
 #TODO: add status bar instead of printing
 #TODO: to avoid freezing, move to thread
 #TODO: move to .h5 for chunked data (or rethink otherwise): current option might not be efficient and cause crashing if files become too large
@@ -139,21 +133,20 @@ class PreprocessWidget(QWidget):
                                 raw = True)
                     
                 tensor_seq = self._preprocess(raw_ecog, raw_emg) #this should handle which preprocessing steps should be done 
-                ecog, emg = tensor_seq[0], tensor_seq[1]
-                print('really needs to be changed!!!')
-                    #TODO: change 
-                tensor_seq = (ecog, emg) if not self.testing_check.isChecked() else (ecog, emg, states.unsqueeze(0))# data dim is channels x time here
+                tensor_seq = tensor_seq if not self.testing_check.isChecked() else tensor_seq + (states.unsqueeze(0))# data dim is channels x time here
                 print('preprocessing done')
                 
                 if self.save_preprocessed_check.isChecked():
-                    save_tensor(tensor_seq = tensor_seq, 
+                    save_preprocessed_seq = tensor_seq if not self.testing_check.isChecked() else tensor_seq + tuple([states_chunk.unsqueeze(0)])   #change so states are saved separatelly
+
+                    save_tensor(tensor_seq = save_preprocessed_seq, 
                                 metadata = self.params,
                                 overwrite = self.save_overwrite_check.isChecked(),
                                 chunk = None,
                                 raw = False)
-                    
+
                 if self.save_windowed_check.isChecked():
-                    save_windowed(tensors = (ecog, emg), 
+                    save_windowed(tensors = tensor_seq, 
                                     states = states, 
                                     metadata = self.params, 
                                     win_len = int(self.win_len_field.text()),
@@ -173,14 +166,12 @@ class PreprocessWidget(QWidget):
                                 raw = True)
                     
                     tensor_seq = self._preprocess(ecog_chunk, emg_chunk)
-                    ecog, emg = tensor_seq[0], tensor_seq[1]
-                    print('really needs to be changed!!!')
-                    #TODO: change 
-                    tensor_seq = (ecog, emg) if not self.testing_check.isChecked() else (ecog, emg, states_chunk.unsqueeze(0))   #change so states are saved separatelly
-                    print(f'preprocessing chunk {i}')
-                    
+                    print(f'preprocessing done chunk {i}')
+                                        
                     if self.save_preprocessed_check.isChecked():
-                        save_tensor(tensor_seq = tensor_seq, 
+                        save_preprocessed_seq = tensor_seq if not self.testing_check.isChecked() else tensor_seq + tuple([states_chunk.unsqueeze(0)])   #change so states are saved separatelly
+                        
+                        save_tensor(tensor_seq = save_preprocessed_seq, 
                                 metadata = self.params,
                                 overwrite = self.save_overwrite_check.isChecked(),
                                 chunk = i,
@@ -190,16 +181,13 @@ class PreprocessWidget(QWidget):
                         win_len = int(self.win_len_field.text())
                         if chunk_size % win_len != 0:
                             print('some data will be lost, chunk size is not divisible by window length')
-                        save_windowed(tensors = (ecog, emg), 
+                        save_windowed(tensors = tensor_seq, 
                                     states = states_chunk, 
                                     metadata = self.params, 
                                     win_len = win_len,
                                     chunked = True, 
                                     overwrite = self.save_overwrite_check.isChecked(),
                                     testing = self.testing_check.isChecked())
-                    #TODO: remove testing
-                    if i >= 5:
-                        break
         
     def _not_chunked_warning(self):
         """
@@ -219,9 +207,12 @@ class PreprocessWidget(QWidget):
         """
         check what's checked, run corresponding funcs
         """
+        #construct channel explainer
+        self.params['channels_after_preprocessing'] = ['ecog'] * int(self.params['ecog_channels']) + ['emg'] * int(self.params['emg_channels'])
+        
         self.params['preprocessing'] = []
         ecog, emg = ecog.T, emg.T       #torch usually requires channels x time
-        print(f'sizes before preprocessing:{ecog.size()}, {emg.size()}')
+        print(f'sample sizes before preprocessing:{ecog.size()}, {emg.size()}')
         
         if self.resample_check.isChecked():
             print(f'before resampling: {ecog.size()}')
@@ -267,6 +258,9 @@ class PreprocessWidget(QWidget):
             else:
                 ecog_power = sum_power(ecog, smoothing = 0.2, sr = int(self.params.get('sample_rate', 250)), device = self.params['device'], normalize = True)
                 emg_power = sum_power(emg, smoothing = 0.2, sr = int(self.params.get('sample_rate', 250)), device = self.params['device'], normalize = True)
+                self.params['preprocessing']+= ['sum_pows_calculated']
+                self.params['channels_after_preprocessing'] += ['ecog_sum_power'] * int(self.params['ecog_channels']) + ['emg_sum_power'] * int(self.params['emg_channels'])
+
         else:
             ecog_power, emg_power = None, None
         
@@ -278,11 +272,14 @@ class PreprocessWidget(QWidget):
                                                         'sigma': (9, 16)}, 
                                 sr = int(self.params.get('sample_rate', 250)), 
                                 device= self.params['device'], smoothen = 0.2)
-            print(bands.keys())
-            
-        print(f'preprocessing steps done: {self.params["preprocessing"]}')
-            
-        return (ecog, emg, ecog_power, emg_power)
+            self.params['preprocessing']+= ['band_pows_calculated']
+            self.params['channels_after_preprocessing'] += list(bands.keys())
+
+        else:
+            bands = {None : None}        
+        
+        return (ecog, emg, ecog_power, emg_power) + tuple(bands.values())
+         
     
     def _resample(self, ecog, emg):
         """
