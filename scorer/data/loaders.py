@@ -4,6 +4,7 @@ import torch
 import pickle
 from torch.utils.data import Dataset
 from torchaudio.transforms import Spectrogram
+from torch.fft import rfft, rfftfreq
 from pathlib import Path
 from typing import Tuple
 
@@ -17,16 +18,19 @@ class SleepSignals(Dataset):
           3:'IS',
           4:'REM'
     """
-    def __init__(self, data_path, score_path, device = 'cuda', transform = None, augment = False, spectral_features = None) -> None:
+    def __init__(self, data_path, score_path, device = 'cuda', transform = None, augment = False, spectral_features = None, metadata: dict = {}) -> None:
         """        
             Args:
             file_path: path to the folder where chopped data is stored. Can handle one or multiple animals, but the recordings need to be in one file. 
             device: device to use (torch), default cuda
             transform: optional transform to apply. Defaults to None.
             augment: whether to apply data augmentation, relevant when training models
-            spectral_features: whether to compute frequency descriptors. options: spectrogram, fourier, None. 
+            spectral_features: whether to compute frequency descriptors. options: spectrogram, fourier, None.
             Applied on the 1st passed channel
+            metadata is the same as everywhere else, shared between other parts of the program
         """
+        self.params = metadata
+        
         self.all_samples = None
         self.all_labels = None
         
@@ -41,9 +45,9 @@ class SleepSignals(Dataset):
         #runs out of memory, so if too many samples, use a random subset
         if self.all_labels.size(0) > 1000:
             rand_subset = torch.randint(0, self.all_labels.size(0), size = (1000,))      
-            self.channel_ylims = [(torch.quantile(self.all_samples[rand_subset, dim, :].reshape(-1), q = .01), torch.quantile(self.all_samples[rand_subset, dim, :].reshape(-1), q = .99)) for dim in range(self.all_samples.size(1))]
+            self.channel_ylims = [(torch.quantile(self.all_samples[rand_subset, dim, :].reshape(-1), q = .01).item(), torch.quantile(self.all_samples[rand_subset, dim, :].reshape(-1), q = .99).item()) for dim in range(self.all_samples.size(1))]
         else:
-            self.channel_ylims = [(torch.quantile(self.all_samples[:, dim, :].reshape(-1), q = .01), torch.quantile(self.all_samples[:, dim, :].reshape(-1), q = .99)) for dim in range(self.all_samples.size(1))]
+            self.channel_ylims = [(torch.quantile(self.all_samples[:, dim, :].reshape(-1), q = .01).item(), torch.quantile(self.all_samples[:, dim, :].reshape(-1), q = .99).item()) for dim in range(self.all_samples.size(1))]
         
         self.device = device
         self.transform = transform
@@ -76,6 +80,9 @@ class SleepSignals(Dataset):
             sample = self.transform(sample)
         if self.spectral == 'spectrogram':
             sample = (sample, self._spect(sample, channel = 0))
+        elif self.spectral == 'fourier':
+            sample = (sample, self._fft(sample, channel = 0))
+        
         return sample, label
     
     def _load(self, data_path, score_path):
@@ -155,3 +162,15 @@ class SleepSignals(Dataset):
         """
         spect = self.spect(x[channel, :])         
         return spect.to(self.device)
+    
+    def _fft(self, x: torch.Tensor, channel: int = 0) -> torch.Tensor:
+        """
+        compute fft for passed data
+        """
+        
+        fft = rfft(x[channel, :])
+        power = torch.abs(fft) ** 2
+        freqs = rfftfreq(x.size(-1), d = 1 / int(self.params.get('sample_rate', 250)))
+        output = torch.stack((power, freqs), dim = -1)      #stacked power/freqs tensor
+        
+        return output.to(self.device)

@@ -25,12 +25,14 @@ class SleepGUI(QWidget):
     """
     class of the labeling GUI tab
     """
-    def __init__(self, dataset: SleepSignals = None) -> None:
+    def __init__(self, dataset: SleepSignals = None, metadata: dict = {}) -> None:
         """
         creates main interface
         """
         super().__init__()
-        self.path = ''
+        
+        self.params = metadata
+        
         self.score_save_path = ''
         self.data_path = ''
         
@@ -40,10 +42,8 @@ class SleepGUI(QWidget):
         self.current_idx = 0
         self.scale = 1
         
-        self.ecog_ylim = [0, 0]
-        self.emg_ylim = [0, 0]
-        self.ecog_ylim_defaults = [0, 0]
-        self.emg_ylim_defaults = [0, 0]
+        self.ylims = [0, 0]
+        self.ylim_defaults = [0, 0]
         self.yscale = 1
         
         #empty copy array to store and load data
@@ -119,7 +119,6 @@ class SleepGUI(QWidget):
         control_layout.addWidget(btn_reset)
         
         #labeling button group
-        
         self.labeling_group = QButtonGroup()
         
         labeling_buttons = [QRadioButton('Unknown: 0'),
@@ -164,7 +163,7 @@ class SleepGUI(QWidget):
         """
         pop up window to select pre-processed data, then loads it to the scorer
         """
-        file_name, _ = QFileDialog.getOpenFileName(self, caption = "Select file to load", directory = ".", filter = "Data files (*.pt *.pkl)")
+        file_name, _ = QFileDialog.getOpenFileName(self, caption = "Select file to load", directory = self.params.get('project_path', '.'), filter = "Data files (*.pt *.pkl)")
         if file_name:
             try:
                 #should automatically generate paths and metadata here
@@ -174,35 +173,37 @@ class SleepGUI(QWidget):
                 self.dataset = SleepSignals(data_path = self.data_path, 
                                             score_path = score_path, 
                                             augment = False, 
-                                            spectral_features = 'spectrogram')
+                                            spectral_features = 'fourier',
+                                            metadata = self.params)
                 
                 #think here - maybe I can just flatten everything
                 self.states = self.dataset.all_labels.to('cpu').numpy()
                 self.current_idx = 0
                 
                 #this doesn't exist anymore, and will have consequences for later where its used
-                self.ecog_ylim = [self.dataset.q01_0.item(), self.dataset.q99_0.item()]
-                self.emg_ylim = [self.dataset.q01_1.item(), self.dataset.q99_1.item()]
-                self.ecog_ylim_defaults = self.ecog_ylim.copy()
-                self.emg_ylim_defaults = self.emg_ylim.copy()
-                
+                self.ylims = self.dataset.channel_ylims
+                self.ylim_defaults = self.dataset.channel_ylims.copy()
+                print(self.ylims)
+
+                print('got to setMaximum for slider values')
                 self.slider_frame.setMaximum(len(self.dataset))
                 self.slider_frame.setValue(0)
                 
                 #start plotting
+                print('got to update_screen()')
                 self.update_screen()
+                print('got to setText')
                 self.status_label.setText(f"Loaded: {file_name}")
                 
             except Exception as e:
                 self.status_label.setText(f"Error loading file: {e}")
-        
         
     def get_data(self) -> torch.Tensor:
         """
         returns selected samples from the dataset, most relevant when scale != 0
         """
         if self.scale == 1:
-            sample = self.dataset[self.current_idx][0]
+            sample = self.dataset[self.current_idx][0]  #why is there a 0 here? - because sample can be tuple of (data, specral), but should be handled correctly
             label = self.states[self.current_idx]       
             return sample, label
         
@@ -241,7 +242,9 @@ class SleepGUI(QWidget):
         """
         runs helpers to update plots and sync labels
         """
+        print('got to update_plot')
         self.update_plot()
+        print('got to update_labels')
         self.update_labels()
 
     def update_labels(self) -> None:
@@ -355,10 +358,8 @@ class SleepGUI(QWidget):
         """
         
         self.yscale = value * 0.01
-        self.ecog_ylim[0] = (self.ecog_ylim_defaults[0] * self.yscale)
-        self.ecog_ylim[1] = (self.ecog_ylim_defaults[1] * self.yscale)
-        self.emg_ylim[0] = (self.emg_ylim_defaults[0] * self.yscale)
-        self.emg_ylim[1] = (self.emg_ylim_defaults[1] * self.yscale)
+        self.ylims = [lim * self.yscale for lim in self.ylims]
+        # TODO: ylims might not be correct, both lims are multiplied by the same val? // or could be correct if 0-centered
         self.update_screen()
     
     def increase_yscale(self) -> None:
@@ -366,10 +367,7 @@ class SleepGUI(QWidget):
         increases y scale
         """     
         self.yscale += 0.05
-        self.ecog_ylim[0] = (self.ecog_ylim_defaults[0] * self.yscale)
-        self.ecog_ylim[1] = (self.ecog_ylim_defaults[1] * self.yscale)
-        self.emg_ylim[0] = (self.emg_ylim_defaults[0] * self.yscale)
-        self.emg_ylim[1] = (self.emg_ylim_defaults[1] * self.yscale)
+        self.ylims = [lim * self.yscale for lim in self.ylims]
         
         self.update_screen()
         
@@ -380,11 +378,7 @@ class SleepGUI(QWidget):
         self.yscale -= 0.05
         
         if self.yscale > 0:
-            self.ecog_ylim[0] = (self.ecog_ylim_defaults[0] * self.yscale)
-            self.ecog_ylim[1] = (self.ecog_ylim_defaults[1] * self.yscale)
-            self.emg_ylim[0] = (self.emg_ylim_defaults[0] * self.yscale)
-            self.emg_ylim[1] = (self.emg_ylim_defaults[1] * self.yscale)
-            
+            self.ylims = [lim * self.yscale for lim in self.ylims]
             self.update_screen()
         
         else:
@@ -411,8 +405,7 @@ class SleepGUI(QWidget):
         """
         # self.current_idx = 0 #debatable whether it should change, probably not
         self.scale = 1
-        self.ecog_ylim = self.ecog_ylim_defaults.copy()
-        self.emg_ylim = self.emg_ylim_defaults.copy()
+        self.ylims = self.ylim_defaults.copy()
         self.yscale = 1
         self.label_whole_screen = False
         
