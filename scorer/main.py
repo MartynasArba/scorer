@@ -30,6 +30,7 @@ sys.exit(app.exec_())
 #change spectrogram to multi-channel viewing
 #add an option to load and plot multiple scores
 #add scorer name to metadata setting, add option to append name
+#set spectral param of SleepDataset somehow and handle both cases
 #save progress automatically every N scores? maybe add checkmark, overwrite option?
 #jump to next unscored sample
 #for multilabel, add agreement/confidence 

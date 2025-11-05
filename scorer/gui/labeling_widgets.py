@@ -12,14 +12,12 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 import matplotlib.pyplot as plt
 import numpy as np
 
-from gui.plots import plot_signals, plot_spectrogram
+from gui.plots import plot_signals, plot_spectrogram, plot_fourier
 from data.storage import construct_paths, save_pickled_states, load_pickled_states
 from data.loaders import SleepSignals
 
-#TODO: fix quantiles 
+#TODO:
 # fix plotting
-# add fft instead of spect
-# integrate metadata
 
 class SleepGUI(QWidget):
     """
@@ -165,7 +163,7 @@ class SleepGUI(QWidget):
         """
         file_name, _ = QFileDialog.getOpenFileName(self, caption = "Select file to load", directory = self.params.get('project_path', '.'), filter = "Data files (*.pt *.pkl)")
         if file_name:
-            try:
+            # try:
                 #should automatically generate paths and metadata here
                 self.data_path = file_name
                 score_path, self.score_save_path = construct_paths(self.data_path)
@@ -173,7 +171,7 @@ class SleepGUI(QWidget):
                 self.dataset = SleepSignals(data_path = self.data_path, 
                                             score_path = score_path, 
                                             augment = False, 
-                                            spectral_features = 'fourier',
+                                            spectral_features = self.params.get('spectral_view', None),
                                             metadata = self.params)
                 
                 #think here - maybe I can just flatten everything
@@ -195,22 +193,22 @@ class SleepGUI(QWidget):
                 print('got to setText')
                 self.status_label.setText(f"Loaded: {file_name}")
                 
-            except Exception as e:
-                self.status_label.setText(f"Error loading file: {e}")
+            # except Exception as e:
+                # self.status_label.setText(f"Error loading file: {e}")
         
     def get_data(self) -> torch.Tensor:
         """
         returns selected samples from the dataset, most relevant when scale != 0
         """
         if self.scale == 1:
-            sample = self.dataset[self.current_idx][0]  #why is there a 0 here? - because sample can be tuple of (data, specral), but should be handled correctly
-            label = self.states[self.current_idx]       
+            sample = self.dataset[self.current_idx][0]  #this is because dataset returns (sample, label) for all idxs
+            label = self.states[self.current_idx]
             return sample, label
         
-        # Concatenate multiple consecutive samples
+        # Concatenate multiple consecutive samples if scale != 1
         samples, spects, labels = [], [], []
         for i in range(self.current_idx, min(self.current_idx + self.scale, len(self.dataset))):
-            sample = self.dataset[i][0]
+            sample = self.dataset[i][0] #take only samples, not states
             label = self.states[i]
             if isinstance(sample, tuple):
                 samples.append(sample[0])
@@ -219,13 +217,17 @@ class SleepGUI(QWidget):
                 samples.append(sample)
             labels.append(label)
 
-        # Concatenate along time dimension - time dimension is 0 here
+        # Concatenate along time dimension - time dimension should be the last one
         if isinstance(sample, tuple):
-            signals = torch.cat(samples, dim = 0)
-            spectrograms = torch.cat(spects, dim = 2)
-            return (signals, spectrograms), labels
+            signals = torch.cat(samples, dim = -1)
+            if self.params.get('spectral_view', None) == 'fourier':
+                spects = torch.cat(spects, dim = -1)
+            if self.params.get('spectral_view', None) == 'spectrogram':
+                spects = torch.cat(spects, dim = -1)
+                
+            return (signals, spects), labels
         else:
-            return torch.cat(samples, dim = 0), labels
+            return torch.cat(samples, dim = -1), labels
         
     def label_data(self, value) -> None:
         """
@@ -269,20 +271,30 @@ class SleepGUI(QWidget):
         self.labeling_group.button(self.states[self.current_idx]).setChecked(True)
         self.labeling_group.blockSignals(False)
         
-    
     def update_plot(self) -> None:
         """
         generates plots and updates the widgets
         """
         sample, label = self.get_data()
-        # Handle tuple (signals, spectrogram)
+        
+        #handle tuples of sample, spectral
         if isinstance(sample, tuple):
             signals, spect = sample
-            fig = plot_signals(signals.to("cpu"), label, ecog_ylim = self.ecog_ylim, emg_ylim = self.emg_ylim)
-            fig2 = plot_spectrogram(spect.to("cpu"))
+            fig = plot_signals(signals.to("cpu").numpy(), label, 
+                               ylims = self.ylims,
+                               sample_rate = int(self.params.get('sample_rate', 250)),
+                               names = self.params.get('channels_after_preprocessing', []))
+            #here should handle spectrogram vs fft differently
+            if self.params.get('spectral_view', None) == 'fourier':
+                fig2 = plot_fourier(spect.to('cpu').numpy())
+            elif self.params.get('spectral_view', None) == 'spectrogram':
+                fig2 = plot_spectrogram(spect.to("cpu").numpy())
             figs = [fig, fig2]
         else:
-            fig = plot_signals(sample.to("cpu"), label)
+            fig = plot_signals(sample.to("cpu").numpy(), label, 
+                               ylims = self.ylims,
+                               sample_rate = int(self.params.get('sample_rate', 250)),
+                               names = self.params.get('channels_after_preprocessing', []))
             figs = [fig]
 
         # Clear old canvases
@@ -358,8 +370,9 @@ class SleepGUI(QWidget):
         """
         
         self.yscale = value * 0.01
-        self.ylims = [lim * self.yscale for lim in self.ylims]
+        self.ylims = [(lim[0] * self.yscale, lim[1] * self.yscale) for lim in self.ylims]
         # TODO: ylims might not be correct, both lims are multiplied by the same val? // or could be correct if 0-centered
+        #should also probably handle band ylims differently
         self.update_screen()
     
     def increase_yscale(self) -> None:
@@ -367,7 +380,7 @@ class SleepGUI(QWidget):
         increases y scale
         """     
         self.yscale += 0.05
-        self.ylims = [lim * self.yscale for lim in self.ylims]
+        self.ylims = [(lim[0] * self.yscale, lim[1] * self.yscale) for lim in self.ylims]
         
         self.update_screen()
         
@@ -378,7 +391,7 @@ class SleepGUI(QWidget):
         self.yscale -= 0.05
         
         if self.yscale > 0:
-            self.ylims = [lim * self.yscale for lim in self.ylims]
+            self.ylims = [(lim[0] * self.yscale, lim[1] * self.yscale) for lim in self.ylims]
             self.update_screen()
         
         else:
