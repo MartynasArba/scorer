@@ -65,7 +65,8 @@ def plot_fourier(fourier) -> plt.figure:
     plots pre-generated fourier transform
     """
     fig, ax = plt.subplots(1, 1, figsize=(10, 3))
-    ax.plot(fourier[1], fourier[0])
+    print(fourier.shape)
+    ax.plot(fourier[:, 1], fourier[:, 0])
     ax.set(title = 'ECoG fft', xlabel = 'power', ylabel = 'frequency')
     plt.tight_layout()
     return fig

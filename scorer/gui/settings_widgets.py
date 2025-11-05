@@ -87,7 +87,8 @@ class SettingsWidget(QWidget):
         """
         filename, _ = QFileDialog.getSaveFileName(self, 'save file', self.params.get('project_path', '.') + f'/{self.params.get('scoring_started', '')}_meta.json', 'Text files (*.json *.txt)')
         if filename:
-            save_metadata(filename, self.params)
+            self.params['metadata_path'] = filename
+            save_metadata(self.params['metadata_path'], self.params)
         self.warn_if_not_set()
     
     def load_metadata_func(self) -> None:

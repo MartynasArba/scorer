@@ -78,10 +78,11 @@ class SleepSignals(Dataset):
             sample = self._augment(sample)
         if self.transform:
             sample = self.transform(sample)
-        if self.spectral == 'spectrogram':
-            sample = (sample, self._spect(sample, channel = 0))
-        elif self.spectral == 'fourier':
-            sample = (sample, self._fft(sample, channel = 0))
+        if self.spectral:
+            if self.spectral == 'spectrogram':
+                sample = (sample, self._spect(sample, channel = 0))
+            elif self.spectral == 'fourier':
+                sample = (sample, self._fft(sample, channel = 0))
         
         return sample, label
     
@@ -167,10 +168,9 @@ class SleepSignals(Dataset):
         """
         compute fft for passed data
         """
-        
-        fft = rfft(x[channel, :])
+        fft = rfft(x[channel, :]).to('cuda')
         power = torch.abs(fft) ** 2
-        freqs = rfftfreq(x.size(-1), d = 1 / int(self.params.get('sample_rate', 250)))
+        freqs = rfftfreq(x.size(-1), d = 1 / int(self.params.get('sample_rate', 250))).to('cuda')
         output = torch.stack((power, freqs), dim = -1)      #stacked power/freqs tensor
         
         return output.to(self.device)

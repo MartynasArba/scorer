@@ -16,9 +16,6 @@ from gui.plots import plot_signals, plot_spectrogram, plot_fourier
 from data.storage import construct_paths, save_pickled_states, load_pickled_states
 from data.loaders import SleepSignals
 
-#TODO:
-# fix plotting
-
 class SleepGUI(QWidget):
     """
     class of the labeling GUI tab

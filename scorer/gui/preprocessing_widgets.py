@@ -6,14 +6,8 @@ from PyQt5.QtWidgets import (
 
 from torchaudio.functional import resample
 from data.preprocessing import load_from_csv, load_from_csv_in_chunks, bandpass_filter, sum_power, band_powers
-from data.storage import save_tensor, save_windowed
+from data.storage import save_tensor, save_windowed, save_metadata
 
-#TODO: add status bar instead of printing
-#TODO: to avoid freezing, move to thread
-#TODO: move to .h5 for chunked data (or rethink otherwise): current option might not be efficient and cause crashing if files become too large
-#TODO: in storage, move path construction to a helper function
-#states are saved together with processed data (except in windows) because whole file viewing is impossible in this GUI, so preprocess/raw saving is only for exporting
-#print what was done and in what order is the tensor stacked, should always be ecog [num_channels], emg [num_channels], extracted features, states
 class PreprocessWidget(QWidget):
     """
     class of the preprocessing widget. 
@@ -181,13 +175,17 @@ class PreprocessWidget(QWidget):
                         win_len = int(self.win_len_field.text())
                         if chunk_size % win_len != 0:
                             print('some data will be lost, chunk size is not divisible by window length')
+                        
+                        append_file = True if i > 0  else False  
+                            
                         save_windowed(tensors = tensor_seq, 
                                     states = states_chunk, 
                                     metadata = self.params, 
                                     win_len = win_len,
-                                    chunked = True, 
+                                    chunked = append_file, 
                                     overwrite = self.save_overwrite_check.isChecked(),
                                     testing = self.testing_check.isChecked())
+        save_metadata(self.params['metadata_path'], self.params)
         
     def _not_chunked_warning(self):
         """

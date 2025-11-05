@@ -94,6 +94,10 @@ def band_powers(signal: torch.Tensor, bands: dict = {'delta': (0.5, 4)}, sr: int
         
         if kernel is not None:
             amplitude = F.conv1d(amplitude, kernel, padding = 'same').squeeze(0)
+        q = torch.quantile(amplitude, q=0.95)
+        amplitude = torch.clamp(amplitude, max = q) #remove vals above 95th quantile
+        #also standardize by std (but not zero-center, because why would I)
+        amplitude /= torch.std(amplitude)
         amplitude = (amplitude - amplitude.min()) / (amplitude.max() - amplitude.min() + 1e-12)
         band_envelopes[name] = amplitude
     return band_envelopes   
