@@ -50,6 +50,11 @@ class SettingsWidget(QWidget):
         btn_load.clicked.connect(self.load_metadata_func)
         self.metadata_layout.addWidget(btn_load)
         
+        #buttons to validate or reset
+        btn_validate_metadata = QPushButton('validate metadata params')
+        btn_validate_metadata.clicked.connect(self.validate_metadata)
+        self.metadata_layout.addWidget(btn_validate_metadata)
+        
         btn_reset_metadata = QPushButton('reset metadata params')
         btn_reset_metadata.clicked.connect(self.reset_metadata)
         self.metadata_layout.addWidget(btn_reset_metadata)
@@ -138,3 +143,44 @@ class SettingsWidget(QWidget):
         self.params['scoring_started'] = str(datetime.now().strftime('%Y%m%d%H%M%S'))
         
         self.update_label()
+        
+    def validate_metadata(self):
+        """
+        validates metadata
+        """
+        pass
+        # validation_dict = {
+        #     'scoring_started', 
+        #     'project_path', 
+        #     'scorer', 
+        #     'date', 
+        #     'animal_id', 
+        #     'group', 
+        #     'trial', 
+        #     'sample_rate', 
+        #     'ecog_channels': , 
+        #     'emg_channels': int,
+        #     'spectral_view': ('fourier', 'spectrogram'),
+        #     'device': ('cuda', 'cpu'),
+        #     'optional_tag': str
+        # }
+        
+        # for param self.params.keys():
+            
+        
+        # params =    [
+        #     'scoring_started', 
+        #     'project_path', 
+        #     'scorer', 
+        #     'date', 
+        #     'animal_id', 
+        #     'group', 
+        #     'trial', 
+        #     'sample_rate', 
+        #     'ecog_channels', 
+        #     'emg_channels',
+        #     'spectral_view',
+        #     'device',
+        #     'optional_tag'
+        #     ]
+        

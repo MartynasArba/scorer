@@ -71,22 +71,26 @@ def band_powers(signal: torch.Tensor, bands: dict = {'delta': (0.5, 4)}, sr: int
     """
     signal = signal.to(device) #make sure just in case
     signal = signal.to(dtype = torch.float32)
+    if signal.ndim == 1:        #just in case a single channel with [, time] is passed
+            signal = signal.unsqueeze(0)
+    if signal.size(dim = 0) > 1:    #if there are more channels, takes the first one
+        signal = signal[0, :].unsqueeze(0)
+    
     band_envelopes = {}
     if smoothen:
         kernel = gaussian_kernel(sigma = smoothen, sr = sr, device = device)
     else:
         kernel = None
-    
-    if signal.ndim == 1:
-            signal = signal.unsqueeze(0)
-    
+
     for name, (low, high) in bands.items():
         center_freq = (low + high) / 2
         Q = center_freq / (high - low)
         filtered = bandpass_biquad(signal, sr, center_freq, Q)
+        print('filtered')
         filtered = filtered.squeeze(0)
         analytic = hilbert_transform(filtered)
         amplitude = torch.abs(analytic) 
+        print('transformed')
         if amplitude.ndim == 1:
             amplitude = amplitude.unsqueeze(0).unsqueeze(0)
         elif amplitude.ndim == 2:
@@ -94,18 +98,20 @@ def band_powers(signal: torch.Tensor, bands: dict = {'delta': (0.5, 4)}, sr: int
         
         if kernel is not None:
             amplitude = F.conv1d(amplitude, kernel, padding = 'same').squeeze(0)
-        q = torch.quantile(amplitude, q=0.95)
+        print('convolved')
+        q = torch.quantile(amplitude[::10], q=0.95) #every 10th value for speed
         amplitude = torch.clamp(amplitude, max = q) #remove vals above 95th quantile
-        #also standardize by std (but not zero-center, because why would I)
+        #also standardize by std (but not zero-center, because that should happen when filtering)
         amplitude /= torch.std(amplitude)
         amplitude = (amplitude - amplitude.min()) / (amplitude.max() - amplitude.min() + 1e-12)
+        print('done')
         band_envelopes[name] = amplitude
     return band_envelopes   
 
 def sum_power(signal: torch.Tensor, smoothing: float = 0.2, sr: int = 250, device: str = 'cuda', normalize = True):
     """
     calculates sum power by rms with moving average smoothing kernel
-    """
+    """    
     signal = signal.to(dtype = torch.float32)
     
     if signal is not None:
@@ -113,15 +119,22 @@ def sum_power(signal: torch.Tensor, smoothing: float = 0.2, sr: int = 250, devic
             signal = signal.to(device)
         if signal.ndim == 1:
             signal = signal.unsqueeze(0)
-        power = signal ** 2    #get power by squaring
-        win_len = max(1, int(round(smoothing * sr))) #moving average window size
-        kernel = torch.ones(1, 1, win_len, device = power.device) / win_len #construct kernel, pytorch requires shape ch_in, ch_out, size. division to get average instead of sum
-        pad = win_len // 2  #add some padding
-        avg_power = F.conv1d(power.unsqueeze(1), kernel, padding=pad)
-        rms = torch.sqrt(avg_power.squeeze(1) + 1e-12)  #very small value ensures float smoothing is never <0
-        if normalize:
-            rms = (rms - torch.min(rms)) / (torch.max(rms) - torch.min(rms))    #scale
-        return rms
+        out = []
+        #here loop over dim 0 - calcualte for all channels
+        for ch in range(signal.size(dim = 0)):
+            power = (signal[ch, :] ** 2).unsqueeze(0)    #get power by squaring, but keep dim
+            win_len = max(1, int(round(smoothing * sr))) #moving average window size
+            kernel = torch.ones(1, 1, win_len, device = power.device) / win_len #construct kernel, pytorch requires shape ch_in, ch_out, size. division to get average instead of sum
+            pad = win_len // 2  #add some padding
+            avg_power = F.conv1d(power.unsqueeze(1), kernel, padding=pad)
+            rms = torch.sqrt(avg_power.squeeze(1) + 1e-12)  #very small value ensures float smoothing is never <0
+            if normalize:
+                rms = (rms - torch.min(rms)) / (torch.max(rms) - torch.min(rms))    #scale
+            out.append(rms)
+        if len(out) == 1:
+            return out[0]
+        else:
+            return torch.cat(out, dim = 0)
 
 def load_from_csv(path: str, metadata: dict = None, states: int = None):
     """

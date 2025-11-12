@@ -14,15 +14,28 @@ gui.show()
 sys.exit(app.exec_())
 
 #TODO:
+#bugs:
+# bandpows seem to work, but extremely slowly
+# think about filtering - current option (FFT) distorts a LOT, FIR is extremely slow, should get butterworth instead
+#when trying to view (might be a problem with an old file): 
+#   File "c:\Users\marty\Projects\scorer\scorer\gui\labeling_widgets.py", line 168, in select_dataset
+#     self.dataset = SleepSignals(data_path = self.data_path,
+#                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+#   File "c:\Users\marty\Projects\scorer\scorer\data\loaders.py", line 37, in __init__
+#     self._load(data_path, score_path)
+#   File "c:\Users\marty\Projects\scorer\scorer\data\loaders.py", line 119, in _load
+#     self.all_labels = self.all_labels.permute(1, 0, 2)
+#                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+# RuntimeError: permute(sparse_coo): number of dimensions in the tensor input does not match the length of the desired ordering of dimensions i.e. input.dim() = 1 is not equal to len(dims) = 3
 #
+#missing features:
 #generally save metadata whenever updating 
 #
+# add warnings for settings if invalid values are set
 #  add low_memory option which would load only a specified amount of chunks
 #
-#overwrite doesn't fully overwrite as appending happens in chunk mode. should be fixed.
-#
 #preprocessing:
-#think about filtering - what filter is best? current option distorts a LOT
+#
 #bandpows seem very prone to outliers?
 #add status bar or label instead of prints
 #future development: implement threading to prevent freezing, 

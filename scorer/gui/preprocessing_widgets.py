@@ -206,7 +206,8 @@ class PreprocessWidget(QWidget):
         check what's checked, run corresponding funcs
         """
         #construct channel explainer
-        self.params['channels_after_preprocessing'] = ['ecog'] * int(self.params['ecog_channels']) + ['emg'] * int(self.params['emg_channels'])
+        
+        self.params['channels_after_preprocessing'] = ['ecog'] * len(self.params['ecog_channels'].split(',')) + ['emg'] * len(self.params['emg_channels'].split(','))
         
         self.params['preprocessing'] = []
         ecog, emg = ecog.T, emg.T       #torch usually requires channels x time
@@ -252,20 +253,24 @@ class PreprocessWidget(QWidget):
     
         if self.calculate_sum_power_check.isChecked():
             if warn == QMessageBox.StandardButton.Cancel:
-                print('notch filtering cancelled')
+                print('sum pow calculation cancelled')
             else:
                 ecog_power = sum_power(ecog, smoothing = 0.2, sr = int(self.params.get('sample_rate', 250)), device = self.params['device'], normalize = True)
                 emg_power = sum_power(emg, smoothing = 0.2, sr = int(self.params.get('sample_rate', 250)), device = self.params['device'], normalize = True)
                 self.params['preprocessing']+= ['sum_pows_calculated']
-                self.params['channels_after_preprocessing'] += ['ecog_sum_power'] * int(self.params['ecog_channels']) + ['emg_sum_power'] * int(self.params['emg_channels'])
+                self.params['channels_after_preprocessing'] += ['ecog_sum_power'] * len(self.params['ecog_channels'].split(',')) + ['emg_sum_power'] * len(self.params['emg_channels'].split(','))
 
         else:
             ecog_power, emg_power = None, None
         
         if self.calculate_band_power_check.isChecked():
             if warn == QMessageBox.StandardButton.Cancel:
-                print('notch filtering cancelled')
-            bands = band_powers(signal = ecog, bands = {'delta': (0.5, 4),
+                print('band pow calculation cancelled')
+            if ecog.size(dim = 0) > 1:
+                signal = ecog[0, :].unsqueeze(0)
+            else:
+                signal = ecog
+            bands = band_powers(signal = signal, bands = {'delta': (0.5, 4),
                                                         'theta': (5, 9),
                                                         'sigma': (9, 16)}, 
                                 sr = int(self.params.get('sample_rate', 250)), 
