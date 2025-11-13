@@ -1,3 +1,4 @@
+import math
 import torch
 import pandas as pd
 from typing import Tuple
@@ -5,33 +6,162 @@ from scipy.signal import firwin
 from torchaudio.functional import filtfilt, bandpass_biquad
 import torch.nn.functional as F
 
+#for filters widmann  et al. 2015 was consulted, settled on FIR filter, Hamming window, FFT implementation for efficiency
+def design_bandpass_hamming(fs, lowcut, highcut, 
+                            transition_width = 1.0, 
+                            numtaps = None, 
+                            dtype = torch.float32, 
+                            device = 'cuda'):
+    """
+    Design a linear-phase bandpass FIR using windowed sinc (Hamming).
+    Returns a 1D tensor of taps (odd length).
+    """
+    #checks 
+    nyq = fs / 2.0
+    if lowcut <= 0:
+        raise ValueError("lowcut must be > 0 for high-pass part of bandpass")
+    if highcut >= nyq:
+        raise ValueError("highcut must be < Nyquist (fs/2)")
+    #numtaps = filter length/num of coefficients
+    # If numtaps not given, estimate from transition_width using Hamming approx
+    # Hamming window approx transition width Δf ≈ 3.3 / N (normalized to Nyquist units),
+    # so N ≈ 3.3 / (Δf/nyq) = 3.3 * nyq / Δf
+    if numtaps is None: 
+        numtaps = int(math.ceil(3.3 * nyq / transition_width))
+    # ensure odd
+    if numtaps % 2 == 0:
+        numtaps += 1
+    M = numtaps
+    m = torch.arange(M, dtype=dtype, device=device) - (M - 1) / 2.0  # symmetric time index centered at zero
+
+    # normalized cutoff frequencies (radians/sample)
+    wl = 2.0 * math.pi * lowcut / fs
+    wh = 2.0 * math.pi * highcut / fs
+
+    # ideal bandpass impulse response = (sin(wh*n) - sin(wl*n)) / (pi*n)
+    taps = torch.empty(M, dtype=dtype, device=device)
+    # avoid division by zero
+    m_nonzero = m.clone()
+    m_nonzero[torch.abs(m_nonzero) < 1e-12] = 1.0
+
+    h_wh = torch.sin(wh * m_nonzero) / (math.pi * m_nonzero)
+    h_wl = torch.sin(wl * m_nonzero) / (math.pi * m_nonzero)
+    taps = h_wh - h_wl
+
+    # correct center sample (m==0) to (wh - wl) / pi
+    center_idx = (M - 1) // 2
+    taps[center_idx] = (wh - wl) / math.pi
+
+    # apply Hamming window
+    n = torch.arange(M, device=device, dtype=dtype)
+    hamming = 0.54 - 0.46 * torch.cos(2.0 * math.pi * n / (M - 1))
+    taps = taps * hamming
+
+    # normalize by the maximal magnitude of the FFT of taps for better passband scaling).
+    # Compute small FFT on CPU to find max magnitude (cheap because numtaps moderate)
+    with torch.no_grad():
+        # use zero padding to do fine FFT resolution
+        fftlen = 4096
+        H = torch.fft.rfft(taps, n=fftlen)
+        mag = torch.abs(H)
+        max_mag = float(mag.max())
+        if max_mag > 0:
+            taps = taps / max_mag
+            
+    return taps  # on device
+
+def fft_convolve_1d(x, h):
+    """
+    Linear convolution via FFT on GPU.
+    x: (..., time) - 1 channel data
+    h: (K,) - filter kernel
+    Returns same dtype/device.
+    """
+    T = x.shape[-1]
+    K = h.shape[-1]
+    L = T + K - 1   #length of convolution L = time + kernel_length -1 
+    n_fft = 1 << (L - 1).bit_length()   #padding to at least length, rounded up to 2^x for computation speed
+    X = torch.fft.rfft(x, n=n_fft)  #freq-magnitude domain of signal
+    H = torch.fft.rfft(h, n=n_fft)  #freq-magnitude domain of filter
+    Y = X * H   #freq domain convolution
+    y = torch.fft.irfft(Y, n=n_fft)[..., :L]    #inverse fft, but slice to L to remove padding
+    return y
+
+def fft_filtfilt(x, taps, padlen_factor=3):
+    """
+    Zero-phase (forward-reverse) filtering using FFT-based convolution (uses fft_convolve_1d)
+    x: (batch, channels, time) or (channels, time) or (time,)
+    taps: (numtaps,) symmetric FIR filter
+    padlen same as SciPy default
+    """
+    orig_shape = x.shape
+    single_channel = False
+    if x.ndim == 1:
+        x = x.unsqueeze(0).unsqueeze(0)
+        single_channel = True
+    elif x.ndim == 2:
+        x = x.unsqueeze(0)
+
+    device = x.device
+    dtype = x.dtype
+    taps = taps.to(device=device, dtype=dtype)
+    k = taps.shape[0]
+    padlen = padlen_factor * (k - 1)
+
+    B, C, T = x.shape   #batch/channels/time
+    if T <= padlen:
+        raise ValueError("Input too short for pad length.")
+    
+    left = x[:, :, 1:padlen+1].flip(-1)  # reflective pad on both sides (mirrored signals) to prevent transient effects
+    right = x[:, :, -padlen-1:-1].flip(-1)
+    x_ext = torch.cat([left, x, right], dim=-1)  # (B,C,T+2*padlen)
+
+    def conv_func(sig):         #local helper to apply convolution to every channel separately
+        return fft_convolve_1d(sig, taps)
+
+    y = torch.stack([conv_func(x_ext[:, i, :]) for i in range(C)], dim=1) # stack convolutions of each channel
+
+    # reverse to get zero phase
+    y_rev = torch.flip(y, dims=[-1])
+    y2 = torch.stack([conv_func(y_rev[:, i, :]) for i in range(C)], dim=1)
+    y_out_ext = torch.flip(y2, dims=[-1])
+
+    #removing padding
+    # L_ext = T + 2 * padlen  
+    # L_after_two = L_ext - 2 * (k - 1)
+    start_idx = padlen - (k - 1)
+    end_idx = start_idx + T
+    start_idx = max(start_idx, 0)   
+    end_idx = min(end_idx, y_out_ext.shape[-1])
+    y_final = y_out_ext[..., start_idx:end_idx] #match length to input
+
+    # adjust length if off by one
+    if y_final.shape[-1] != T:
+        diff = T - y_final.shape[-1]
+        if diff > 0:
+            pad_val = y_final[..., -1:].expand(B, C, diff)
+            y_final = torch.cat([y_final, pad_val], dim=-1)
+        else:
+            y_final = y_final[..., :T]
+    #restore original shape
+    if single_channel:
+        return y_final.squeeze(0).squeeze(0)
+    elif len(orig_shape) == 2:
+        return y_final.squeeze(0)
+    else:
+        return y_final
+
 def bandpass_filter(signal: torch.Tensor,
                         sr: int = 250,
-                        freqs: tuple = (0.5, 30.0),
-                        numtaps: int = 501,
-                        device: str = 'cuda',
-                        zero_phase: bool = True) -> torch.Tensor:
+                        freqs: tuple = (0.1, 49.0),
+                        device: str = 'cuda') -> torch.Tensor:
     """
-    FIR bandpass filter via FFT convolution on GPU. signal: [T] or [C, T] - zero_phase: if True, applies forward + reverse convolution (like filtfilt)
-    should hopefully be faster
-    """
-    signal = signal.to(device=device, dtype=torch.float32)
-    coefs = firwin(numtaps=numtaps, cutoff=freqs, fs=sr, pass_zero=False, window='hamming')
-    coefs = torch.tensor(coefs, dtype=torch.float32, device=device)
-    
-    # fft length
-    n_fft = 2 ** ((signal.shape[-1] + coefs.numel() - 1).bit_length())
-    S = torch.fft.rfft(signal, n=n_fft)#signal in freq domain
-    H = torch.fft.rfft(coefs, n=n_fft)#filter in freq domain
-    y = torch.fft.irfft(S * H, n=n_fft)[..., :signal.shape[-1]]
-    # forward convolution in frequency domain by S*H, then irfft converts back to time
-    #also trimming of output to match input
-
-    if zero_phase:
-        # reverse filter for approximate filtfilt
-        Y_rev = torch.fft.rfft(y.flip(-1), n=n_fft)
-        y_rev = torch.fft.irfft(Y_rev * H, n=n_fft)[..., :signal.shape[-1]]
-        y = y_rev.flip(-1)
+    integrates previous funcs
+    FIR bandpass filter via FFT convolution on GPU. signal: [T], [C, T], [batch, channel, time]
+    hopefully fast!
+    """   
+    taps = design_bandpass_hamming(sr, freqs[0], freqs[1], transition_width = 1.0, device = device)
+    y = fft_filtfilt(signal, taps)
     return y
 
 def hilbert_transform(x: torch.Tensor):
@@ -83,9 +213,7 @@ def band_powers(signal: torch.Tensor, bands: dict = {'delta': (0.5, 4)}, sr: int
         kernel = None
 
     for name, (low, high) in bands.items():
-        center_freq = (low + high) / 2
-        Q = center_freq / (high - low)
-        filtered = bandpass_biquad(signal, sr, center_freq, Q)
+        filtered = bandpass_filter(signal, sr, freqs = (low, high), device=device)
         print('filtered')
         filtered = filtered.squeeze(0)
         analytic = hilbert_transform(filtered)

@@ -14,19 +14,10 @@ gui.show()
 sys.exit(app.exec_())
 
 #TODO:
+
 #bugs:
-# bandpows seem to work, but extremely slowly
-# think about filtering - current option (FFT) distorts a LOT, FIR is extremely slow, should get butterworth instead
-#when trying to view (might be a problem with an old file): 
-#   File "c:\Users\marty\Projects\scorer\scorer\gui\labeling_widgets.py", line 168, in select_dataset
-#     self.dataset = SleepSignals(data_path = self.data_path,
-#                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-#   File "c:\Users\marty\Projects\scorer\scorer\data\loaders.py", line 37, in __init__
-#     self._load(data_path, score_path)
-#   File "c:\Users\marty\Projects\scorer\scorer\data\loaders.py", line 119, in _load
-#     self.all_labels = self.all_labels.permute(1, 0, 2)
-#                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-# RuntimeError: permute(sparse_coo): number of dimensions in the tensor input does not match the length of the desired ordering of dimensions i.e. input.dim() = 1 is not equal to len(dims) = 3
+#fix y scaling - data is pretty much useless without it
+#fix notch filtering, now it's fucked (bandpass instead of bandstop, but bandstop is not recommended) // or exclude 50Hz from emg somehow 
 #
 #missing features:
 #generally save metadata whenever updating 
@@ -48,6 +39,7 @@ sys.exit(app.exec_())
 #remember to run grad back on!
 #
 #manual labeling:
+#add scrolling to viewer?
 #fft is very broken???
 #fix ylims for all params
 #add an option to load and plot multiple scores

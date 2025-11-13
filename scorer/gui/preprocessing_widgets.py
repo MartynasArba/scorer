@@ -51,8 +51,8 @@ class PreprocessWidget(QWidget):
         self.filter_check = QCheckBox("bandpass filter ecog data? limits:") #add option to select filter boundaries
         self.low_bound_field = QLineEdit(self)
         self.high_bound_field = QLineEdit(self)
-        self.low_bound_field.setText("0.5")
-        self.high_bound_field.setText("30")
+        self.low_bound_field.setText("0.1")
+        self.high_bound_field.setText("49")
         filter_layout = QHBoxLayout()
         filter_layout.addWidget(self.filter_check)
         filter_layout.addWidget(self.low_bound_field)
@@ -68,7 +68,7 @@ class PreprocessWidget(QWidget):
         emg_filter_layout.addWidget(self.emg_low_bound_field)
         emg_filter_layout.addWidget(self.emg_high_bound_field)  
         
-        self.notch_check = QCheckBox("use notch filter? freq to remove:")    #add option to select custom notch filter
+        self.notch_check = QCheckBox("use notch filter: DO NOT, BROKEN? freq to remove:")    #add option to select custom notch filter
         self.notch_value_field = QLineEdit(self)
         self.notch_value_field.setText("50")
         notch_layout = QHBoxLayout()
@@ -259,25 +259,22 @@ class PreprocessWidget(QWidget):
                 emg_power = sum_power(emg, smoothing = 0.2, sr = int(self.params.get('sample_rate', 250)), device = self.params['device'], normalize = True)
                 self.params['preprocessing']+= ['sum_pows_calculated']
                 self.params['channels_after_preprocessing'] += ['ecog_sum_power'] * len(self.params['ecog_channels'].split(',')) + ['emg_sum_power'] * len(self.params['emg_channels'].split(','))
-
+                print('sum pows calculated')
         else:
             ecog_power, emg_power = None, None
         
         if self.calculate_band_power_check.isChecked():
             if warn == QMessageBox.StandardButton.Cancel:
                 print('band pow calculation cancelled')
-            if ecog.size(dim = 0) > 1:
-                signal = ecog[0, :].unsqueeze(0)
-            else:
-                signal = ecog
-            bands = band_powers(signal = signal, bands = {'delta': (0.5, 4),
+            bands = band_powers(signal = ecog, bands = {'delta': (0.5, 4),
                                                         'theta': (5, 9),
                                                         'sigma': (9, 16)}, 
                                 sr = int(self.params.get('sample_rate', 250)), 
                                 device= self.params['device'], smoothen = 0.2)
             self.params['preprocessing']+= ['band_pows_calculated']
             self.params['channels_after_preprocessing'] += list(bands.keys())
-
+            print('band pows calculated')
+            
         else:
             bands = {None : None}        
         
@@ -311,9 +308,7 @@ class PreprocessWidget(QWidget):
         signal = bandpass_filter(signal,
                         sr = int(self.params.get('sample_rate', 250)),
                         freqs = freqs,
-                        numtaps = 501,
-                        device = self.params.get('device', 'cuda'),
-                        zero_phase = True)
+                        device = self.params.get('device', 'cuda'))
         return signal
     
     def _notch(self, signal, freq):
@@ -327,9 +322,7 @@ class PreprocessWidget(QWidget):
         signal = bandpass_filter(signal,
                         sr = int(self.params.get('sample_rate', 250)),
                         freqs = (freq-1, freq+1),
-                        numtaps = 501,
-                        device = self.params.get('device', 'cuda'),
-                        zero_phase = True)
+                        device = self.params.get('device', 'cuda'))
         return signal
 
     def select_file(self) -> None:
