@@ -40,8 +40,8 @@ sys.exit(app.exec_())
 #
 #manual labeling:
 #add scrolling to viewer?
-#fft is very broken???
 #fix ylims for all params
+#add axis labels
 #add an option to load and plot multiple scores
 #add scorer name to metadata, add option to append name to state file
 #save progress automatically every N scores? maybe add checkmark, overwrite option?
