@@ -6,6 +6,7 @@ from typing import Tuple
 from numpy import array
 import torch
 import numpy as np
+import pandas as pd
 
 def construct_paths(data_path: str, format: str = '.pkl', **metadata) ->Tuple[str, str]:    
     """
@@ -271,3 +272,53 @@ def _chop_by_state(states: torch.Tensor,
 
     return X, y
   
+  
+def load_from_csv(path: str, metadata: dict = None, states: int = None):
+    """
+    loads data from csv into a torch tensor
+    """
+    ecog_channels = metadata.get('ecog_channels', None)
+    emg_channels = metadata.get('emg_channels', None)
+    device = metadata.get('device', 'cuda')
+    #if cuda is not available
+    device = "cpu" if not torch.cuda.is_available() else device
+    #should be changed later to support chunks // could also move to numpy, but it's probably not necessary now and questionable in general
+    data = pd.read_csv(path)
+    try:
+        ecog_channels = [int(ch) for ch in ecog_channels.split(',')]
+        emg_channels = [int(ch) for ch in emg_channels.split(',')]
+    except Exception as e:
+        print(f'Something went wrong when parsing metadata of channel numbers in load_from_csv: {e}')
+        return None, None, None
+
+    ecog = torch.tensor(data.iloc[:, ecog_channels].values, device = device, dtype = torch.float32)
+    emg = torch.tensor(data.iloc[:, emg_channels].values, device = device, dtype = torch.float32)
+
+    if states:
+        states = torch.tensor(data.iloc[:, states].values, device = device, dtype = torch.float32)
+    
+    del data
+    return ecog, emg, states
+            
+            
+def load_from_csv_in_chunks(path: str, metadata: dict = None, states: int = None, chunk_size: int = None):
+    """
+    loads data from csv into a torch tensor in chunks, returns a generator
+    """
+    ecog_channels = metadata.get('ecog_channels', None)
+    emg_channels = metadata.get('emg_channels', None)
+    device = metadata.get('device', 'cuda')
+    #if cuda is not available
+    device = "cpu" if not torch.cuda.is_available() else device
+    try:
+        ecog_channels = [int(ch) for ch in ecog_channels.split(',')]
+        emg_channels = [int(ch) for ch in emg_channels.split(',')]
+    except Exception as e:
+        print(f'Something went wrong when parsing metadata of channel numbers in load_from_csv: {e}')
+        return None, None, None
+    
+    for chunk in pd.read_csv(path, chunksize = chunk_size):
+        ecog_chunk = torch.tensor(chunk.iloc[:, ecog_channels].values, device=device)
+        emg_chunk = torch.tensor(chunk.iloc[:, emg_channels].values, device=device)
+        states_chunk = torch.tensor(chunk.iloc[:, states].values, device=device) if states else None 
+        yield ecog_chunk, emg_chunk, states_chunk
