@@ -45,9 +45,10 @@ class SleepSignals(Dataset):
         #runs out of memory, so if too many samples, use a random subset
         if self.all_labels.size(0) > 1000:
             rand_subset = torch.randint(0, self.all_labels.size(0), size = (1000,))      
-            self.channel_ylims = [(torch.quantile(self.all_samples[rand_subset, dim, :].reshape(-1), q = .01).item(), torch.quantile(self.all_samples[rand_subset, dim, :].reshape(-1), q = .99).item()) for dim in range(self.all_samples.size(1))]
+            #lims should be center+-spread, so center, spread needed
+            self.channel_ylims = [(torch.quantile(self.all_samples[rand_subset, dim, :].reshape(-1), q = .5).item(), (torch.quantile(self.all_samples[rand_subset, dim, :].reshape(-1), q = .99).item() - torch.quantile(self.all_samples[rand_subset, dim, :].reshape(-1), q = .01).item())) for dim in range(self.all_samples.size(1))]
         else:
-            self.channel_ylims = [(torch.quantile(self.all_samples[:, dim, :].reshape(-1), q = .01).item(), torch.quantile(self.all_samples[:, dim, :].reshape(-1), q = .99).item()) for dim in range(self.all_samples.size(1))]
+            self.channel_ylims = [(torch.quantile(self.all_samples[:, dim, :].reshape(-1), q = .5).item(), (torch.quantile(self.all_samples[:, dim, :].reshape(-1), q = .99).item() - torch.quantile(self.all_samples[:, dim, :].reshape(-1), q = .01).item())) for dim in range(self.all_samples.size(1))]
         
         self.device = device
         self.transform = transform

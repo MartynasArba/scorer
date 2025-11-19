@@ -14,19 +14,20 @@ gui.show()
 sys.exit(app.exec_())
 
 #TODO:
-
-#bugs:
-#fix y scaling - data is pretty much useless without it
-#fix notch filtering, now it's fucked (bandpass instead of bandstop, but bandstop is not recommended) // or exclude 50Hz from emg somehow 
+#BUGS:
 #
-#missing features:
+#fix notch filtering, now it's fucked (bandpass instead of bandstop, but bandstop is not recommended) // or exclude 50Hz from emg somehow 
+#somehow channel names after preprocessing end up strange
+#
+#MISSING FEATURES:
 #generally save metadata whenever updating 
 #
 # add warnings for settings if invalid values are set
-#  add low_memory option which would load only a specified amount of chunks
+# add low_memory option which would load only a specified amount of chunks
 #
 #preprocessing:
 #
+# add loading from onebox
 #bandpows seem very prone to outliers?
 #add status bar or label instead of prints
 #future development: implement threading to prevent freezing, 
