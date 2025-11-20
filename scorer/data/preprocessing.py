@@ -66,6 +66,60 @@ def design_bandpass_hamming(fs, lowcut, highcut,
             
     return taps  # on device
 
+def design_notch_hamming(fs, notch_center, notch_width=2.0, transition_width=1.0,
+                         numtaps=None, dtype=torch.float32, device='cuda'):
+    """
+    designs a linear-phase FIR notch (band-stop) filter using Hamming window 
+    """
+
+    nyq = fs / 2
+    f1 = notch_center - notch_width/2
+    f2 = notch_center + notch_width/2
+
+    if f1 <= 0 or f2 >= nyq:
+        raise ValueError("Notch band must be inside Nyquist range")
+
+    # Estimate numtaps if not given
+    if numtaps is None:
+        # Hamming window rule: N ≈ 3.3 * Nyquist / transition_width
+        numtaps = int(math.ceil(3.3 * nyq / transition_width))
+    if numtaps % 2 == 0:
+        numtaps += 1
+
+    M = numtaps
+    m = torch.arange(M, dtype=dtype, device=device) - (M - 1) / 2
+
+    # Convert to radians/sample
+    w1 = 2 * math.pi * f1 / fs
+    w2 = 2 * math.pi * f2 / fs
+
+    # Ideal bandstop = LP(w1) + HP(w2)
+    eps = 1e-20
+    m_nz = m.clone()
+    m_nz[torch.abs(m_nz) < 1e-12] = 1.0
+
+    h_lp_w1 = torch.sin(w1 * m_nz) / (math.pi * m_nz)
+    h_lp_w2 = torch.sin(w2 * m_nz) / (math.pi * m_nz)
+    h_bs = h_lp_w1 + (torch.zeros_like(h_lp_w1) - h_lp_w2)
+
+    # Correct center sample
+    c = (M - 1)//2
+    h_bs[c] = (w1 - 0) / math.pi + (math.pi - w2)/math.pi
+
+    # Hamming window
+    n = torch.arange(M, device=device, dtype=dtype)
+    hamming = 0.54 - 0.46 * torch.cos(2 * math.pi * n / (M - 1))
+    h_bs = h_bs * hamming
+
+    # Normalize passband gain
+    with torch.no_grad():
+        fftlen = 4096
+        H = torch.fft.rfft(h_bs, n=fftlen)
+        max_mag = float(torch.abs(H).max())
+        h_bs = h_bs / max_mag
+
+    return h_bs
+
 def fft_convolve_1d(x, h):
     """
     Linear convolution via FFT on GPU.
@@ -123,8 +177,6 @@ def fft_filtfilt(x, taps, padlen_factor=3):
     y_out_ext = torch.flip(y2, dims=[-1])
 
     #removing padding
-    # L_ext = T + 2 * padlen  
-    # L_after_two = L_ext - 2 * (k - 1)
     start_idx = padlen - (k - 1)
     end_idx = start_idx + T
     start_idx = max(start_idx, 0)   
@@ -259,3 +311,16 @@ def sum_power(signal: torch.Tensor, smoothing: float = 0.2, sr: int = 250, devic
             return out[0]
         else:
             return torch.cat(out, dim = 0)
+        
+def notch_filter(signal,
+                 sr:int = 250,
+                 freq:int = 50,
+                 device:str = 'cuda'):
+    """
+    designs and applies Notch filter
+    creates a Hamming window band-stop filter
+    uses fft gpu implementation
+    """
+    taps = design_notch_hamming(fs = sr, notch_center = freq, notch_width = 2, device = device)
+    filtered = fft_filtfilt(signal, taps)
+    return filtered

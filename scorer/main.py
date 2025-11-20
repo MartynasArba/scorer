@@ -15,16 +15,18 @@ sys.exit(app.exec_())
 
 #TODO:
 #BUGS:
-#add option to toggle self.show_all_scorers in plottingh
-#fix notch filtering, now it's fucked (bandpass instead of bandstop, but bandstop is not recommended) // or exclude 50Hz from emg somehow 
+#if calling preprocessing multiple times, metadata gets fucked (ecog, emg repeats etc)
+#in loaders, allow folder selection and load all data, because chunked + windowed data is now saved as separate files. 
+# This could be a good thing, but then should explicitly be implemented.
+#remove warning from notch button
+#remove prints from preprocessing
+#notch is still weird, should test it more
 #
 #MISSING FEATURES:
-#
 # add warnings for settings if invalid values are set
-# add low_memory option which would load only a specified amount of chunks
+# add low_memory option which would load only a specified amount of chunks(?)
 #
 #preprocessing:
-#
 # add loading from onebox
 #bandpows seem very prone to outliers?
 #add status bar or label instead of prints
@@ -35,17 +37,16 @@ sys.exit(app.exec_())
 #automatic scoring:
 #not yet started
 #implement at least one model
-#remember to run grad back on!
+#remember to turn grad back on if training!
 #
 #manual labeling:
+#make it more pretty - for example, freq plot lims
 #decide how single label, multi scorer should be handled
-#add scrolling to viewer?
-#add an option to load and plot multiple scores
-#add scorer name to metadata, add option to append name to state file
+#add scorer name to metadata correctly
 #save progress automatically every N scores? maybe add checkmark, overwrite option?
 #jump to next unscored sample
-#for multilabel, add agreement/confidence 
 #
 #report:
 #not yet started
 #maybe export json report?
+#for multilabel, add agreement/confidence 

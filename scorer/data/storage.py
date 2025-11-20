@@ -137,6 +137,7 @@ def save_windowed(tensors: tuple,
                   metadata: dict = {}, 
                   win_len: int = 1000,
                   chunked: bool = True, 
+                  chunk_id: int = None,
                   overwrite: bool = False,
                   testing: bool = False):
     """chops and saves tensor data to be used by the SleepDataset class"""
@@ -147,7 +148,13 @@ def save_windowed(tensors: tuple,
     save_folder = proj_path / "processed"
     if not os.path.exists(save_folder):
         os.makedirs(save_folder)
-    save_path = save_folder / file_name
+    if not chunked:
+        save_path = save_folder / file_name
+    else:
+        chunk_folder = save_folder / f'{metadata.get('scoring_started', 'noID')}{metadata.get('optional_tag', '')}'    #if chunked, create or select a folder to save in
+        if not os.path.exists(chunk_folder):
+            os.makedirs(chunk_folder)
+        save_path = chunk_folder / f'X_chunk{chunk_id}.pt'
     
     if not overwrite:
         if os.path.exists(save_path):
@@ -185,37 +192,21 @@ def save_windowed(tensors: tuple,
     if to_save.size(0) == 0:
         print("Warning: to_save has 0 channels — skipping save.")
         return
-
-    if chunked & os.path.exists(save_path):
-        with open(save_path, 'rb') as f:
-            prev_data = torch.load(f)
-            print(f'shape of prev_data: {prev_data.size()}')
-            print(f'shape of to_save: {to_save.size()}')
-            if isinstance(prev_data, np.ndarray):
-                prev_data = torch.from_numpy(prev_data).to(dtype = torch.float32).to(metadata.get('device', 'cpu'))
-            to_save = torch.cat((prev_data.to(device = to_save.device), to_save), dim = 1)
             
     with open(save_path, 'wb') as f:
         torch.save(to_save, f) 
 
     #handle states       
     states_name = f'{metadata.get('scoring_started', 'noID')}{metadata.get('optional_tag', '')}_y.pt'
-    states_path = save_folder / states_name
-
-    if chunked & os.path.exists(states_path):
-        with open(states_path, 'rb') as f:
-            prev_states = torch.load(f)
-            print(f'prev_states shape: {prev_states.size()}')
-            if isinstance(prev_states, np.ndarray):
-                prev_states = torch.from_numpy(prev_states).to(dtype = torch.long).to(metadata.get('device', 'cpu'))
-            states = torch.cat((prev_states.to(device = states.device), states.to(dtype = torch.long)), dim  = 1)
+    
+    if not chunked:
+        states_path = save_folder / states_name
+    else:
+        states_path = chunk_folder / f'y_chunk{chunk_id}.pt'
 
     with open(states_path, 'wb') as f:
         torch.save(states, f)
-    
-    for var in ("prev_data", "prev_states"):
-        if var in locals():
-            del locals()[var]
+
     del to_save, states
     
     #importing in SleepDataset

@@ -5,7 +5,7 @@ from PyQt5.QtWidgets import (
 )
 
 from torchaudio.functional import resample
-from data.preprocessing import bandpass_filter, sum_power, band_powers
+from data.preprocessing import bandpass_filter, sum_power, band_powers, notch_filter
 from data.storage import save_tensor, save_windowed, save_metadata, load_from_csv, load_from_csv_in_chunks
 
 class PreprocessWidget(QWidget):
@@ -174,7 +174,9 @@ class PreprocessWidget(QWidget):
                     if self.save_windowed_check.isChecked():
                         win_len = int(self.win_len_field.text())
                         if chunk_size % win_len != 0:
-                            print('some data will be lost, chunk size is not divisible by window length')
+                            QMessageBox.warning(self, 'warning', 
+                                                f'Data will be lost as chunk_size isn\'t divisible by window length!\n Chunk size: {chunk_size}, window length: {win_len}',
+                                                QMessageBox.StandardButton.Yes)
                         
                         append_file = True if i > 0  else False  
                             
@@ -183,6 +185,7 @@ class PreprocessWidget(QWidget):
                                     metadata = self.params, 
                                     win_len = win_len,
                                     chunked = append_file, 
+                                    chunk_id = i,
                                     overwrite = self.save_overwrite_check.isChecked(),
                                     testing = self.testing_check.isChecked())
         save_metadata(self.params['metadata_path'], self.params)
@@ -211,6 +214,7 @@ class PreprocessWidget(QWidget):
         
         self.params['preprocessing'] = []
         ecog, emg = ecog.T, emg.T       #torch usually requires channels x time
+        
         print(f'sample sizes before preprocessing:{ecog.size()}, {emg.size()}')
         
         if self.resample_check.isChecked():
@@ -223,11 +227,10 @@ class PreprocessWidget(QWidget):
             warn = self._not_chunked_warning()
         else: 
             warn = None
-        
+            
         if self.filter_check.isChecked():
             if warn == QMessageBox.StandardButton.Cancel:
                 print('ecog filtering cancelled')
-                return ecog
             else:
                 freqs = (float(self.low_bound_field.text()), float(self.high_bound_field.text()))
                 ecog = self._bandpass(ecog, freqs)
@@ -235,8 +238,7 @@ class PreprocessWidget(QWidget):
                 
         if self.emg_filter_check.isChecked():
             if warn == QMessageBox.StandardButton.Cancel:
-                print('emg filtering cancelled')
-                return emg                                
+                print('emg filtering cancelled')                         
             else:
                     freqs = (float(self.emg_low_bound_field.text()), float(self.emg_high_bound_field.text()))
                     emg = self._bandpass(emg, freqs)
@@ -244,8 +246,7 @@ class PreprocessWidget(QWidget):
                     
         if self.notch_check.isChecked():
             if warn == QMessageBox.StandardButton.Cancel:
-                print('notch filtering cancelled')
-                return ecog, emg                                
+                print('notch filtering cancelled')                          
             else:
                 freq = int(self.notch_value_field.text())
                 ecog, emg = self._notch(ecog, freq), self._notch(emg, freq)
@@ -255,8 +256,8 @@ class PreprocessWidget(QWidget):
             if warn == QMessageBox.StandardButton.Cancel:
                 print('sum pow calculation cancelled')
             else:
-                ecog_power = sum_power(ecog, smoothing = 0.2, sr = int(self.params.get('sample_rate', 250)), device = self.params['device'], normalize = True)
-                emg_power = sum_power(emg, smoothing = 0.2, sr = int(self.params.get('sample_rate', 250)), device = self.params['device'], normalize = True)
+                ecog_power = sum_power(ecog, smoothing = 0.2, sr = int(self.params.get('sample_rate', 250)), device = self.params.get('device', 'cuda'), normalize = True)
+                emg_power = sum_power(emg, smoothing = 0.2, sr = int(self.params.get('sample_rate', 250)), device = self.params.get('device', 'cuda'), normalize = True)
                 self.params['preprocessing']+= ['sum_pows_calculated']
                 self.params['channels_after_preprocessing'] += ['ecog_sum_power'] * len(self.params['ecog_channels'].split(',')) + ['emg_sum_power'] * len(self.params['emg_channels'].split(','))
                 print('sum pows calculated')
@@ -266,14 +267,16 @@ class PreprocessWidget(QWidget):
         if self.calculate_band_power_check.isChecked():
             if warn == QMessageBox.StandardButton.Cancel:
                 print('band pow calculation cancelled')
-            bands = band_powers(signal = ecog, bands = {'delta': (0.5, 4),
-                                                        'theta': (5, 9),
-                                                        'sigma': (9, 16)}, 
-                                sr = int(self.params.get('sample_rate', 250)), 
-                                device= self.params['device'], smoothen = 0.2)
-            self.params['preprocessing']+= ['band_pows_calculated']
-            self.params['channels_after_preprocessing'] += list(bands.keys())
-            print('band pows calculated')
+            else:
+                bands = band_powers(signal = ecog, bands = {'delta': (0.5, 4),
+                                                            'theta': (5, 9),
+                                                            'alpha': (8, 13),
+                                                            'sigma': (12, 15)}, 
+                                    sr = int(self.params.get('sample_rate', 250)), 
+                                    device= self.params['device'], smoothen = 0.2)
+                self.params['preprocessing']+= ['band_pows_calculated']
+                self.params['channels_after_preprocessing'] += list(bands.keys())
+                print('band pows calculated')
             
         else:
             bands = {None : None}        
@@ -286,7 +289,7 @@ class PreprocessWidget(QWidget):
         applies resample func
         """
         
-        sample_rate = float(self.params.get('sample_rate', 0))
+        sample_rate = float(self.params.get('sample_rate', 250))
         new_rate = int(self.sr_field.text())
         self.params['preprocessing']+= ['resampling']
         self.params['old_sample_rate'] = self.params['sample_rate']
@@ -319,9 +322,9 @@ class PreprocessWidget(QWidget):
         if 'notch_freq' not in self.params.keys():
             self.params['notch_freq'] = [freq]
             
-        signal = bandpass_filter(signal,
+        signal = notch_filter(signal,
                         sr = int(self.params.get('sample_rate', 250)),
-                        freqs = (freq-1, freq+1),
+                        freq = freq,
                         device = self.params.get('device', 'cuda'))
         return signal
 
