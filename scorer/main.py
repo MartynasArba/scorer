@@ -15,12 +15,10 @@ sys.exit(app.exec_())
 
 #TODO:
 #BUGS:
-#
+#add option to toggle self.show_all_scorers in plottingh
 #fix notch filtering, now it's fucked (bandpass instead of bandstop, but bandstop is not recommended) // or exclude 50Hz from emg somehow 
-#somehow channel names after preprocessing end up strange
 #
 #MISSING FEATURES:
-#generally save metadata whenever updating 
 #
 # add warnings for settings if invalid values are set
 # add low_memory option which would load only a specified amount of chunks
@@ -40,9 +38,8 @@ sys.exit(app.exec_())
 #remember to run grad back on!
 #
 #manual labeling:
+#decide how single label, multi scorer should be handled
 #add scrolling to viewer?
-#fix ylims for all params
-#add axis labels
 #add an option to load and plot multiple scores
 #add scorer name to metadata, add option to append name to state file
 #save progress automatically every N scores? maybe add checkmark, overwrite option?

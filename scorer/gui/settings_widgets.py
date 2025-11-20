@@ -148,39 +148,7 @@ class SettingsWidget(QWidget):
         """
         validates metadata
         """
+        print('data validation is not implemented')
         pass
-        # validation_dict = {
-        #     'scoring_started', 
-        #     'project_path', 
-        #     'scorer', 
-        #     'date', 
-        #     'animal_id', 
-        #     'group', 
-        #     'trial', 
-        #     'sample_rate', 
-        #     'ecog_channels': , 
-        #     'emg_channels': int,
-        #     'spectral_view': ('fourier', 'spectrogram'),
-        #     'device': ('cuda', 'cpu'),
-        #     'optional_tag': str
-        # }
-        
-        # for param self.params.keys():
-            
-        
-        # params =    [
-        #     'scoring_started', 
-        #     'project_path', 
-        #     'scorer', 
-        #     'date', 
-        #     'animal_id', 
-        #     'group', 
-        #     'trial', 
-        #     'sample_rate', 
-        #     'ecog_channels', 
-        #     'emg_channels',
-        #     'spectral_view',
-        #     'device',
-        #     'optional_tag'
-        #     ]
+
         

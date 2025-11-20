@@ -5,6 +5,7 @@ from PyQt5.QtWidgets import (
     QButtonGroup, QCheckBox, QSizePolicy
 )
 from PyQt5 import QtCore
+from PyQt5.QtCore import QFileInfo
 
 import torch
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -28,19 +29,17 @@ class SleepGUI(QWidget):
     def __init__(self, dataset: SleepSignals = None, metadata: dict = None) -> None:
         super().__init__()
 
-        self.params = metadata or {}
-
         # paths / metadata
         self.score_save_path = ''
         self.data_path = ''
-        self.metadata = {}
+        self.params = metadata or {}
+        self.active_scorer = self.params.get('scorer', 'unknown_scorer')
 
         # plotting / artist attributes
         self.signal_fig = None
         self.signal_axs = None
         self.signal_lines = None
-        self.label_ax = None
-        self.label_line = None
+        self.label_lines = None
         self.label_text = None
 
         self.signal_canvas = None
@@ -49,6 +48,8 @@ class SleepGUI(QWidget):
         self.spect_ax = None
         self.spect_img = None
         self.spect_canvas = None
+        
+        self.show_all_scorers = False
 
         # data tracking
         self.dataset = dataset
@@ -64,6 +65,7 @@ class SleepGUI(QWidget):
         # annotation array and settings
         self.states = np.array([], dtype=int)
         self.label_whole_screen = False
+        self.passive_scorers = {}   #other scorers that are displayed but can't be interacted with. name:state_arr structure
 
         # small cache for last requested window (idx, scale)
         self._plot_cache = {"idx": None, "scale": None, "sample": None, "label": None}
@@ -103,6 +105,10 @@ class SleepGUI(QWidget):
         btn_load_states = QPushButton("load saved states")
         btn_load_states.clicked.connect(self.load_states)
         control_layout.addWidget(btn_load_states)
+        
+        btn_load_other_scorers = QPushButton("load non-interactable annotations")
+        btn_load_other_scorers.clicked.connect(self.load_passive_scorer)
+        control_layout.addWidget(btn_load_other_scorers)
 
         btn_prev = QPushButton("prev frame (<)")
         btn_prev.clicked.connect(self.prev)
@@ -159,6 +165,11 @@ class SleepGUI(QWidget):
         whole_screen_check = QCheckBox("Label the whole screen?")
         whole_screen_check.stateChanged.connect(self.label_screen_toggle)
         self.labeling_layout.addWidget(whole_screen_check)
+        
+        all_scorers_check = QCheckBox("Show all loaded scorers?")
+        all_scorers_check.stateChanged.connect(self.show_all_scorers_toggle)
+        self.labeling_layout.addWidget(all_scorers_check)
+
 
         # sliders
         self.slider_yscale = QSlider(value=100, minimum=5, maximum=195, singleStep=5)
@@ -223,7 +234,7 @@ class SleepGUI(QWidget):
             self.slider_frame.setMaximum(0)
             self.slider_frame.setValue(0)
 
-        # clear cached plotting objects so they'll be re-initialized (basically if reloading)
+        # clear cached plotting objects so they'll be re-initialized (if reloading)
         for c in (self.signal_canvas, self.spect_canvas):
             if c is not None:
                 try:
@@ -234,8 +245,7 @@ class SleepGUI(QWidget):
         self.signal_fig = None
         self.signal_axs = None
         self.signal_lines = None
-        self.label_ax = None
-        self.label_line = None
+        self.label_lines = None
         self.label_text = None
         self.signal_canvas = None
 
@@ -313,12 +323,17 @@ class SleepGUI(QWidget):
             self.states[self.current_idx:end] = value
         else:
             self.states[self.current_idx] = value
-            
+        #clear cache
         self._plot_cache["label"] = None
+        self._plot_cache["idx"] = None
         self.update_screen()
 
     def label_screen_toggle(self) -> None:
         self.label_whole_screen = not self.label_whole_screen
+    
+    def show_all_scorers_toggle(self) -> None:
+        self.show_all_scorers = not self.show_all_scorers
+        self.update_screen()
 
     # UPDATE UI
     def update_screen(self) -> None:
@@ -363,29 +378,38 @@ class SleepGUI(QWidget):
         Efficiently update existing artists (lines, image, text).
         If first call, create figures & canvases via the *_init helpers.
         """
-        sample, labels = self.get_data()
+        # build scorer dict
+        all_scorers = {self.active_scorer: self.states}
+        if self.show_all_scorers:
+            all_scorers.update(self.passive_scorers)
 
-        # number of samples and time axis (based on visible window)
-        n_samples = sample[0].shape[-1] if isinstance(sample, tuple) else sample.shape[-1]
+        # get sample + labels for visible window
+        sample, _ = self.get_data()
+
+        # extract signals from either form
+        if isinstance(sample, tuple):
+            signals = sample[0]
+            spect = sample[1]
+        else:
+            signals = sample
+            spect = None  # no spectral data
+
+        n_samples = signals.shape[-1]
         sample_rate = int(self.params.get('sample_rate', 250))
         time_axis = np.arange(n_samples) / sample_rate
 
-        # --- SIGNALS update/init ---
-        signals = sample[0] if isinstance(sample, tuple) else sample
-
-        # initialize signal figure and artists on first call
+        # initialize signal figure and artists if not initialized
         if self.signal_fig is None:
-            (
-                self.signal_fig,
+            (   self.signal_fig,
                 self.signal_axs,
                 self.signal_lines,
-                self.label_line,
-                self.label_text
-            ) = plot_signals_init(
-                signals,
-                [(c - s / 2, c + s / 2) for c, s in self.ylims],
-                sample_rate,
-                self.params.get('channels_after_preprocessing', [])
+                self.label_lines,
+                self.label_text) = plot_signals_init(
+                    signals,
+                    [(c - s / 2, c + s / 2) for c, s in self.ylims],
+                    sample_rate,
+                    self.params.get('channels_after_preprocessing', []),
+                    scorer_names = list(all_scorers.keys())
             )
 
             # create and configure canvas
@@ -394,25 +418,37 @@ class SleepGUI(QWidget):
             self.signal_canvas.updateGeometry()
             self.canvas_layout.addWidget(self.signal_canvas)
             self.signal_fig.tight_layout()
+            
+        # convert scorer label arrays for the visible window
+        scorer_window_labels = {}
+        idx0 = self.current_idx
+        idx1 = min(self.current_idx + self.scale, self._len_dataset)
+        for scorer_name, arr in all_scorers.items():
+            window_vals = arr[idx0:idx1]
+            # map list to scorer name, keep None values untouched
+            scorer_window_labels[scorer_name] = [
+                (int(x) if x is not None else None)
+                for x in window_vals
+            ]
 
         # update artists (lines, label area)
-        plot_signals_update(
-            signals,
-            labels,
-            self.signal_lines,
-            self.signal_axs[-1],      # label axis is last one
-            self.label_line,
-            self.label_text,
-            [(c - s / 2, c + s / 2) for c, s in self.ylims],
-            sample_rate
-        )
+        plot_signals_update(signals, 
+                            self.signal_lines,
+                            self.signal_axs[-1],      # label axis is last one
+                            self.label_lines,
+                            self.label_text,
+                            [(c - s / 2, c + s / 2) for c, s in self.ylims],
+                            sample_rate,
+                            labels = scorer_window_labels)
         self.signal_canvas.draw_idle()
 
-        # --- SPECTRAL (spectrogram or fourier) ---
+        # spectrograms/fourier
         if isinstance(sample, tuple) and self.params.get('spectral_view'):
             spect = sample[1]
+            if spect is None:   #safety check if spectral view is set but spect is not available
+                return
 
-            # initialize spectral figure if needed
+            # initialize spectral figure if not available
             if self.spect_fig is None:
                 if self.params['spectral_view'] == 'spectrogram':
                     self.spect_fig, self.spect_ax, self.spect_img = plot_spectrogram_init(
@@ -429,7 +465,7 @@ class SleepGUI(QWidget):
                 self.canvas_layout.addWidget(self.spect_canvas)
                 self.spect_fig.tight_layout()
 
-            # update spectra (pass numpy arrays to update helpers)
+            # update plots
             spect_np = spect if isinstance(spect, np.ndarray) else spect.cpu().numpy()
 
             if self.params['spectral_view'] == 'spectrogram':
@@ -448,13 +484,38 @@ class SleepGUI(QWidget):
     def load_states(self) -> None:
         file_name, _ = QFileDialog.getOpenFileName(
             self,
-            caption="Select states file to load",
-            directory=".",
-            filter="Pickle files (*.pkl)"
+            caption = "Select states file to load",
+            directory = self.params.get('project_path', '.'),
+            filter = "Pickle files (*.pkl)"
         )
         if file_name:
             self.states = load_pickled_states(file_name)
             self.update_screen()
+            
+    def load_passive_scorer(self) -> None:
+        
+        file_name, _ = QFileDialog.getOpenFileName(
+            self,
+            caption = "load other scorer labels",
+            directory = self.params.get('project_path', '.'),
+            filter = "Pickle files (*.pkl)"
+        )
+        if not file_name:
+            return
+        
+        labels = load_pickled_states(file_name)
+        if len(labels) != self._len_dataset:
+            self.status_label.setText("Scorer file length does not match dataset!")
+            return
+
+        scorer_name = QFileInfo(file_name).baseName()   #set scorer name same as file
+        self.passive_scorers[scorer_name] = np.array(labels)
+        #reset signal_fig so it is created with new scorer
+        self.reset_scorers()
+        
+        # update plots
+        self.update_screen()
+        self.status_label.setText(f"Loaded passive scorer: {scorer_name}")
 
     # NAVIGATE
     def _set_idx_and_update(self, idx: int) -> None:
@@ -520,4 +581,36 @@ class SleepGUI(QWidget):
         self.yscale = 1.0
         self.label_whole_screen = False
         self._plot_cache = {"idx": None, "scale": None, "sample": None, "label": None}
+        self.passive_scorers.clear()
+        self.reset_scorers()
         self.update_screen()
+
+    def reset_scorers(self):
+        """
+        resets plots so new ones are initialized, esp. relevant when new plots are created
+        """
+        #clear cache
+        self._plot_cache = {"idx": None, "scale": None, "sample": None, "label": None}
+        
+        # reset signal_fig 
+        if self.signal_canvas is not None:
+            self.signal_canvas.setParent(None)   # remove from layout
+            self.signal_canvas.deleteLater()
+            plt.close(self.signal_fig)
+            
+        if self.spect_canvas is not None:
+            self.spect_canvas.setParent(None)
+            self.spect_canvas.deleteLater()
+            plt.close(self.spect_fig)
+
+
+        # clear all figure-related states
+        self.signal_fig = None
+        self.signal_axs = None
+        self.signal_lines = None
+        self.label_lines = None
+        self.label_text = None
+        self.spect_fig = None
+        self.spect_canvas = None
+        self.spect_ax = None
+        self.spect_img = None
