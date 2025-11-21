@@ -1,6 +1,11 @@
-#custom funcs for reading from https://github.com/jenniferColonell/SpikeGLX_Datafile_Tools/
+#custom funcs for reading onebox files 
+# a lot comes from https://github.com/jenniferColonell/SpikeGLX_Datafile_Tools/
 from pathlib import Path
 import numpy as np
+import pandas as pd
+from scipy.signal import resample_poly
+from fractions import Fraction
+
 # Parse ini file returning a dictionary whose keys are the metadata
 # left-hand-side-tags, and values are string versions of the right-hand-side
 # metadata values. We remove any leading '~' characters in the tags to match
@@ -148,22 +153,24 @@ def makeMemMapRaw(binFullPath, meta):
 #
 def ExtractDigital(rawData, firstSamp, lastSamp, dwReq, dLineList, meta):
     # Get channel index of requested digital word dwReq
-    if meta['typeThis'] == 'imec':
-        AP, LF, SY = ChannelCountsIM(meta)
-        if SY == 0:
-            print("No imec sync channel saved.")
-            digArray = np.zeros((0), 'uint8')
-            return(digArray)
-        else:
-            digCh = AP + LF + dwReq
-    elif meta['typeThis'] == 'nidq':
-        MN, MA, XA, DW = ChannelCountsNI(meta)
-        if dwReq > DW-1:
-            print("Maximum digital word in file = %d" % (DW-1))
-            digArray = np.zeros((0), 'uint8')
-            return(digArray)
-        else:
-            digCh = MN + MA + XA + dwReq
+    if not meta['typeThis'] == 'obx':
+        print('non-obx files not currenly supported in onebox_utils.py')
+    # if meta['typeThis'] == 'imec':
+    #     AP, LF, SY = ChannelCountsIM(meta)
+    #     if SY == 0:
+    #         print("No imec sync channel saved.")
+    #         digArray = np.zeros((0), 'uint8')
+    #         return(digArray)
+    #     else:
+    #         digCh = AP + LF + dwReq
+    # elif meta['typeThis'] == 'nidq':
+    #     MN, MA, XA, DW = ChannelCountsNI(meta)
+    #     if dwReq > DW-1:
+    #         print("Maximum digital word in file = %d" % (DW-1))
+    #         digArray = np.zeros((0), 'uint8')
+    #         return(digArray)
+    #     else:
+    #         digCh = MN + MA + XA + dwReq
     elif meta['typeThis'] == 'obx':
         XA, DW, SY = ChannelCountsOBX(meta)
         if dwReq > DW-1:
@@ -191,3 +198,125 @@ def ExtractDigital(rawData, firstSamp, lastSamp, dwReq, dLineList, meta):
         targI = byteN*8 + (7 - bitN)
         digArray[i, :] = bitWiseData[targI, :]
     return(digArray)
+
+def compute_rational_ratio(sr_in, sr_out, max_den=10_000):
+    """
+    Compute rational approximation U/D ≈ sr_out / sr_in.
+    max_den controls accuracy & speed.
+    """
+    if not isinstance(sr_out, int) or not isinstance(sr_in, int):
+        try:
+            sr_in, sr_out = int(sr_in), int(sr_out)
+        except:
+            print('sr_in and sr_out have to be int!')
+    
+    frac = Fraction(sr_out, sr_in).limit_denominator(max_den)
+    return frac.numerator, frac.denominator   # up, down
+
+def downsample_memmap_multichannel(
+        data,
+        sr_in=30303,
+        sr_out=1000,
+        chunk_size=5_000_000,
+        max_den=10_000,
+        verbose=True
+    ):
+    """
+    Downsample multi-channel onebox recordings (np.arrays of channel x time) 
+    using polyphase FIR filtering (scipy.signal.resample_poly)
+    """
+
+    C, T = data.shape
+
+    # Compute rational approximation up/down
+    up, down = compute_rational_ratio(sr_in, sr_out, max_den=max_den)
+    if verbose:
+        print(f"Resampling ratio: sr_out/sr_in ≈ {sr_out/sr_in:.8f}")
+        print(f"Using rational up={up}, down={down}  (error={abs((up/down) - (sr_out/sr_in)):.3e})")
+
+    # Output length
+    T_out = int(np.floor(T * (sr_out / sr_in)))
+    if verbose:
+        print(f"Output samples: {T_out:,}")
+        
+    y = np.empty((C, T_out))
+
+    # Overlap region for FIR filter edge safety
+    overlap = 300   # safe for 100–1000 tap FIR
+
+    out_pos = 0
+
+    for start in range(0, T, chunk_size):
+        stop = min(T, start + chunk_size)
+
+        # Add overlap on both sides for edge-safe filtering
+        s = max(0, start - overlap)
+        e = min(T, stop + overlap)
+
+        if verbose:
+            print(f"Processing time samples {s:,} → {e:,}")
+
+        # Extract chunk
+        chunk = data[:, s:e]   # shape: [C, time]
+
+        # Polyphase resampling
+        chunk_ds = resample_poly(chunk, up=up, down=down, axis=1)
+
+        # Compute corresponding overlap in output domain
+        overlap_out = int(np.ceil(overlap * (sr_out / sr_in)))
+
+        # Remove overlap edges
+        if start == 0:
+            core = chunk_ds[:, :-(overlap_out)] if stop < T else chunk_ds
+        elif stop == T:
+            core = chunk_ds[:, overlap_out:]
+        else:
+            core = chunk_ds[:, overlap_out:-overlap_out]
+
+        L = core.shape[1]
+
+        # Write
+        y[:, out_pos:out_pos + L] = core
+        out_pos += L
+
+    if verbose:
+        print("done")
+
+    return y
+
+def run_conversion(bin_path: str, project_meta: dict,  
+                   sr_new: int = 1000, 
+                   chanlist = [x for x in range(12)],
+                   channel_to_box = {0:2, 1:4,2:3, 3:1}):
+    """
+    converts obx bin file to 4 csv files
+    some params can be changed if the setup is different
+    uses only chanlist first channels
+    """
+    bin_path = Path(bin_path)
+    #read data
+    meta = readMeta(Path(bin_path))
+    sr_obx = SampRate(meta)
+    raw_data = makeMemMapRaw(Path(bin_path), meta)
+    print('data loaded, downsampling...')
+    downsampled = downsample_memmap_multichannel(data = raw_data, sr_in = sr_obx, sr_out = sr_new)
+    #gain correct
+    conv_obx = GainCorrectOBX(downsampled, chanlist, meta)
+    #get time axis
+    time = np.arange(int(meta['firstSample']), 
+                     conv_obx.shape[1] + int(meta['firstSample']), 1) / sr_new
+    timestamps = pd.to_datetime(meta['fileCreateTime']) + pd.to_timedelta(time, unit = 's') #probably no getting around this, np.vectorize with datetime is slower, np.datetime is int only
+    #print info to troubleshoot
+    print(f'recording duration: {time[-1] - time[0]} seconds')
+    print(f'loaded {conv_obx.shape} data points, created time array: {timestamps.shape}')
+    
+    save_folder = Path(project_meta.get('project_path', '.')) / 'raw'
+    for i in range(4):
+        print(f'saving {i+1} / {4} csv')
+        filename = bin_path.stem + f'_box{channel_to_box.get(i,'unknown')}.csv'
+        save_path = save_folder / filename
+        sel_data = conv_obx[i*3:i*3+3, :]
+        to_save = pd.DataFrame(sel_data.T, columns = ['f_ecog', 'p_ecog', 'emg'])
+        to_save['time'] = timestamps
+        to_save.to_csv(save_path, index = False)
+    print('done')

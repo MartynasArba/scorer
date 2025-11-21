@@ -14,6 +14,9 @@ gui.show()
 sys.exit(app.exec_())
 
 #TODO:
+#might need to zero-center and standardize powers
+
+#should get preprocessing to not freeze
 #BUGS:
 #if calling preprocessing multiple times, metadata gets fucked (ecog, emg repeats etc)
 #in loaders, allow folder selection and load all data, because chunked + windowed data is now saved as separate files. 

@@ -28,6 +28,11 @@ class PreprocessWidget(QWidget):
         layout.addWidget(self.label)
         
         #select input file, add support for other formats later if needed
+        btn_obx_to_csv = QPushButton('convert onebox recording to csv')
+        btn_obx_to_csv.clicked.connect(self.obx_to_csv)
+        layout.addWidget(btn_obx_to_csv)
+        
+        #select input file, add support for other formats later if needed
         btn_select_file = QPushButton('select file to load')
         btn_select_file.clicked.connect(self.select_file)
         layout.addWidget(btn_select_file)
@@ -332,7 +337,25 @@ class PreprocessWidget(QWidget):
         """
         opens file dialog and sets path
         """
-        filename, _ = QFileDialog.getOpenFileName(self, caption = "Select file to chop", directory = self.params.get('project_path', '.'), filter = "CSV files (*.csv)")
+        filename, _ = QFileDialog.getOpenFileName(self, caption = "Select file to preprocess", 
+                                                  directory = self.params.get('project_path', '.'), 
+                                                  filter = "CSV files (*.csv)")
         if filename:
             self.label.setText(filename) 
             self.selected_file = filename          
+            
+    def obx_to_csv(self) -> None:
+        """
+        opens file selection and runs downsampling + conversion to csv
+        """
+        from data.onebox_utils import run_conversion
+        
+        filename, _ = QFileDialog.getOpenFileName(self, caption = "Select onebox .bin file to convert", 
+                                                  directory = self.params.get('project_path', '.'), 
+                                                  filter = "BIN files (*.bin)")
+        if filename:
+            self.label.setText(f'selected {filename} for obx conversion') 
+            run_conversion(filename, self.params, sr_new = self.params.get('sample_rate', '1000'))
+            self.label.setText(f'{filename} obx file converted to csvs') 
+            
+        
