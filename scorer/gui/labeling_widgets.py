@@ -34,6 +34,7 @@ class SleepGUI(QWidget):
         self.data_path = ''
         self.params = metadata or {}
         self.active_scorer = self.params.get('scorer', 'unknown_scorer')
+        self.load_folder = False
 
         # plotting / artist attributes
         self.signal_fig = None
@@ -93,6 +94,10 @@ class SleepGUI(QWidget):
         layout.addLayout(slider_layout)
 
         # navigation and control buttons
+        load_folder_check = QCheckBox("Load multiple files from folder?")
+        load_folder_check.stateChanged.connect(self.load_folder_toggle)
+        control_layout.addWidget(load_folder_check)
+        
         btn_load = QPushButton("load file")
         btn_load.clicked.connect(self.select_dataset)
         control_layout.addWidget(btn_load)
@@ -190,15 +195,24 @@ class SleepGUI(QWidget):
 
         self.status_label = QLabel("Ready")
         layout.addWidget(self.status_label)
+        
+    def load_folder_toggle(self):
+        self.load_folder = not self.load_folder
 
     # DATA LOADING
     def select_dataset(self) -> None:
-        file_name, _ = QFileDialog.getOpenFileName(
-            self,
-            caption = "select data file to load",
-            directory = self.params.get('project_path', '.'),
-            filter = "Data files (*.pt *.pkl)"
-        )
+        if self.load_folder:
+            file_name = QFileDialog.getExistingDirectory(self,
+                                                      caption="Or select a folder with partial chunk files",
+                                                      directory=self.params.get('project_path', '.'))
+        elif not self.load_folder:
+            file_name, _ = QFileDialog.getOpenFileName(self,
+                                                       caption="Select file to preprocess",
+                                                       directory=self.params.get('project_path', '.'),
+                                                       filter="Data files (*.pt *.npy)")
+        else:
+            print('not file, not folder - weird')
+            
         if not file_name:
             return
 

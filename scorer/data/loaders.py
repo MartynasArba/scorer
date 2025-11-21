@@ -43,13 +43,22 @@ class SleepSignals(Dataset):
         #get quantiles for all channels (alternatively just set limits to largest/smallest value?)
         #channel num = size at dim 1
         #runs out of memory, so if too many samples, use a random subset
-        if self.all_labels.size(0) > 1000:
-            rand_subset = torch.randint(0, self.all_labels.size(0), size = (1000,))      
-            #lims should be center+-spread, so center, spread needed
-            self.channel_ylims = [(torch.quantile(self.all_samples[rand_subset, dim, :].reshape(-1), q = .5).item(), (torch.quantile(self.all_samples[rand_subset, dim, :].reshape(-1), q = .99).item() - torch.quantile(self.all_samples[rand_subset, dim, :].reshape(-1), q = .01).item())) for dim in range(self.all_samples.size(1))]
-        else:
-            self.channel_ylims = [(torch.quantile(self.all_samples[:, dim, :].reshape(-1), q = .5).item(), (torch.quantile(self.all_samples[:, dim, :].reshape(-1), q = .99).item() - torch.quantile(self.all_samples[:, dim, :].reshape(-1), q = .01).item())) for dim in range(self.all_samples.size(1))]
         
+        num_ephys_channels = len(self.params.get('ecog_channels', '0').split(',')) + len(self.params.get('emg_channels', '0').split(','))
+        
+        #approximate num channels
+        rand_subset = torch.randint(0, self.all_labels.size(0), size = (1000,))      
+        #lims should be center+-spread, so center, spread needed
+        #infer for all channels
+        if self.params.get('ylims', '') == 'infer':
+            self.channel_ylims = [(torch.quantile(self.all_samples[rand_subset, dim, :].reshape(-1), q = .5).item(), (torch.quantile(self.all_samples[rand_subset, dim, :].reshape(-1), q = .99).item() - torch.quantile(self.all_samples[rand_subset, dim, :].reshape(-1), q = .01).item())) for dim in range(self.all_samples.size(1))]
+        elif self.params.get('ylims', '') == 'standard':
+            self.channel_ylims = [(0, 0.2) for dim in range(num_ephys_channels)]
+        elif self.params.get('ylims', '') == 'infer_ephys':
+            self.channel_ylims = [(torch.quantile(self.all_samples[rand_subset, dim, :].reshape(-1), q = .5).item(), (torch.quantile(self.all_samples[rand_subset, dim, :].reshape(-1), q = .99).item() - torch.quantile(self.all_samples[rand_subset, dim, :].reshape(-1), q = .01).item())) for dim in range(num_ephys_channels)]
+        else:
+            self.channel_ylims = []
+
         self.device = device
         self.transform = transform
         self.augment = augment
@@ -90,48 +99,68 @@ class SleepSignals(Dataset):
     def _load(self, data_path, score_path):
         """
         loads data that was saved in preprocessing and makes the shape sample x channel x window_len
+        supported inputs: 
+            folder of files (X*.pt, y*.pt)
+            single .pt
         """
-        with open(data_path, 'rb') as f:
-            if Path(data_path).suffix == '.pt':
-                self.all_samples = torch.load(data_path)
-                self.all_samples = self.all_samples.to(dtype = torch.float32)
-                self.all_samples = self.all_samples.permute(1, 0, 2)
-                print(f'loaded tensor: {self.all_samples.size()}')
-                #loaded tensor of dims channels x samples x win_length
-                #samples should probably go to dim 0, so new shape = samples x channels x window size
-                
-            #legacy option: load a saved numpy array
+        data_path = Path(data_path)
+        score_path = Path(score_path)
+        
+        #load folders with chunk data
+        if data_path.is_dir():
+            x_files = sorted(data_path.glob("X_*.pt"))
+            if not x_files:
+                raise RuntimeError(f"No X_*.pt found in folder: {data_path}")
+
+            x_chunks = [torch.load(f).float() for f in x_files]
+            X = torch.cat(x_chunks, dim=1)        # concat on sample dimension
+
+            if X.ndim == 3:
+                X = X.permute(1, 0, 2)            # [samples, channels, win_len]
+
+            self.all_samples = X
+            print(f"Loaded {len(x_files)} X chunks: {X.shape}")
+            
+            #do same for y
+            y_files = sorted(data_path.glob("y_*.pt"))
+            if not y_files:
+                raise RuntimeError(f"No y_*.pt found in folder: {data_path}")
+
+            y_chunks = [torch.load(f).long() for f in y_files]
+            #chunk state dimensions are 1channel, samples, win_len
+            Y = torch.cat(y_chunks, dim = 1) 
+            Y = Y.to(dtype = torch.long)
+            Y = Y.permute(1, 0, 2)
+            if Y.ndim == 3 and Y.size(1) == 1:
+                Y = Y[..., 0].squeeze(1)    #keep only the 1st state and collapse channel 
             else:
-                X_list = pickle.load(f)
-                if not isinstance(X_list, torch.Tensor):
-                    if isinstance(X_list, list):                         
-                        self.all_samples = torch.from_numpy(np.concatenate(X_list)).to(dtype = torch.float32)
-                    else:
-                        self.all_samples = torch.from_numpy(X_list).to(dtype = torch.float32)
-                else:
-                    self.all_samples = self.all_samples.to(dtype = torch.float32)
-                self.all_samples = self.all_samples.permute(0, 2, 1)
-                print(f'loaded tensor from numpy: {self.all_samples.size()}')
-                    
-        with open(score_path, 'rb') as f:
-            if Path(score_path).suffix == '.pt':
-                self.all_labels = torch.load(score_path)
-                self.all_labels = self.all_labels.to(dtype = torch.long)
-                self.all_labels = self.all_labels.permute(1, 0, 2)
-                if self.all_labels.ndim == 3 and self.all_labels.size(1) == 1:
-                    self.all_labels = self.all_labels[..., 0].squeeze(1)    #keep only the 1st state and collapse channel 
-                print(f'loaded tensor: {self.all_labels.size()}')
-            else:
-                y_list = pickle.load(f)
-                if not isinstance(X_list, torch.Tensor):
-                    if isinstance(y_list, list):
-                        self.all_labels = torch.from_numpy(np.concatenate(y_list)).to(dtype=torch.long)
-                    else:
-                        self.all_labels = torch.from_numpy(y_list).to(dtype=torch.long)
-                else:
-                    self.all_labels = self.all_labels.to(dtype = torch.long)
-                print(f'loaded tensor from numpy: {self.all_labels.size()}')
-    
+                print(f'error when loading states, ndim = {Y.ndim}, shape: {Y.size()}')
+                return        
+            self.all_labels = Y
+            print(f"Loaded y chunks, final y shape: {Y.shape}")
+            return
+        
+        #handle .pt files 
+        if data_path.suffix == ".pt":
+            X = torch.load(data_path)
+            X = X.to(dtype=torch.float32)
+            if X.ndim == 3:
+                X = X.permute(1, 0, 2)
+            self.all_samples = X
+            print(f"Loaded tensor: {X.shape}")
+        else:
+            print('only .pt files are supported')
+            return
+        if score_path.suffix == ".pt":
+            Y = torch.load(score_path).long()
+            Y = Y.permute(1, 0, 2)
+            if Y.ndim == 3 and Y.size(1) == 1:
+                    Y = Y[..., 0].squeeze(1)
+            self.all_labels = Y
+        else:
+            print('only .pt files are supported, states')      
+        
+        
     def _augment(self, x: torch.Tensor) -> torch.Tensor:
         """randomly apply time series augmentations - noise, scale, time shift"""
         x = x.clone()

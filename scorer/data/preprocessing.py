@@ -262,11 +262,9 @@ def band_powers(signal: torch.Tensor, bands: dict = {'delta': (0.5, 4)}, sr: int
 
     for name, (low, high) in bands.items():
         filtered = bandpass_filter(signal, sr, freqs = (low, high), device=device)
-        print('filtered')
         filtered = filtered.squeeze(0)
         analytic = hilbert_transform(filtered)
         amplitude = torch.abs(analytic) 
-        print('transformed')
         if amplitude.ndim == 1:
             amplitude = amplitude.unsqueeze(0).unsqueeze(0)
         elif amplitude.ndim == 2:
@@ -274,13 +272,11 @@ def band_powers(signal: torch.Tensor, bands: dict = {'delta': (0.5, 4)}, sr: int
         
         if kernel is not None:
             amplitude = F.conv1d(amplitude, kernel, padding = 'same').squeeze(0)
-        print('convolved')
-        q = torch.quantile(amplitude[::10], q=0.95) #every 10th value for speed
-        amplitude = torch.clamp(amplitude, max = q) #remove vals above 95th quantile
+        q = torch.quantile(amplitude[::10], q=0.9) #every 10th value for speed
+        amplitude = torch.clamp(amplitude, max = q) #remove vals above 90th quantile
         #also standardize by std (but not zero-center, because that should happen when filtering)
         amplitude /= torch.std(amplitude)
         amplitude = (amplitude - amplitude.min()) / (amplitude.max() - amplitude.min() + 1e-12)
-        print('done')
         band_envelopes[name] = amplitude
     return band_envelopes   
 
@@ -305,6 +301,8 @@ def sum_power(signal: torch.Tensor, smoothing: float = 0.2, sr: int = 250, devic
             avg_power = F.conv1d(power.unsqueeze(1), kernel, padding=pad)
             rms = torch.sqrt(avg_power.squeeze(1) + 1e-12)  #very small value ensures float smoothing is never <0
             if normalize:
+                q = torch.quantile(rms[::10], q=0.9) #every 10th value for speed
+                rms = torch.clamp(rms, max = q) #remove vals above 90th quantile                
                 rms = (rms - torch.min(rms)) / (torch.max(rms) - torch.min(rms))    #scale
             out.append(rms)
         if len(out) == 1:

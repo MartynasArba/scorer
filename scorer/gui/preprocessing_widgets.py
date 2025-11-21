@@ -73,7 +73,7 @@ class PreprocessWidget(QWidget):
         emg_filter_layout.addWidget(self.emg_low_bound_field)
         emg_filter_layout.addWidget(self.emg_high_bound_field)  
         
-        self.notch_check = QCheckBox("use notch filter: DO NOT, BROKEN? freq to remove:")    #add option to select custom notch filter
+        self.notch_check = QCheckBox("use notch filter? freq to remove:")    #add option to select custom notch filter
         self.notch_value_field = QLineEdit(self)
         self.notch_value_field.setText("50")
         notch_layout = QHBoxLayout()
@@ -122,7 +122,7 @@ class PreprocessWidget(QWidget):
             if not self.chunk_check.isChecked():    
                 raw_ecog, raw_emg, states = load_from_csv(self.selected_file, metadata = self.params, states = states)
                 tensor_seq = (raw_ecog, raw_emg) if not self.testing_check.isChecked() else (raw_ecog, raw_emg, states.unsqueeze(-1))
-                print('data read done')
+                self.label.setText('data read done')
                 
                 if self.save_raw_check.isChecked():
                     save_tensor(tensor_seq = tensor_seq, 
@@ -133,7 +133,7 @@ class PreprocessWidget(QWidget):
                     
                 tensor_seq = self._preprocess(raw_ecog, raw_emg) #this should handle which preprocessing steps should be done 
                 tensor_seq = tensor_seq if not self.testing_check.isChecked() else tensor_seq + (states.unsqueeze(0))# data dim is channels x time here
-                print('preprocessing done')
+                self.label.setText('preprocessing done')
                 
                 if self.save_preprocessed_check.isChecked():
                     save_preprocessed_seq = tensor_seq if not self.testing_check.isChecked() else tensor_seq + tuple([states_chunk.unsqueeze(0)])   #change so states are saved separatelly
@@ -165,7 +165,6 @@ class PreprocessWidget(QWidget):
                                 raw = True)
                     
                     tensor_seq = self._preprocess(ecog_chunk, emg_chunk)
-                    print(f'preprocessing done chunk {i}')
                                         
                     if self.save_preprocessed_check.isChecked():
                         save_preprocessed_seq = tensor_seq if not self.testing_check.isChecked() else tensor_seq + tuple([states_chunk.unsqueeze(0)])   #change so states are saved separatelly
@@ -219,8 +218,6 @@ class PreprocessWidget(QWidget):
         
         self.params['preprocessing'] = []
         ecog, emg = ecog.T, emg.T       #torch usually requires channels x time
-        
-        print(f'sample sizes before preprocessing:{ecog.size()}, {emg.size()}')
         
         if self.resample_check.isChecked():
             print(f'before resampling: {ecog.size()}')
@@ -286,6 +283,9 @@ class PreprocessWidget(QWidget):
         else:
             bands = {None : None}        
         
+        print('preprocessing done')
+        self.label.setText('preprocessing done')
+        
         return (ecog, emg, ecog_power, emg_power) + tuple(bands.values())
          
     
@@ -341,7 +341,7 @@ class PreprocessWidget(QWidget):
                                                   directory = self.params.get('project_path', '.'), 
                                                   filter = "CSV files (*.csv)")
         if filename:
-            self.label.setText(filename) 
+            self.label.setText(f'{filename} selected for preprocessing, press run to do') 
             self.selected_file = filename          
             
     def obx_to_csv(self) -> None:

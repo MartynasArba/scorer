@@ -14,10 +14,13 @@ def construct_paths(data_path: str, format: str = '.pkl', **metadata) ->Tuple[st
     """
     
     data_path = Path(data_path)
-    
+        
     if data_path.exists():
         
-        y_file_path = data_path.with_name(data_path.name.replace('X', 'y'))
+        if data_path.is_dir():
+            y_file_path = data_path
+        else:  
+            y_file_path = data_path.with_name(data_path.name.replace('X', 'y'))
         
         scorer = metadata.get('scorer', data_path.stem[:-2] if data_path.suffix else data_path.stem)
         unique_id = metadata.get('scoring_started', 'noID')

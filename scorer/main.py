@@ -14,11 +14,19 @@ gui.show()
 sys.exit(app.exec_())
 
 #TODO:
-#might need to zero-center and standardize powers
-
-#should get preprocessing to not freeze
+#now ylim changes dynamically - should be prevented and kept same across samples
+#REWORK PLOTS.PY TO PREVENT DYNAMIC YLIMS
+#add setting for ylim = infer, standard, infer_ephys
+# solution: only pass ylims for ecog/emg files
+#might need to zero-center and standardize ylims for signals/sum powers
+#ylims also need to be more adjustable, and probably only for ecog/emg, as other values are pretty much standardized
+#get back chunk numbers in console (label is frozen), remove notch warning
+#pass ylims = infer to metadata to standardize for every channel
+#pass ylims = standard to do 0 center, 0.2 spread
+#
+#
 #BUGS:
-#if calling preprocessing multiple times, metadata gets fucked (ecog, emg repeats etc)
+#if calling preprocessing multiple times, metadata gets fucked (ecog, emg repeats etc) - @grok is this true?
 #in loaders, allow folder selection and load all data, because chunked + windowed data is now saved as separate files. 
 # This could be a good thing, but then should explicitly be implemented.
 #remove warning from notch button
@@ -30,12 +38,8 @@ sys.exit(app.exec_())
 # add low_memory option which would load only a specified amount of chunks(?)
 #
 #preprocessing:
-# add loading from onebox
-#bandpows seem very prone to outliers?
-#add status bar or label instead of prints
-#future development: implement threading to prevent freezing, 
-# move path construciton to a separate func,
-#think about chunk data saving as it's currently being loaded and joined. Maybe modify loader?
+#might be smart to dirsregard more noise, so scale without top 10% (in bandpows)
+#future development: implement threading to prevent freezing? 
 #
 #automatic scoring:
 #not yet started
@@ -45,7 +49,7 @@ sys.exit(app.exec_())
 #manual labeling:
 #make it more pretty - for example, freq plot lims
 #decide how single label, multi scorer should be handled
-#add scorer name to metadata correctly
+#add scorer name to metadata and state save files correctly
 #save progress automatically every N scores? maybe add checkmark, overwrite option?
 #jump to next unscored sample
 #
