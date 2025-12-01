@@ -5,6 +5,8 @@ import numpy as np
 import pandas as pd
 from scipy.signal import resample_poly
 from fractions import Fraction
+import glob
+import os
 
 # Parse ini file returning a dictionary whose keys are the metadata
 # left-hand-side-tags, and values are string versions of the right-hand-side
@@ -287,13 +289,14 @@ def downsample_memmap_multichannel(
 def run_conversion(bin_path: str, project_meta: dict,  
                    sr_new: int = 1000, 
                    chanlist = [x for x in range(12)],
-                   channel_to_box = {0:2, 1:4,2:3, 3:1}):
+                   channel_to_box = {0:1, 1:4, 2:2, 3:3}):
     """
     converts obx bin file to 4 csv files
     some params can be changed if the setup is different
     uses only chanlist first channels
     """
     bin_path = Path(bin_path)
+    print('path read')
     #read data
     meta = readMeta(Path(bin_path))
     sr_obx = SampRate(meta)
@@ -319,4 +322,76 @@ def run_conversion(bin_path: str, project_meta: dict,
         to_save = pd.DataFrame(sel_data.T, columns = ['f_ecog', 'p_ecog', 'emg'])
         to_save['time'] = timestamps
         to_save.to_csv(save_path, index = False)
-    print('done')
+    print('saved!')
+    return
+
+def file_converted(file, save_folder = "C:/Users/marty/Projects/scorer/proj_data/raw", channel_to_box = {0:1, 1:4, 2:2, 3:3}):
+    """
+    checks if obx file is already converted
+    converted if there are corresponding .csv files
+    """
+    bin_path = Path(file)
+    
+    for i in range(4):
+        filename = bin_path.stem + f'_box{channel_to_box.get(i,'unknown')}.csv'
+        save_path = save_folder / filename
+        if os.path.exists(save_path):
+            return True
+    return False   
+    
+def convert_multiple_recs(folder, project_meta, overwrite = False):
+    """
+    runs conversion obx.bin -> 4 recs .csv for all files in folder
+    """
+    print(f'starting all file conversion in {folder}')
+    files = glob.glob(folder + '/*/*.obx0.obx.bin')
+    for file in files:
+        if (not file_converted(file, save_folder= Path(project_meta.get('project_path', '.')) / 'raw')) or overwrite:
+            try:
+                print(f'converting {file}')
+                run_conversion(file, project_meta, sr_new = 1000, 
+                            chanlist = [x for x in range(12)],
+                            channel_to_box = {0:1, 1:4, 2:2, 3:3})
+            except Exception as e:
+                print(f'{file} NOT CONVERTED: {e}')
+        else:
+            print(f'file already converted: {file}')
+    print(f'all files in {folder} converted!!!')
+    return
+
+def get_folder_quality_report(folder_path, savepath = None):
+    """
+    generates a quality report for all .csv files in path
+    """
+    if savepath is None:
+        savepath = folder_path
+    res_dict = {}
+    files = glob.glob(folder_path + '/*box*.csv')
+    for file in files:
+        metrics = generate_obx_quality_report(file, sample_size = 20, report_interval = 10, sr = 1000)
+        res_dict[file] = metrics
+        print(f'report generated for {file}')    
+    pd.DataFrame.from_dict(res_dict).to_csv(savepath + '/quality_report.csv')
+
+def generate_obx_quality_report(path, sample_size = 20, report_interval = 10, sr = 1000):
+    """
+    generates a quality report for a raw .csv recording file obtained from obx in earlier steps+
+    file has to contain f_ecog, p_ecog, emg channels
+    """
+    channels = ['f_ecog', 'p_ecog', 'emg']
+    metrics = {f'std_{channel}':[] for channel in channels}
+    metrics['time'] = []
+    data = pd.read_csv(path, chunksize = sample_size * sr)      #20 sec per hour
+    for i, chunk in enumerate(data):
+        if i % int(report_interval * sample_size) == 0:
+            print(f'{i} chunk read')
+            metrics['time'].append(chunk['time'].iloc[0]) #should be a single value
+            for channel in channels:
+                metrics[f'std_{channel}'].append(chunk.loc[:, channel].std())            
+    return metrics
+
+if __name__ == "__main__":
+    project_meta = {'project_path' : 'C:/Users/marty/Projects/scorer/proj_data', 'sample_rate' : 1000}
+    convert_multiple_recs(folder = 'G:/SLEEP-ECOG', project_meta = project_meta, overwrite = False)
+    get_folder_quality_report("C:/Users/marty/Projects/scorer/proj_data/raw")
+

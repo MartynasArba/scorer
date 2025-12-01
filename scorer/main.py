@@ -14,6 +14,14 @@ gui.show()
 sys.exit(app.exec_())
 
 #TODO:
+#fix up obx util funcs to take metadata correctly
+#why do time values in conv obx csvs start at 3?
+# could add additional qc metrics for converted obx files
+# #bugfix motion sensor conversiosn - messed up files
+#add warning to rec conversion by checking file quality, should be done each chunk as wires might disconnect
+#add no-overwrite check
+#add pre-scoring utils tab
+
 #now ylim changes dynamically - should be prevented and kept same across samples
 #REWORK PLOTS.PY TO PREVENT DYNAMIC YLIMS
 #add setting for ylim = infer, standard, infer_ephys
