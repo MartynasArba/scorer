@@ -4,6 +4,7 @@ from gui.preprocessing_widgets import PreprocessWidget
 from gui.settings_widgets import SettingsWidget
 from gui.autoscoring_widgets import AutoScoringWidget
 from gui.report_widgets import ReportWidget
+from gui.util_widgets import UtilWidget
 
 class SleepWindow(QMainWindow):
     """
@@ -48,11 +49,12 @@ class SleepWindow(QMainWindow):
             'device',
             'optional_tag'
             ]
-        #create metadata dict ("global", to be shared across widgets)
+        #create metadata dict (global, to be shared across widgets)
         self.metadata = {param : None for param in params}
         
         #initialize widgets
         self.settings_tab = SettingsWidget(self.metadata)
+        self.util_tab = UtilWidget(self.metadata)
         self.preprocess_tab = PreprocessWidget(self.metadata)
         self.auto_scoring_tab = AutoScoringWidget()
         self.scoring_tab = SleepGUI(dataset = None, metadata = self.metadata)
@@ -60,6 +62,7 @@ class SleepWindow(QMainWindow):
 
         #add as tabs
         tabs.addTab(self.settings_tab, "settings and metadata")
+        tabs.addTab(self.util_tab, "utilities")
         tabs.addTab(self.preprocess_tab, "preprocess data")
         tabs.addTab(self.auto_scoring_tab, "automatically score data")
         tabs.addTab(self.scoring_tab, "manual scoring")

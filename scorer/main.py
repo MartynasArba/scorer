@@ -14,36 +14,23 @@ gui.show()
 sys.exit(app.exec_())
 
 #TODO:
-#fix up obx util funcs to take metadata correctly
-#why do time values in conv obx csvs start at 3?
-# could add additional qc metrics for converted obx files
-# #bugfix motion sensor conversiosn - messed up files
-#add warning to rec conversion by checking file quality, should be done each chunk as wires might disconnect
-#add no-overwrite check
-#add pre-scoring utils tab
-
-#now ylim changes dynamically - should be prevented and kept same across samples
-#REWORK PLOTS.PY TO PREVENT DYNAMIC YLIMS
-#add setting for ylim = infer, standard, infer_ephys
-# solution: only pass ylims for ecog/emg files
-#might need to zero-center and standardize ylims for signals/sum powers
-#ylims also need to be more adjustable, and probably only for ecog/emg, as other values are pretty much standardized
-#get back chunk numbers in console (label is frozen), remove notch warning
-#pass ylims = infer to metadata to standardize for every channel
-#pass ylims = standard to do 0 center, 0.2 spread
 #
-#
-#BUGS:
+#TEST:
 #if calling preprocessing multiple times, metadata gets fucked (ecog, emg repeats etc) - @grok is this true?
-#in loaders, allow folder selection and load all data, because chunked + windowed data is now saved as separate files. 
-# This could be a good thing, but then should explicitly be implemented.
-#remove warning from notch button
-#remove prints from preprocessing
+#check if ylims are fine now
 #notch is still weird, should test it more
 #
+#BUGS:
+#fix fourier lims
+#
 #MISSING FEATURES:
+#utils:
+#add "crop to time" for obx csvs to get only night
+#add some option to visualize results of obx file validation in utils // "see if it's worth continuing"
+# could add additional qc metrics for converted obx files
+#
+#settings:
 # add warnings for settings if invalid values are set
-# add low_memory option which would load only a specified amount of chunks(?)
 #
 #preprocessing:
 #might be smart to dirsregard more noise, so scale without top 10% (in bandpows)
@@ -51,15 +38,18 @@ sys.exit(app.exec_())
 #
 #automatic scoring:
 #not yet started
-#implement at least one model
+#implement at least one model, for example, the old CNN
 #remember to turn grad back on if training!
+#ideas: finetune TimesFM / Moirai + add simple classifier on top
+#add interface to use a pre-trained model
 #
 #manual labeling:
-#make it more pretty - for example, freq plot lims
-#decide how single label, multi scorer should be handled
+#add channel toggles
+#add autoscale click
 #add scorer name to metadata and state save files correctly
 #save progress automatically every N scores? maybe add checkmark, overwrite option?
 #jump to next unscored sample
+#decide how single label, multi scorer should be handled
 #
 #report:
 #not yet started

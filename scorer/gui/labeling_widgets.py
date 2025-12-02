@@ -177,7 +177,7 @@ class SleepGUI(QWidget):
 
 
         # sliders
-        self.slider_yscale = QSlider(value=100, minimum=5, maximum=195, singleStep=5)
+        self.slider_yscale = QSlider(value=100, minimum=1, maximum=20000, singleStep=5)
         self.slider_yscale.setOrientation(QtCore.Qt.Horizontal)
         self.slider_yscale.setTracking(False)
         self.slider_yscale.valueChanged.connect(self.change_yscale)

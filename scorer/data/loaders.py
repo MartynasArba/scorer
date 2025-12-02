@@ -40,30 +40,13 @@ class SleepSignals(Dataset):
         self.all_samples = self.all_samples.to(device)
         self.all_labels = self.all_labels.to(device)
         
-        #get quantiles for all channels (alternatively just set limits to largest/smallest value?)
-        #channel num = size at dim 1
-        #runs out of memory, so if too many samples, use a random subset
-        
-        num_ephys_channels = len(self.params.get('ecog_channels', '0').split(',')) + len(self.params.get('emg_channels', '0').split(','))
-        
-        #approximate num channels
-        rand_subset = torch.randint(0, self.all_labels.size(0), size = (1000,))      
-        #lims should be center+-spread, so center, spread needed
-        #infer for all channels
-        if self.params.get('ylims', '') == 'infer':
-            self.channel_ylims = [(torch.quantile(self.all_samples[rand_subset, dim, :].reshape(-1), q = .5).item(), (torch.quantile(self.all_samples[rand_subset, dim, :].reshape(-1), q = .99).item() - torch.quantile(self.all_samples[rand_subset, dim, :].reshape(-1), q = .01).item())) for dim in range(self.all_samples.size(1))]
-        elif self.params.get('ylims', '') == 'standard':
-            self.channel_ylims = [(0, 0.2) for dim in range(num_ephys_channels)]
-        elif self.params.get('ylims', '') == 'infer_ephys':
-            self.channel_ylims = [(torch.quantile(self.all_samples[rand_subset, dim, :].reshape(-1), q = .5).item(), (torch.quantile(self.all_samples[rand_subset, dim, :].reshape(-1), q = .99).item() - torch.quantile(self.all_samples[rand_subset, dim, :].reshape(-1), q = .01).item())) for dim in range(num_ephys_channels)]
-        else:
-            self.channel_ylims = []
-
         self.device = device
         self.transform = transform
         self.augment = augment
 
         self.spectral = spectral_features
+        
+        self.channel_ylims = [] #for plotting
         
         if self.spectral == 'spectrogram':
             self.spect = Spectrogram(n_fft = 100, #changes freq bins
@@ -159,6 +142,7 @@ class SleepSignals(Dataset):
             self.all_labels = Y
         else:
             print('only .pt files are supported, states')      
+        self.channel_ylims = self.compute_ylims()
         
         
     def _augment(self, x: torch.Tensor) -> torch.Tensor:
@@ -204,3 +188,51 @@ class SleepSignals(Dataset):
         output = torch.stack((power, freqs), dim = -1)      #stacked power/freqs tensor
         
         return output.to(self.device)
+    
+    def compute_ylims(self):
+        """
+        compute ylims of set mode
+        """
+        mode = self.params.get("ylim", "standard")
+        X = self.all_samples
+        
+        n_samples, n_channels, _ = X.size()
+        
+        ecog_n = len(self.metadata.get('ecog_channels', '0').split(','))
+        emg_n  = len(self.metadata.get('emg_channels', '0').split(','))
+        ephys_n = ecog_n + emg_n
+        
+        rand_idx = np.random.randint(0, n_samples, size=1000)
+        ylims = [] #(center, spread) per channel
+        
+        for ch in range(n_channels):
+                if mode == "standard":
+                    if ch < ephys_n:
+                        center = 0.0
+                        spread = 0.2
+                    else:
+                        center = 0.0
+                        spread = 0.2
+                    ylims.append((center, spread))
+                    continue
+
+                infer_channel = ((mode == "infer") or (mode == "infer_ephys" and ch < ephys_n))
+                if infer_channel:
+                    vals = X[rand_idx, ch, :].reshape(-1).cpu().numpy()
+                    median = float(np.quantile(vals, 0.50))
+                    q_low  = float(np.quantile(vals, 0.01))
+                    q_high = float(np.quantile(vals, 0.99))
+                    spread = (q_high - q_low)
+
+                    # avoid degenerate spread
+                    if spread < 1e-9:
+                        spread = 1e-9
+                    ylims.append((median, spread))
+                    
+                else:
+                    # non-ephys channels in infer_ephys mode → (0,1)
+                    center = 0.5
+                    spread = 1.0
+                    ylims.append((center, spread))
+                    
+        return ylims

@@ -158,9 +158,12 @@ def plot_signals_update(
         signal_lines[i].set_ydata(selected_data[i])
 
         if i < len(ylims):
-            low, high = ylims[i]
-        else:
+            center, spread = ylims[i]
+            low = center - spread / 2
+            high = center + spread / 2
+        else:   #if no ylims are available
             low, high = np.min(selected_data[i]), np.max(selected_data[i])
+            
         signal_lines[i].axes.set_ylim(low, high)
 
     if signal_lines:

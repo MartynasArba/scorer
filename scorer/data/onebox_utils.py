@@ -7,6 +7,7 @@ from scipy.signal import resample_poly
 from fractions import Fraction
 import glob
 import os
+from itertools import islice
 
 # Parse ini file returning a dictionary whose keys are the metadata
 # left-hand-side-tags, and values are string versions of the right-hand-side
@@ -299,16 +300,20 @@ def run_conversion(bin_path: str, project_meta: dict,
     print('path read')
     #read data
     meta = readMeta(Path(bin_path))
-    sr_obx = SampRate(meta)
+    sr_obx = int(SampRate(meta))
     raw_data = makeMemMapRaw(Path(bin_path), meta)
     print('data loaded, downsampling...')
     downsampled = downsample_memmap_multichannel(data = raw_data, sr_in = sr_obx, sr_out = sr_new)
     #gain correct
     conv_obx = GainCorrectOBX(downsampled, chanlist, meta)
-    #get time axis
-    time = np.arange(int(meta['firstSample']), 
-                     conv_obx.shape[1] + int(meta['firstSample']), 1) / sr_new
-    timestamps = pd.to_datetime(meta['fileCreateTime']) + pd.to_timedelta(time, unit = 's') #probably no getting around this, np.vectorize with datetime is slower, np.datetime is int only
+
+    n_samples = conv_obx.shape[1]
+    first_sample = int(meta['firstSample'])
+    start_offset = first_sample / sr_obx    #before was buggy, needs to use original sample rate, firstSample is not resampled
+    time = (np.arange(n_samples) / sr_new) + start_offset
+    start_dt = pd.to_datetime(meta['fileCreateTime'])
+    timestamps = start_dt + pd.to_timedelta(time, unit = 's') #probably no getting around this, np.vectorize with datetime is slower, np.datetime is int only
+    
     #print info to troubleshoot
     print(f'recording duration: {time[-1] - time[0]} seconds')
     print(f'loaded {conv_obx.shape} data points, created time array: {timestamps.shape}')
@@ -339,7 +344,7 @@ def file_converted(file, save_folder = "C:/Users/marty/Projects/scorer/proj_data
             return True
     return False   
     
-def convert_multiple_recs(folder, project_meta, overwrite = False):
+def convert_multiple_recs(folder, project_meta, sr_new = 1000, overwrite = False):
     """
     runs conversion obx.bin -> 4 recs .csv for all files in folder
     """
@@ -349,7 +354,7 @@ def convert_multiple_recs(folder, project_meta, overwrite = False):
         if (not file_converted(file, save_folder= Path(project_meta.get('project_path', '.')) / 'raw')) or overwrite:
             try:
                 print(f'converting {file}')
-                run_conversion(file, project_meta, sr_new = 1000, 
+                run_conversion(file, project_meta, sr_new = sr_new, 
                             chanlist = [x for x in range(12)],
                             channel_to_box = {0:1, 1:4, 2:2, 3:3})
             except Exception as e:
@@ -365,15 +370,16 @@ def get_folder_quality_report(folder_path, savepath = None):
     """
     if savepath is None:
         savepath = folder_path
-    res_dict = {}
+    res_list = []
     files = glob.glob(folder_path + '/*box*.csv')
     for file in files:
-        metrics = generate_obx_quality_report(file, sample_size = 20, report_interval = 10, sr = 1000)
-        res_dict[file] = metrics
+        metrics = generate_obx_quality_report(file, sample_size = 20, report_interval = 100, sr = 1000)
+        metrics['file'] = [file for f in range(len(list(metrics.values())[0]))]
+        res_list.append(pd.DataFrame.from_dict(metrics))
         print(f'report generated for {file}')    
-    pd.DataFrame.from_dict(res_dict).to_csv(savepath + '/quality_report.csv')
+    pd.concat(res_list).reset_index(drop = True).to_csv(savepath + '/quality_report.csv')
 
-def generate_obx_quality_report(path, sample_size = 20, report_interval = 10, sr = 1000):
+def generate_obx_quality_report(path, sample_size = 20, report_interval = 100, sr = 1000):
     """
     generates a quality report for a raw .csv recording file obtained from obx in earlier steps+
     file has to contain f_ecog, p_ecog, emg channels
@@ -381,17 +387,46 @@ def generate_obx_quality_report(path, sample_size = 20, report_interval = 10, sr
     channels = ['f_ecog', 'p_ecog', 'emg']
     metrics = {f'std_{channel}':[] for channel in channels}
     metrics['time'] = []
-    data = pd.read_csv(path, chunksize = sample_size * sr)      #20 sec per hour
-    for i, chunk in enumerate(data):
-        if i % int(report_interval * sample_size) == 0:
-            print(f'{i} chunk read')
-            metrics['time'].append(chunk['time'].iloc[0]) #should be a single value
-            for channel in channels:
-                metrics[f'std_{channel}'].append(chunk.loc[:, channel].std())            
+    
+    chunk_size = sample_size * sr
+    
+    with open(path, 'r') as f:
+                
+        header = f.readline().rstrip().split(",")
+        time_index = header.index("time")
+        numeric_cols = [header.index(ch) for ch in channels]    #so numpy can be used later
+        
+        chunk_index = 0
+        
+        while True:
+            if chunk_index % report_interval != 0: #skip
+                skipped = list(islice(f, chunk_size))  
+                if not skipped:#if file ends
+                    break
+                chunk_index += 1
+                continue
+            rows = list(islice(f, chunk_size)) #read 
+            if not rows:
+                break
+            print(f'{chunk_index} chunk read')
+            #get time - read one line
+            first_line = rows[0].rstrip().split(",")
+            metrics["time"].append(first_line[time_index])
+            
+            numeric_rows = [",".join(row.rstrip().split(",")[i] for i in numeric_cols) for row in rows] #ew            
+            arr = np.genfromtxt(numeric_rows, delimiter=",", dtype=float)
+
+            #if there's only one row
+            if arr.ndim == 1:
+                arr = arr[np.newaxis, :]
+            #calculate stds
+            for ch, i in zip(channels, range(arr.shape[1])):
+                metrics[f"std_{ch}"].append(arr[:, i].std())
+            chunk_index += 1
     return metrics
 
 if __name__ == "__main__":
     project_meta = {'project_path' : 'C:/Users/marty/Projects/scorer/proj_data', 'sample_rate' : 1000}
-    convert_multiple_recs(folder = 'G:/SLEEP-ECOG', project_meta = project_meta, overwrite = False)
+    convert_multiple_recs(folder = 'G:/SLEEP-ECOG', project_meta = project_meta, overwrite = True)
     get_folder_quality_report("C:/Users/marty/Projects/scorer/proj_data/raw")
 

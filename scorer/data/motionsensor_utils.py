@@ -3,7 +3,7 @@ from pathlib import Path
 import glob
 import os
 
-def main(path = 'G:/SLEEP-ECOG/'):
+def parse_sensors(path = 'G:/SLEEP-ECOG/'):
     cages = {}
     if not os.path.isdir(path):
         folder = Path(path).parent
@@ -33,21 +33,26 @@ def load_sensor_file(path, cages = {}):
         return cages
     
     for pin in data[0].unique():
-        cages[pin_to_cage[pin]] = data.loc[data[0] == pin].drop(0, axis = 1, inplace = False)
+        cage = pin_to_cage[pin]
+        df = data.loc[data[0] == pin].drop(0, axis=1)
+
+        if cage not in cages:
+            cages[cage] = [df]
+        else:
+            cages[cage].append(df)
     return cages
 
 def save_sensors(folder, cages, suffix = None):
     folder = Path(folder)
-    for id, data in cages.items():
-        if suffix is not None:
-            savepath = folder / f'cage_{id}_{suffix}.csv'
-            data.to_csv(savepath)
-        if isinstance(suffix, list):
-            savepath = folder / f'cage_{id}_{suffix[id]}.csv'
-            data.to_csv(savepath)
-        else:
-            savepath = folder / f'cage_{id}.csv'
+    for id, data_list in cages.items():
+        for i, data in enumerate(data_list):
+            if isinstance(suffix, list):
+                savepath = folder / f'cage_{id}_{suffix[i]}.csv'
+            elif suffix is not None:
+                savepath = folder / f'cage_{id}_{suffix}.csv'
+            else:
+                savepath = folder / f'cage_{id}.csv'
             data.to_csv(savepath)
 
 if __name__ == "__main__":
-    main()
+    parse_sensors()
