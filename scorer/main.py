@@ -17,11 +17,12 @@ sys.exit(app.exec_())
 #
 #TEST:
 #if calling preprocessing multiple times, metadata gets fucked (ecog, emg repeats etc) - @grok is this true?
-#check if ylims are fine now
 #notch is still weird, should test it more
 #
 #BUGS:
 #fix fourier lims
+#fix plot axis labels
+#fix powers scaling in standard/infer_ephys modes
 #
 #MISSING FEATURES:
 #utils:

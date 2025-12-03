@@ -1,13 +1,9 @@
 from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QInputDialog, QLabel,
-    QFileDialog, QSlider, QRadioButton, 
-    QButtonGroup, QCheckBox, QSizePolicy
+    QWidget, QVBoxLayout,
+    QPushButton, QLabel,
+    QFileDialog,
+    QCheckBox
 )
-
-
-from PyQt5 import QtCore
-from PyQt5.QtCore import QFileInfo
 
 from data.onebox_utils import run_conversion, convert_multiple_recs, get_folder_quality_report
 from data.motionsensor_utils import parse_sensors

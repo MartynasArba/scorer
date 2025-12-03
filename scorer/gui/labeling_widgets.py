@@ -235,8 +235,8 @@ class SleepGUI(QWidget):
 
         # store ylims and defaults
         self.ylims = list(self.dataset.channel_ylims)
-        self.ylim_defaults = list(self.dataset.channel_ylims)
-
+        self.ylim_defaults = list(self.dataset.channel_ylims).copy()
+        print(f'loaded ylims: {self.ylims}')
         # store dataset length to avoid repeated calls
         self._len_dataset = len(self.dataset)
 
@@ -420,7 +420,7 @@ class SleepGUI(QWidget):
                 self.label_lines,
                 self.label_text) = plot_signals_init(
                     signals,
-                    [(c - s / 2, c + s / 2) for c, s in self.ylims],
+                    self.ylims,
                     sample_rate,
                     self.params.get('channels_after_preprocessing', []),
                     scorer_names = list(all_scorers.keys())
@@ -451,7 +451,7 @@ class SleepGUI(QWidget):
                             self.signal_axs[-1],      # label axis is last one
                             self.label_lines,
                             self.label_text,
-                            [(c - s / 2, c + s / 2) for c, s in self.ylims],
+                            self.ylims,
                             sample_rate,
                             labels = scorer_window_labels)
         self.signal_canvas.draw_idle()

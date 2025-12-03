@@ -34,6 +34,9 @@ class SleepSignals(Dataset):
         self.all_samples = None
         self.all_labels = None
         
+        self.channel_ylims = []
+        
+        
         self._load(data_path, score_path)
                 
         #move to device after loading        
@@ -46,7 +49,7 @@ class SleepSignals(Dataset):
 
         self.spectral = spectral_features
         
-        self.channel_ylims = [] #for plotting
+         #for plotting
         
         if self.spectral == 'spectrogram':
             self.spect = Spectrogram(n_fft = 100, #changes freq bins
@@ -198,8 +201,8 @@ class SleepSignals(Dataset):
         
         n_samples, n_channels, _ = X.size()
         
-        ecog_n = len(self.metadata.get('ecog_channels', '0').split(','))
-        emg_n  = len(self.metadata.get('emg_channels', '0').split(','))
+        ecog_n = len(self.params.get('ecog_channels', '0').split(','))
+        emg_n  = len(self.params.get('emg_channels', '0').split(','))
         ephys_n = ecog_n + emg_n
         
         rand_idx = np.random.randint(0, n_samples, size=1000)
@@ -211,8 +214,8 @@ class SleepSignals(Dataset):
                         center = 0.0
                         spread = 0.2
                     else:
-                        center = 0.0
-                        spread = 0.2
+                        center = 0.5
+                        spread = 1
                     ylims.append((center, spread))
                     continue
 
@@ -224,7 +227,7 @@ class SleepSignals(Dataset):
                     q_high = float(np.quantile(vals, 0.99))
                     spread = (q_high - q_low)
 
-                    # avoid degenerate spread
+                    # avoid degenerate 
                     if spread < 1e-9:
                         spread = 1e-9
                     ylims.append((median, spread))
