@@ -57,8 +57,9 @@ class UtilWidget(QWidget):
                                                   directory = self.params.get('project_path', '.'), 
                                                   filter = "BIN files (*.bin)")
         if filename:
+            save_folder = QFileDialog.getExistingDirectory(self,'select folder to save in', self.params.get('project_path', '.'), QFileDialog.ShowDirsOnly)
             self.label.setText(f'selected {filename} for obx conversion') 
-            run_conversion(filename, self.params, sr_new = int(self.params.get('sample_rate', '1000')))
+            run_conversion(filename, self.params, save_folder= save_folder, sr_new = int(self.params.get('sample_rate', '1000')))
             self.label.setText(f'{filename} obx file converted to csvs') 
             
     def folder_to_csv(self) -> None:
@@ -66,11 +67,12 @@ class UtilWidget(QWidget):
         opens file selection and runs downsampling + conversion to csv
         """
         
-        path = QFileDialog.getExistingDirectory(self,'select folder', self.params.get('project_path', '.'), QFileDialog.ShowDirsOnly)
+        path = QFileDialog.getExistingDirectory(self,'select folder to load from', self.params.get('project_path', '.'), QFileDialog.ShowDirsOnly)
         
         if path:
+            save_folder = QFileDialog.getExistingDirectory(self,'select folder to save in', self.params.get('project_path', '.'), QFileDialog.ShowDirsOnly)
             self.label.setText(f'converting all obx files from {path}') 
-            convert_multiple_recs(path, self.params, sr_new = int(self.params.get('sample_rate', '1000')), overwrite = self.overwrite_check.isChecked())
+            convert_multiple_recs(path, self.params, save_folder= save_folder, sr_new = int(self.params.get('sample_rate', '1000')), overwrite = self.overwrite_check.isChecked())
             self.label.setText(f'{path} obx folder converted to csvs') 
             
     def generate_quality_report(self):

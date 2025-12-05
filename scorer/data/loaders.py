@@ -106,6 +106,7 @@ class SleepSignals(Dataset):
 
             self.all_samples = X
             print(f"Loaded {len(x_files)} X chunks: {X.shape}")
+            self.channel_ylims = self.compute_ylims()
             
             #do same for y
             y_files = sorted(data_path.glob("y_*.pt"))
@@ -197,6 +198,7 @@ class SleepSignals(Dataset):
         compute ylims of set mode
         """
         mode = self.params.get("ylim", "standard")
+        print(mode)
         X = self.all_samples
         
         n_samples, n_channels, _ = X.size()
@@ -237,5 +239,5 @@ class SleepSignals(Dataset):
                     center = 0.5
                     spread = 1.0
                     ylims.append((center, spread))
-                    
+        print('ylims in loaders.py', ylims)
         return ylims

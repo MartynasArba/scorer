@@ -288,6 +288,7 @@ def downsample_memmap_multichannel(
     return y
 
 def run_conversion(bin_path: str, project_meta: dict,  
+                   save_folder = None, 
                    sr_new: int = 1000, 
                    chanlist = [x for x in range(12)],
                    channel_to_box = {0:1, 1:4, 2:2, 3:3}):
@@ -318,7 +319,10 @@ def run_conversion(bin_path: str, project_meta: dict,
     print(f'recording duration: {time[-1] - time[0]} seconds')
     print(f'loaded {conv_obx.shape} data points, created time array: {timestamps.shape}')
     
-    save_folder = Path(project_meta.get('project_path', '.')) / 'raw'
+    if not save_folder:
+        save_folder = Path(project_meta.get('project_path', '.')) / 'raw'
+    else:
+        save_folder = Path(save_folder)
     for i in range(4):
         print(f'saving {i+1} / {4} csv')
         filename = bin_path.stem + f'_box{channel_to_box.get(i,'unknown')}.csv'
@@ -344,19 +348,26 @@ def file_converted(file, save_folder = "C:/Users/marty/Projects/scorer/proj_data
             return True
     return False   
     
-def convert_multiple_recs(folder, project_meta, sr_new = 1000, overwrite = False):
+def convert_multiple_recs(folder, project_meta, save_folder = None, sr_new = 1000, overwrite = False):
     """
     runs conversion obx.bin -> 4 recs .csv for all files in folder
     """
     print(f'starting all file conversion in {folder}')
     files = glob.glob(folder + '/*/*.obx0.obx.bin')
+    
+    if not save_folder:
+        save_folder = Path(project_meta.get('project_path', '.')) / 'raw'
+    else:
+        save_folder = Path(save_folder)
+    
     for file in files:
-        if (not file_converted(file, save_folder= Path(project_meta.get('project_path', '.')) / 'raw')) or overwrite:
+        if (not file_converted(file, save_folder= save_folder)) or overwrite:
             try:
                 print(f'converting {file}')
                 run_conversion(file, project_meta, sr_new = sr_new, 
-                            chanlist = [x for x in range(12)],
-                            channel_to_box = {0:1, 1:4, 2:2, 3:3})
+                               save_folder=save_folder,
+                               chanlist = [x for x in range(12)],
+                               channel_to_box = {0:1, 1:4, 2:2, 3:3})
             except Exception as e:
                 print(f'{file} NOT CONVERTED: {e}')
         else:
@@ -378,6 +389,7 @@ def get_folder_quality_report(folder_path, savepath = None):
         res_list.append(pd.DataFrame.from_dict(metrics))
         print(f'report generated for {file}')    
     pd.concat(res_list).reset_index(drop = True).to_csv(savepath + '/quality_report.csv')
+    print(f'full report saved in {savepath + '/quality_report.csv'}')
 
 def generate_obx_quality_report(path, sample_size = 20, report_interval = 100, sr = 1000):
     """

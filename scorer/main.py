@@ -16,13 +16,15 @@ sys.exit(app.exec_())
 #TODO:
 #
 #TEST:
-#if calling preprocessing multiple times, metadata gets fucked (ecog, emg repeats etc) - @grok is this true?
+#if calling preprocessing multiple times, metadata gets * (ecog, emg repeats etc) - @grok is this true?
 #notch is still weird, should test it more
+#test preprocessing save to folders
 #
 #BUGS:
 #fix fourier lims
 #fix plot axis labels
-#fix powers scaling in standard/infer_ephys modes
+#add select folder to save in for obx conversion
+#add quality report plots -> stem of file name, all channels, values, expected norm values, group by day into folders?
 #
 #MISSING FEATURES:
 #utils:
@@ -34,15 +36,19 @@ sys.exit(app.exec_())
 # add warnings for settings if invalid values are set
 #
 #preprocessing:
-#might be smart to dirsregard more noise, so scale without top 10% (in bandpows)
+#save chunks in separate folders 
+#add a save to csv option, mark that it's slow
 #future development: implement threading to prevent freezing? 
 #
 #automatic scoring:
 #not yet started
-#implement at least one model, for example, the old CNN
+#aiming for these models:
+## rules-based
+## CNN
+## TimesFM/Moirai pretrained + classifier
+## add selection of which channels to use
 #remember to turn grad back on if training!
-#ideas: finetune TimesFM / Moirai + add simple classifier on top
-#add interface to use a pre-trained model
+# think about an interface for a pre-trained model
 #
 #manual labeling:
 #add channel toggles

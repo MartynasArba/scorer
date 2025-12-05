@@ -94,23 +94,32 @@ def save_tensor(tensor_seq: tuple = (),
     proj_path = Path(metadata.get('project_path', '.'))
     
     if raw:
-        if isinstance(chunk, int):
-            file_name = f'{metadata.get('scoring_started', 'noID')}{metadata.get('optional_tag', '')}_chunk{chunk}_raw.pt' 
-        else:
-            file_name = f'{metadata.get('scoring_started', 'noID')}{metadata.get('optional_tag', '')}_raw.pt' 
         save_folder = proj_path / "raw"
         if not os.path.exists(save_folder):
             os.makedirs(save_folder)
-        save_path = save_folder / file_name
-    else:
+            
         if isinstance(chunk, int):
-            file_name = f'{metadata.get('scoring_started', 'noID')}{metadata.get('optional_tag', '')}_chunk{chunk}_processed.pt' 
+            chunk_folder = save_folder / f'raw_{metadata.get('scoring_started', 'noID')}{metadata.get('optional_tag', '')}{metadata.get('filename', '')}'    #if chunked, create or select a folder to save in
+            if not os.path.exists(chunk_folder):
+                os.makedirs(chunk_folder)
+            file_name = f'chunk{chunk}_raw.pt' 
+            save_path = chunk_folder / file_name
         else:
-            file_name = f'{metadata.get('scoring_started', 'noID')}{metadata.get('optional_tag', '')}_processed.pt' 
+            file_name = f'raw_{metadata.get('scoring_started', 'noID')}{metadata.get('optional_tag', '')}{metadata.get('filename', '')}.pt'
+            save_path = save_folder / file_name
+    else:
         save_folder = proj_path / "processed"
         if not os.path.exists(save_folder):
             os.makedirs(save_folder)
-        save_path = save_folder / file_name
+        if isinstance(chunk, int):
+            chunk_folder = save_folder / f'preprocessed_{metadata.get('scoring_started', 'noID')}{metadata.get('optional_tag', '')}{metadata.get('filename', '')}'    #if chunked, create or select a folder to save in
+            if not os.path.exists(chunk_folder):
+                os.makedirs(chunk_folder)
+            file_name = f'chunk{chunk}_preprocessed.pt' 
+            save_path = chunk_folder / file_name
+        else:
+            file_name = f'preprocessed_{metadata.get('scoring_started', 'noID')}{metadata.get('optional_tag', '')}{metadata.get('filename', '')}.pt' 
+            save_path = save_folder / file_name
     
     if not overwrite:
         if os.path.exists(save_path):
@@ -147,14 +156,14 @@ def save_windowed(tensors: tuple,
     
     #get path
     proj_path = Path(metadata.get('project_path', '.'))
-    file_name = f'{metadata.get('scoring_started', 'noID')}{metadata.get('optional_tag', '')}_X.pt' 
+    file_name = f'{metadata.get('scoring_started', 'noID')}{metadata.get('optional_tag', '')}{metadata.get('filename', '')}_X.pt' 
     save_folder = proj_path / "processed"
     if not os.path.exists(save_folder):
         os.makedirs(save_folder)
-    if not chunked:
+    if chunked is None:
         save_path = save_folder / file_name
     else:
-        chunk_folder = save_folder / f'{metadata.get('scoring_started', 'noID')}{metadata.get('optional_tag', '')}'    #if chunked, create or select a folder to save in
+        chunk_folder = save_folder / f'windowed_{metadata.get('scoring_started', 'noID')}{metadata.get('optional_tag', '')}{metadata.get('filename', '')}'    #if chunked, create or select a folder to save in
         if not os.path.exists(chunk_folder):
             os.makedirs(chunk_folder)
         save_path = chunk_folder / f'X_chunk{chunk_id}.pt'
@@ -200,7 +209,7 @@ def save_windowed(tensors: tuple,
         torch.save(to_save, f) 
 
     #handle states       
-    states_name = f'{metadata.get('scoring_started', 'noID')}{metadata.get('optional_tag', '')}_y.pt'
+    states_name = f'{metadata.get('scoring_started', 'noID')}{metadata.get('optional_tag', '')}{metadata.get('filename', '')}_y.pt'
     
     if not chunked:
         states_path = save_folder / states_name

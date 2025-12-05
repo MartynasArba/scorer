@@ -7,6 +7,7 @@ from PyQt5.QtWidgets import (
 from torchaudio.functional import resample
 from data.preprocessing import bandpass_filter, sum_power, band_powers, notch_filter
 from data.storage import save_tensor, save_windowed, save_metadata, load_from_csv, load_from_csv_in_chunks
+from pathlib import Path
 
 class PreprocessWidget(QWidget):
     """
@@ -88,11 +89,13 @@ class PreprocessWidget(QWidget):
         self.win_len_field = QLineEdit(self)
         self.win_len_field.setText("1000")
         self.save_overwrite_check = QCheckBox("overwrite files")
+        self.add_filename_check = QCheckBox('add original file name when saving?')
         saving_layout.addWidget(self.save_raw_check)
         saving_layout.addWidget(self.save_preprocessed_check)
         saving_layout.addWidget(self.save_windowed_check)
         saving_layout.addWidget(self.win_len_field)
         saving_layout.addWidget(self.save_overwrite_check)
+        saving_layout.addWidget(self.add_filename_check)
         
         for l in [chunk_layout, sr_layout, filter_layout, emg_filter_layout, notch_layout, saving_layout]:
             layout.addLayout(l)
@@ -111,6 +114,9 @@ class PreprocessWidget(QWidget):
         
         """
         if self.selected_file:      # if not set, will be None
+            #set original file name
+            if self.add_filename_check:
+                self.params['filename'] = Path(self.selected_file).stem
             #load file, check if chunks are needed
             chunk_size = None if not self.chunk_check.isChecked() else int(self.chunk_size_field.text()) #set chunk size if checked
             states = None if not self.testing_check.isChecked() else -1 #mark last col as states if checked
@@ -177,13 +183,13 @@ class PreprocessWidget(QWidget):
                                                 f'Data will be lost as chunk_size isn\'t divisible by window length!\n Chunk size: {chunk_size}, window length: {win_len}',
                                                 QMessageBox.StandardButton.Yes)
                         
-                        append_file = True if i > 0  else False  
+                        # append_file = True if i > 0  else False  
                             
                         save_windowed(tensors = tensor_seq, 
                                     states = states_chunk, 
                                     metadata = self.params, 
                                     win_len = win_len,
-                                    chunked = append_file, 
+                                    chunked = True, #append_file previously
                                     chunk_id = i,
                                     overwrite = self.save_overwrite_check.isChecked(),
                                     testing = self.testing_check.isChecked())
