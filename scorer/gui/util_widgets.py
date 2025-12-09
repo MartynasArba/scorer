@@ -42,6 +42,9 @@ class UtilWidget(QWidget):
         btn_quality_report = QPushButton('get quality report for all files in folder')
         btn_quality_report.clicked.connect(self.generate_quality_report)
         self.obx_layout.addWidget(btn_quality_report)
+        
+        self.quality_plot_check = QCheckBox("get plots of quality reports?")
+        self.obx_layout.addWidget(self.quality_plot_check)
     
         btn_parse_sensors = QPushButton('split sensor files by cage')
         btn_parse_sensors.clicked.connect(self.parse_sensor_data)
@@ -84,7 +87,7 @@ class UtilWidget(QWidget):
         
         if path:
             self.label.setText(f'generating quality report for files in {path}') 
-            get_folder_quality_report(path, savepath = self.params.get('project_path', '.'))
+            get_folder_quality_report(path, savepath = self.params.get('project_path', '.'), save_fig = self.quality_plot_check.isChecked())
             self.label.setText(f'{path} report generated') 
     
     def parse_sensor_data(self):

@@ -8,6 +8,7 @@ from fractions import Fraction
 import glob
 import os
 from itertools import islice
+import matplotlib.pyplot as plt
 
 # Parse ini file returning a dictionary whose keys are the metadata
 # left-hand-side-tags, and values are string versions of the right-hand-side
@@ -375,7 +376,7 @@ def convert_multiple_recs(folder, project_meta, save_folder = None, sr_new = 100
     print(f'all files in {folder} converted!!!')
     return
 
-def get_folder_quality_report(folder_path, savepath = None):
+def get_folder_quality_report(folder_path, savepath = None, save_fig = True):
     """
     generates a quality report for all .csv files in path
     """
@@ -384,14 +385,21 @@ def get_folder_quality_report(folder_path, savepath = None):
     res_list = []
     files = glob.glob(folder_path + '/*box*.csv')
     for file in files:
-        metrics = generate_obx_quality_report(file, sample_size = 20, report_interval = 100, sr = 1000)
+        metrics, figure = generate_obx_quality_report(file, sample_size = 20, report_interval = 100, sr = 1000)
         metrics['file'] = [file for f in range(len(list(metrics.values())[0]))]
         res_list.append(pd.DataFrame.from_dict(metrics))
         print(f'report generated for {file}')    
+        if save_fig:
+            figure_folder = Path(savepath) / 'quality_plots'
+            if not os.path.exists(figure_folder):
+                os.makedirs(figure_folder)
+            figure.savefig(str(figure_folder / "".join(Path(file).stem.split('.'))) + '.png')
+            plt.close()
+            print('plot saved!')
     pd.concat(res_list).reset_index(drop = True).to_csv(savepath + '/quality_report.csv')
     print(f'full report saved in {savepath + '/quality_report.csv'}')
 
-def generate_obx_quality_report(path, sample_size = 20, report_interval = 100, sr = 1000):
+def generate_obx_quality_report(path, sample_size = 20, report_interval = 100, sr = 1000, return_figure = True):
     """
     generates a quality report for a raw .csv recording file obtained from obx in earlier steps+
     file has to contain f_ecog, p_ecog, emg channels
@@ -435,10 +443,36 @@ def generate_obx_quality_report(path, sample_size = 20, report_interval = 100, s
             for ch, i in zip(channels, range(arr.shape[1])):
                 metrics[f"std_{ch}"].append(arr[:, i].std())
             chunk_index += 1
-    return metrics
+    figure = None
+    if return_figure:
+        figure = quality_plot(metrics, name = path)
+    return metrics, figure
+
+def quality_plot(metrics, name):
+    """
+    returns figure of quality metrics
+    """
+    name = Path(name).stem
+    num_metrics = len(metrics.keys()) - 1   
+    metric_names = list(metrics.keys())
+    times = [t[10:16] for t in metrics['time']]
+    fig, axs  = plt.subplots(num_metrics, 1)
+    for i, ax in enumerate(axs):
+        ax.plot(times, metrics[metric_names[i]])
+        ax.set(ylabel = metric_names[i])
+        ax.set_ylim(0, min(ax.get_ylim()[1], 0.2))
+        ax.tick_params('x', rotation = 45)
+    fig.suptitle(name)
+    fig.tight_layout()
+    return fig
+    
+    
 
 if __name__ == "__main__":
     project_meta = {'project_path' : 'C:/Users/marty/Projects/scorer/proj_data', 'sample_rate' : 1000}
-    convert_multiple_recs(folder = 'G:/SLEEP-ECOG', project_meta = project_meta, overwrite = True)
-    get_folder_quality_report("C:/Users/marty/Projects/scorer/proj_data/raw")
-
+    # convert_multiple_recs(folder = 'G:/SLEEP-ECOG', project_meta = project_meta, overwrite = True)
+    # get_folder_quality_report("C:/Users/marty/Projects/scorer/proj_data/raw")
+    path = r"C:\Users\marty\Projects\scorer\proj_data\raw\20251124-1_g0_t0.obx0.obx_box1.csv"
+    metrics, figure = generate_obx_quality_report(path, sample_size = 20, report_interval = 100, sr = 1000, return_figure = True)
+    plt.show()
+    print(metrics)
