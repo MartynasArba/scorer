@@ -159,12 +159,11 @@ class SettingsWidget(QWidget):
             if not self.params[key]:
                 print(f'warning: {key} is empty')
             elif (key in numeric_keys):
-                print(type(self.params[key]), self.params[key].isalpha())#something is very strange here
-                if not (self.params[key].isalpha()):
+                if not (self.params[key].isdigit()):
                     print(f'{key} should be a number')
                     params_valid = False
             elif (key in channel_keys):
-                if (not self.params[key].split(',')[0].isalpha()) & (len(self.params[key]) > 1):
+                if (not self.params[key].split(',')[0].isdigit()) & (len(self.params[key]) > 1):
                     print(f'{key} is wrong; channels should be listed as numbers starting from 0, separated by commas, no spaces.')
                     params_valid = False
             elif (key == 'ylim') & (not (self.params[key] in ylim_options)):
@@ -175,5 +174,14 @@ class SettingsWidget(QWidget):
                 params_valid = False
                 
         print(f'params valid: {params_valid}')    
+        msg = QMessageBox()
+        msg.setIcon(QMessageBox.Information)
+        msg.setWindowTitle("Parameter check")
+        if not params_valid:
+            msg.setText("Some parameters were not set correctly!")
+        else:
+            msg.setText("All parameters good!")
+        msg.exec_()
+                    
         return params_valid
         
