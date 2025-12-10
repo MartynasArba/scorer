@@ -146,9 +146,34 @@ class SettingsWidget(QWidget):
         
     def validate_metadata(self):
         """
-        validates metadata
+        validates metadata, doing manual checks
         """
-        print('data validation is not implemented')
-        pass
-
+        params_valid = True
+        
+        numeric_keys = ['animal_id', 'sample_rate']
+        channel_keys = ['ecog_channels', 'emg_channels']
+        ylim_options = ['infer', 'infer_ephys' , 'standard']
+        spectral_options = ['fourier', 'spect', None]
+        
+        for key in self.params.keys():
+            if not self.params[key]:
+                print(f'warning: {key} is empty')
+            elif (key in numeric_keys):
+                print(type(self.params[key]), self.params[key].isalpha())#something is very strange here
+                if not (self.params[key].isalpha()):
+                    print(f'{key} should be a number')
+                    params_valid = False
+            elif (key in channel_keys):
+                if (not self.params[key].split(',')[0].isalpha()) & (len(self.params[key]) > 1):
+                    print(f'{key} is wrong; channels should be listed as numbers starting from 0, separated by commas, no spaces.')
+                    params_valid = False
+            elif (key == 'ylim') & (not (self.params[key] in ylim_options)):
+                print(f'{key} is not an ylim option. select from {ylim_options}')
+                params_valid = False
+            elif (key == 'spectral_view') & (not (self.params[key] in spectral_options)):
+                print(f'{key} is not a valid spectral option. select from {spectral_options}')
+                params_valid = False
+                
+        print(f'params valid: {params_valid}')    
+        return params_valid
         
