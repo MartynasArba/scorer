@@ -19,6 +19,8 @@ sys.exit(app.exec_())
 #if calling preprocessing multiple times, metadata gets * (ecog, emg repeats etc) - @grok is this true?
 #notch is still weird, should test it more
 #test preprocessing save to folders
+#cut to time in preprocessing
+#time display options: start time + idx*sr?
 #
 #BUGS:
 #fix fourier lims

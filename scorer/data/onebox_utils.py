@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from scipy.signal import resample_poly
+from scipy.signal import welch
 from fractions import Fraction
 import glob
 import os
@@ -405,7 +406,7 @@ def generate_obx_quality_report(path, sample_size = 20, report_interval = 100, s
     file has to contain f_ecog, p_ecog, emg channels
     """
     channels = ['f_ecog', 'p_ecog', 'emg']
-    metrics = {f'std_{channel}':[] for channel in channels}
+    metrics = {f'{metric}_{channel}':[] for metric in ('std', 'linenoise') for channel in channels}
     metrics['time'] = []
     
     chunk_size = sample_size * sr
@@ -442,6 +443,7 @@ def generate_obx_quality_report(path, sample_size = 20, report_interval = 100, s
             #calculate stds
             for ch, i in zip(channels, range(arr.shape[1])):
                 metrics[f"std_{ch}"].append(arr[:, i].std())
+                metrics[f"linenoise_{ch}"].append(_linenoise_ratio(arr[:, i]))
             chunk_index += 1
     figure = None
     if return_figure:
@@ -456,7 +458,7 @@ def quality_plot(metrics, name):
     num_metrics = len(metrics.keys()) - 1   
     metric_names = list(metrics.keys())
     times = [t[10:16] for t in metrics['time']]
-    fig, axs  = plt.subplots(num_metrics, 1)
+    fig, axs  = plt.subplots(num_metrics, 1, figsize = (6, num_metrics*2))
     for i, ax in enumerate(axs):
         ax.plot(times, metrics[metric_names[i]])
         ax.set(ylabel = metric_names[i])
@@ -465,6 +467,19 @@ def quality_plot(metrics, name):
     fig.suptitle(name)
     fig.tight_layout()
     return fig
+
+def _linenoise_ratio(arr, sr = 1000, line_f = 50, bw = 1):
+    """
+    gets ratio of powerline noise vs everything else
+    assuming noise is constant, should be a good indicator of signal quality
+    high ratio = bad
+    """
+    f, pxx = welch(arr, fs = sr, axis = 0, nperseg = 2048)
+    #get mask to get line power
+    mask = (f >= line_f - bw) & (f <= line_f + bw)
+    linepow = pxx[mask].sum(axis = 0)
+    totalpow = pxx.sum(axis = 0)
+    return linepow / totalpow
     
     
 

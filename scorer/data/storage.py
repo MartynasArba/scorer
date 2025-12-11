@@ -274,10 +274,11 @@ def _chop_by_state(states: torch.Tensor,
     return X, y
   
   
-def load_from_csv(path: str, metadata: dict = None, states: int = None):
+def load_from_csv(path: str, metadata: dict = None, states: int = None, times = (None, None)):
     """
     loads data from csv into a torch tensor
     """
+    time_channel = metadata.get('time_channel', None)
     ecog_channels = metadata.get('ecog_channels', None)
     emg_channels = metadata.get('emg_channels', None)
     device = metadata.get('device', 'cuda')
@@ -291,9 +292,28 @@ def load_from_csv(path: str, metadata: dict = None, states: int = None):
     except Exception as e:
         print(f'Something went wrong when parsing metadata of channel numbers in load_from_csv: {e}')
         return None, None, None
-
-    ecog = torch.tensor(data.iloc[:, ecog_channels].values, device = device, dtype = torch.float32)
-    emg = torch.tensor(data.iloc[:, emg_channels].values, device = device, dtype = torch.float32)
+    
+    if time_channel is not None and all(times):
+        #chop by time if passed
+        try:
+            start = pd.to_datetime(times[0]).time()
+            end = pd.to_datetime(times[1]).time()
+            time_arr = pd.to_datetime(data.iloc[:, int(time_channel)]).time()
+            if start <= end:
+                time_mask = (time_arr >= start) & (time_arr <= end) #case where no crossing of midnight
+            else:
+                time_mask = (time_arr >= start) | (time_arr <= end) #when times cross midnight
+            
+            ecog = torch.tensor(data.iloc[time_mask, ecog_channels].values, device = device, dtype = torch.float32)
+            emg = torch.tensor(data.iloc[time_mask, emg_channels].values, device = device, dtype = torch.float32)
+            
+        except Exception as e:
+            print(f'time array not generated when loading csv, reason: {e}')
+            return None, None, None
+    else:
+        ecog = torch.tensor(data.iloc[:, ecog_channels].values, device = device, dtype = torch.float32)
+        emg = torch.tensor(data.iloc[:, emg_channels].values, device = device, dtype = torch.float32)
+    
 
     if states:
         states = torch.tensor(data.iloc[:, states].values, device = device, dtype = torch.float32)
@@ -302,10 +322,12 @@ def load_from_csv(path: str, metadata: dict = None, states: int = None):
     return ecog, emg, states
             
             
-def load_from_csv_in_chunks(path: str, metadata: dict = None, states: int = None, chunk_size: int = None):
+def load_from_csv_in_chunks(path: str, metadata: dict = None, states: int = None, chunk_size: int = None, times = (None, None)):
     """
     loads data from csv into a torch tensor in chunks, returns a generator
     """
+    time_channel = metadata.get('time_channel', None)
+    print('time chopping not implemented')
     ecog_channels = metadata.get('ecog_channels', None)
     emg_channels = metadata.get('emg_channels', None)
     device = metadata.get('device', 'cuda')
@@ -323,3 +345,7 @@ def load_from_csv_in_chunks(path: str, metadata: dict = None, states: int = None
         emg_chunk = torch.tensor(chunk.iloc[:, emg_channels].values, device=device)
         states_chunk = torch.tensor(chunk.iloc[:, states].values, device=device) if states else None 
         yield ecog_chunk, emg_chunk, states_chunk
+        
+        
+        
+        

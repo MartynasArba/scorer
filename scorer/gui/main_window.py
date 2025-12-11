@@ -42,6 +42,7 @@ class SleepWindow(QMainWindow):
             'group', 
             'trial', 
             'sample_rate', 
+            'time_channel',
             'ecog_channels', 
             'emg_channels',
             'ylim',

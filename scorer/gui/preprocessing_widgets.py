@@ -41,7 +41,17 @@ class PreprocessWidget(QWidget):
         chunk_layout = QHBoxLayout()
         chunk_layout.addWidget(self.chunk_check)
         chunk_layout.addWidget(self.chunk_size_field)
-                
+        
+        self.timechop_check = QCheckBox("load data between specific time? time (HH:MM:SS):")
+        self.timechop_start = QLineEdit(self)
+        self.timechop_start.setText("19:00:00")
+        self.timechop_end = QLineEdit(self)
+        self.timechop_end.setText("07:00:00")
+        timechop_layout = QHBoxLayout()
+        timechop_layout.addWidget(self.timechop_check)
+        timechop_layout.addWidget(self.timechop_start)
+        timechop_layout.addWidget(self.timechop_end)
+    
         self.resample_check = QCheckBox("resample data? new sr:") #add option to select sample rate to resample to
         self.sr_field = QLineEdit(self)
         self.sr_field.setText("1000")
@@ -97,7 +107,7 @@ class PreprocessWidget(QWidget):
         saving_layout.addWidget(self.save_overwrite_check)
         saving_layout.addWidget(self.add_filename_check)
         
-        for l in [chunk_layout, sr_layout, filter_layout, emg_filter_layout, notch_layout, saving_layout]:
+        for l in [chunk_layout, timechop_layout, sr_layout, filter_layout, emg_filter_layout, notch_layout, saving_layout]:
             layout.addLayout(l)
         
         for box in [self.calculate_sum_power_check, self.calculate_band_power_check, self.testing_check]:
@@ -121,7 +131,10 @@ class PreprocessWidget(QWidget):
             chunk_size = None if not self.chunk_check.isChecked() else int(self.chunk_size_field.text()) #set chunk size if checked
             states = None if not self.testing_check.isChecked() else -1 #mark last col as states if checked
             if not self.chunk_check.isChecked():    
-                raw_ecog, raw_emg, states = load_from_csv(self.selected_file, metadata = self.params, states = states)
+                times = (None, None)
+                if self.timechop_check.isChecked():
+                    times = (self.timechop_start.text(), self.timechop_end.text())
+                raw_ecog, raw_emg, states = load_from_csv(self.selected_file, metadata = self.params, states = states, times = times)
                 tensor_seq = (raw_ecog, raw_emg) if not self.testing_check.isChecked() else (raw_ecog, raw_emg, states.unsqueeze(-1))
                 self.label.setText('data read done')
                 
@@ -155,7 +168,10 @@ class PreprocessWidget(QWidget):
                                     testing = self.testing_check.isChecked())
     
             else:
-                for i, (ecog_chunk, emg_chunk, states_chunk) in enumerate(load_from_csv_in_chunks(self.selected_file, metadata = self.params, states = states, chunk_size = chunk_size)):
+                times = (None, None)
+                if self.timechop_check.isChecked():
+                    times = (self.timechop_start.text(), self.timechop_end.text())
+                for i, (ecog_chunk, emg_chunk, states_chunk) in enumerate(load_from_csv_in_chunks(self.selected_file, metadata = self.params, states = states, chunk_size = chunk_size, times = (None, None))):
                     print(f'read chunk {i}')
                     tensor_seq = (ecog_chunk, emg_chunk) if not self.testing_check.isChecked() else (ecog_chunk, emg_chunk, states_chunk.unsqueeze(-1))
                     if self.save_raw_check.isChecked():
