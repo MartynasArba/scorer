@@ -10,7 +10,7 @@ from data.motionsensor_utils import parse_sensors
 
 class UtilWidget(QWidget):
     """
-    class to represent the tab that houses non-scoring funcs
+    class to represent the tab that houses non-standard workflow funcs
     """
     def __init__(self, metadata: dict = None):
         super().__init__()

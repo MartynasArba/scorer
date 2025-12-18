@@ -160,7 +160,7 @@ def save_windowed(tensors: tuple,
     save_folder = proj_path / "processed"
     if not os.path.exists(save_folder):
         os.makedirs(save_folder)
-    if chunked is None:
+    if not chunked:
         save_path = save_folder / file_name
     else:
         chunk_folder = save_folder / f'windowed_{metadata.get('scoring_started', 'noID')}{metadata.get('optional_tag', '')}{metadata.get('filename', '')}'    #if chunked, create or select a folder to save in

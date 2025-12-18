@@ -89,7 +89,6 @@ class PreprocessWidget(QWidget):
         #no param options        
         self.calculate_sum_power_check = QCheckBox("calculate sum power?") 
         self.calculate_band_power_check = QCheckBox("calculate band power?") 
-        self.testing_check = QCheckBox("use pre-scored states when chopping (for testing only)")
         
         #checkmarks for saving options
         saving_layout = QHBoxLayout()
@@ -110,7 +109,7 @@ class PreprocessWidget(QWidget):
         for l in [chunk_layout, timechop_layout, sr_layout, filter_layout, emg_filter_layout, notch_layout, saving_layout]:
             layout.addLayout(l)
         
-        for box in [self.calculate_sum_power_check, self.calculate_band_power_check, self.testing_check]:
+        for box in [self.calculate_sum_power_check, self.calculate_band_power_check]:
             layout.addWidget(box)
         
         #button that runs everything
@@ -129,13 +128,13 @@ class PreprocessWidget(QWidget):
                 self.params['filename'] = Path(self.selected_file).stem
             #load file, check if chunks are needed
             chunk_size = None if not self.chunk_check.isChecked() else int(self.chunk_size_field.text()) #set chunk size if checked
-            states = None if not self.testing_check.isChecked() else -1 #mark last col as states if checked
+            states = None
             if not self.chunk_check.isChecked():    
                 times = (None, None)
                 if self.timechop_check.isChecked():
                     times = (self.timechop_start.text(), self.timechop_end.text())
                 raw_ecog, raw_emg, states = load_from_csv(self.selected_file, metadata = self.params, states = states, times = times)
-                tensor_seq = (raw_ecog, raw_emg) if not self.testing_check.isChecked() else (raw_ecog, raw_emg, states.unsqueeze(-1))
+                tensor_seq = (raw_ecog, raw_emg)
                 self.label.setText('data read done')
                 
                 if self.save_raw_check.isChecked():
@@ -146,13 +145,10 @@ class PreprocessWidget(QWidget):
                                 raw = True)
                     
                 tensor_seq = self._preprocess(raw_ecog, raw_emg) #this should handle which preprocessing steps should be done 
-                tensor_seq = tensor_seq if not self.testing_check.isChecked() else tensor_seq + (states.unsqueeze(0))# data dim is channels x time here
                 self.label.setText('preprocessing done')
                 
                 if self.save_preprocessed_check.isChecked():
-                    save_preprocessed_seq = tensor_seq if not self.testing_check.isChecked() else tensor_seq + tuple([states_chunk.unsqueeze(0)])   #change so states are saved separatelly
-
-                    save_tensor(tensor_seq = save_preprocessed_seq, 
+                    save_tensor(tensor_seq = tensor_seq, 
                                 metadata = self.params,
                                 overwrite = self.save_overwrite_check.isChecked(),
                                 chunk = None,
@@ -165,7 +161,7 @@ class PreprocessWidget(QWidget):
                                     win_len = int(self.win_len_field.text()),
                                     chunked = False, 
                                     overwrite = self.save_overwrite_check.isChecked(),
-                                    testing = self.testing_check.isChecked())
+                                    testing = False)
     
             else:
                 times = (None, None)
@@ -173,7 +169,7 @@ class PreprocessWidget(QWidget):
                     times = (self.timechop_start.text(), self.timechop_end.text())
                 for i, (ecog_chunk, emg_chunk, states_chunk) in enumerate(load_from_csv_in_chunks(self.selected_file, metadata = self.params, states = states, chunk_size = chunk_size, times = (None, None))):
                     print(f'read chunk {i}')
-                    tensor_seq = (ecog_chunk, emg_chunk) if not self.testing_check.isChecked() else (ecog_chunk, emg_chunk, states_chunk.unsqueeze(-1))
+                    tensor_seq = (ecog_chunk, emg_chunk)
                     if self.save_raw_check.isChecked():
                         save_tensor(tensor_seq = tensor_seq, 
                                 metadata = self.params,
@@ -183,10 +179,8 @@ class PreprocessWidget(QWidget):
                     
                     tensor_seq = self._preprocess(ecog_chunk, emg_chunk)
                                         
-                    if self.save_preprocessed_check.isChecked():
-                        save_preprocessed_seq = tensor_seq if not self.testing_check.isChecked() else tensor_seq + tuple([states_chunk.unsqueeze(0)])   #change so states are saved separatelly
-                        
-                        save_tensor(tensor_seq = save_preprocessed_seq, 
+                    if self.save_preprocessed_check.isChecked():                        
+                        save_tensor(tensor_seq = tensor_seq, 
                                 metadata = self.params,
                                 overwrite = self.save_overwrite_check.isChecked(),
                                 chunk = i,
@@ -208,7 +202,7 @@ class PreprocessWidget(QWidget):
                                     chunked = True, #append_file previously
                                     chunk_id = i,
                                     overwrite = self.save_overwrite_check.isChecked(),
-                                    testing = self.testing_check.isChecked())
+                                    testing = False)
         save_metadata(self.params['metadata_path'], self.params)
         
     def _not_chunked_warning(self):

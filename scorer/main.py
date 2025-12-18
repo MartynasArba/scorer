@@ -14,6 +14,8 @@ gui.show()
 sys.exit(app.exec_())
 
 #TODO:
+#fully depreciate chop_by_state in gui, leave script helper
+#then make sure it works 
 #
 #TEST:
 #if calling preprocessing multiple times, metadata gets * (ecog, emg repeats etc) - @grok is this true?
