@@ -37,7 +37,6 @@ class SleepWindow(QMainWindow):
             'scoring_started', 
             'project_path', 
             'scorer', 
-            'date', 
             'animal_id', 
             'group', 
             'trial', 

@@ -272,7 +272,63 @@ def _chop_by_state(states: torch.Tensor,
     y = torch.stack(y)
 
     return X, y
-  
+
+def __get_start_time(path, time_channel):
+    """
+    helper to return start of rec
+    """
+    if time_channel is not None:
+        try:
+            with open(path, 'rt') as f:
+                f.readline() # skip
+                firstline = f.readline() #2nd line is 1st of data
+                start_time = firstline.split(',')[int(time_channel)]    #take start time
+                print(f'selected recording start time: {start_time}')
+        except:
+            start_time = '2025-12-04 19:01:40.526977527'
+            print(f'failed to load file, time set to default: {start_time}')
+    else:
+        start_time = '2025-12-04 19:01:40.526977527'
+        print(f'no time column specified, time set to default: {start_time}')
+    return start_time
+
+def __seconds_since_midnight(t) -> float:
+    """
+    helper which converts time (t) to seconds since midnight
+    """
+    return t.hour * 3600 + t.minute * 60 + t.second + t.microsecond / 1e6
+
+def __get_num_lines(start_time, times, sr):
+    """
+    helper to get number of lines to read // cut to time
+    """
+    seconds_in_day = 24 * 60 * 60
+
+    try:
+        recstart = __seconds_since_midnight(pd.to_datetime(start_time).time())
+        timestart_dt = __seconds_since_midnight(pd.to_datetime(times[0]).time())
+        timeend_dt = __seconds_since_midnight(pd.to_datetime(times[1]).time())
+    except:
+        print('failed to parse datetimes')
+        return None, None    
+    
+    #handle durations
+    line_start = 0
+    line_end = None
+    
+    #midnight crossing is NOT supported here
+    if timestart_dt > recstart:     #if requested time start after the start of recording, calculate diff in seconds, multiply, set line start
+        diff = timestart_dt - recstart
+        line_start = int(diff * sr)    
+    else:
+        print('warning: select a start time that is after recording start!')
+        
+    #now calculate end, supporting midnight crossing
+    if timeend_dt < timestart_dt:#if end is before start, add a day
+        timeend_dt += seconds_in_day
+    diff = timeend_dt - timestart_dt
+    line_end = int(diff * sr) + line_start  #duration + start    
+    return line_start, line_end
   
 def load_from_csv(path: str, metadata: dict = None, states: int = None, times = (None, None)):
     """
@@ -281,11 +337,31 @@ def load_from_csv(path: str, metadata: dict = None, states: int = None, times = 
     time_channel = metadata.get('time_channel', None)
     ecog_channels = metadata.get('ecog_channels', None)
     emg_channels = metadata.get('emg_channels', None)
+    sample_rate = int(metadata.get('sample_rate', 1000))
     device = metadata.get('device', 'cuda')
     #if cuda is not available
     device = "cpu" if not torch.cuda.is_available() else device
-    #should be changed later to support chunks // could also move to numpy, but it's probably not necessary now and questionable in general
-    data = pd.read_csv(path)
+    
+    #read one line to set start time            
+    start_time = __get_start_time(path, time_channel)  
+    metadata['rec_start'] = start_time
+    
+    #get line_start, line_end if start and end times are passed
+    if any(times):
+        line_start, line_end = __get_num_lines(start_time, times, sr = sample_rate)
+        
+    #now both need to exist
+    if isinstance(line_start, int) & isinstance(line_end, int):    
+        #update metadata to reflect cut
+        recstart_dt = pd.to_datetime(start_time)
+        newstart_dt = pd.to_datetime(times[0])
+        if newstart_dt.time() > recstart_dt.time(): #unless start is 0, then keep old
+            metadata['rec_start'] = str(recstart_dt.replace(hour = newstart_dt.hour, minute= newstart_dt.minute, second= newstart_dt.second, microsecond= newstart_dt.microsecond).isoformat())
+            print(f'updated rec_start: {metadata['rec_start']}')
+        data = pd.read_csv(path, skiprows = line_start, nrows= (line_end - line_start))
+    else:
+        data = pd.read_csv(path)  
+        
     try:
         ecog_channels = [int(ch) for ch in ecog_channels.split(',')]
         emg_channels = [int(ch) for ch in emg_channels.split(',')]
@@ -293,27 +369,8 @@ def load_from_csv(path: str, metadata: dict = None, states: int = None, times = 
         print(f'Something went wrong when parsing metadata of channel numbers in load_from_csv: {e}')
         return None, None, None
     
-    if time_channel is not None and all(times):
-        #chop by time if passed
-        try:
-            start = pd.to_datetime(times[0]).time()
-            end = pd.to_datetime(times[1]).time()
-            time_arr = pd.to_datetime(data.iloc[:, int(time_channel)]).time()
-            if start <= end:
-                time_mask = (time_arr >= start) & (time_arr <= end) #case where no crossing of midnight
-            else:
-                time_mask = (time_arr >= start) | (time_arr <= end) #when times cross midnight
-            
-            ecog = torch.tensor(data.iloc[time_mask, ecog_channels].values, device = device, dtype = torch.float32)
-            emg = torch.tensor(data.iloc[time_mask, emg_channels].values, device = device, dtype = torch.float32)
-            
-        except Exception as e:
-            print(f'time array not generated when loading csv, reason: {e}')
-            return None, None, None
-    else:
-        ecog = torch.tensor(data.iloc[:, ecog_channels].values, device = device, dtype = torch.float32)
-        emg = torch.tensor(data.iloc[:, emg_channels].values, device = device, dtype = torch.float32)
-    
+    ecog = torch.tensor(data.iloc[:, ecog_channels].values, device = device, dtype = torch.float32)
+    emg = torch.tensor(data.iloc[:, emg_channels].values, device = device, dtype = torch.float32)
 
     if states:
         states = torch.tensor(data.iloc[:, states].values, device = device, dtype = torch.float32)
@@ -331,8 +388,10 @@ def load_from_csv_in_chunks(path: str, metadata: dict = None, states: int = None
     ecog_channels = metadata.get('ecog_channels', None)
     emg_channels = metadata.get('emg_channels', None)
     device = metadata.get('device', 'cuda')
+    sample_rate = int(metadata.get('sample_rate', 1000))
     #if cuda is not available
     device = "cpu" if not torch.cuda.is_available() else device
+   
     try:
         ecog_channels = [int(ch) for ch in ecog_channels.split(',')]
         emg_channels = [int(ch) for ch in emg_channels.split(',')]
@@ -340,12 +399,43 @@ def load_from_csv_in_chunks(path: str, metadata: dict = None, states: int = None
         print(f'Something went wrong when parsing metadata of channel numbers in load_from_csv: {e}')
         return None, None, None
     
-    for chunk in pd.read_csv(path, chunksize = chunk_size):
-        ecog_chunk = torch.tensor(chunk.iloc[:, ecog_channels].values, device=device)
-        emg_chunk = torch.tensor(chunk.iloc[:, emg_channels].values, device=device)
-        states_chunk = torch.tensor(chunk.iloc[:, states].values, device=device) if states else None 
-        yield ecog_chunk, emg_chunk, states_chunk
+    #read one line to set start time            
+    start_time = __get_start_time(path, time_channel)  
+    metadata['rec_start'] = start_time
+    
+    #get line_start, line_end if start and end times are passed
+    if any(times):
+        line_start, line_end = __get_num_lines(start_time, times, sr = sample_rate)
+        
+    #now both need to exist
+    if isinstance(line_start, int) & isinstance(line_end, int):    
+        #update metadata to reflect cut
+        recstart_dt = pd.to_datetime(start_time)
+        newstart_dt = pd.to_datetime(times[0])
+        if newstart_dt.time() > recstart_dt.time(): #unless start is 0, then keep old
+            metadata['rec_start'] = str(recstart_dt.replace(hour = newstart_dt.hour, minute= newstart_dt.minute, second= newstart_dt.second, microsecond= newstart_dt.microsecond).isoformat())
+            print(f'updated rec_start: {metadata['rec_start']}')
+            
+        #read data
+        for chunk in pd.read_csv(path, chunksize = chunk_size, skiprows = line_start, nrows= (line_end - line_start)):
+            ecog_chunk = torch.tensor(chunk.iloc[:, ecog_channels].values, device=device)
+            emg_chunk = torch.tensor(chunk.iloc[:, emg_channels].values, device=device)
+            states_chunk = torch.tensor(chunk.iloc[:, states].values, device=device) if states else None 
+            yield ecog_chunk, emg_chunk, states_chunk
+        
+            
+    else:    
+        for chunk in pd.read_csv(path, chunksize = chunk_size):
+            ecog_chunk = torch.tensor(chunk.iloc[:, ecog_channels].values, device=device)
+            emg_chunk = torch.tensor(chunk.iloc[:, emg_channels].values, device=device)
+            states_chunk = torch.tensor(chunk.iloc[:, states].values, device=device) if states else None 
+            yield ecog_chunk, emg_chunk, states_chunk
         
         
-        
-        
+if __name__ == "__main__":
+    #testing
+    for i, _ in enumerate(load_from_csv_in_chunks(path = r"C:\Users\marty\Projects\scorer\proj_data\raw\20251204-1_g0_t0.obx0.obx_box3.csv",
+                            metadata = {'time_channel':'3', 'ecog_channels': '0,1','emg_channels':'2', 'device': 'cuda'},
+                            chunk_size= 1000000,
+                            times = ('19:30:00', '21:00:00'))):
+        print(f'chunk {i}')

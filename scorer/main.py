@@ -14,35 +14,38 @@ gui.show()
 sys.exit(app.exec_())
 
 #TODO:
-#fully depreciate chop_by_state in gui, leave script helper
-#then make sure it works 
+#
+#chop_by_state depreciated, make sure it works in script as it is needed for testing of models
+
+#time axis:
+    #get recording start time in preprocessing when loading csv;
+        #in chunks, get only start time of chunk 0
+    #if start/end times are passed, calculate SKIP/PARSE/SKIP datapoints (rows), then reset start time
+    #make sure it's overwritten and displayed somewhere (prob print) each time a .csv is loaded
+
+    #implement time display in labeling: start time + idx * win len (datapoints*sr)
+    
+#notch is still weird, should test it more
+#metadata label doesn't update when setting params after loading?
+
 #
 #TEST:
 #if calling preprocessing multiple times, metadata gets * (ecog, emg repeats etc) - @grok is this true?
-#notch is still weird, should test it more
-#test preprocessing save to folders
-#cut to time in preprocessing
-#time display options: start time + idx*sr?
+#notch is still weird, should test it more (or depreciate it)
 #
 #BUGS:
-#fix fourier lims
+#fix fourier lims (or move to a different plot) - is fourier even useful?
 #fix plot axis labels
-#add select folder to save in for obx conversion
-#add quality report plots -> stem of file name, all channels, values, expected norm values, group by day into folders?
 #
 #MISSING FEATURES:
+#
+#settings: add default values or specify options
+#
 #utils:
-#add "crop to time" for obx csvs to get only night
-#add some option to visualize results of obx file validation in utils // "see if it's worth continuing"
 # could add additional qc metrics for converted obx files
 #
-#settings:
-# add warnings for settings if invalid values are set
-#
 #preprocessing:
-#save chunks in separate folders 
-#add a save to csv option, mark that it's slow
-#future development: implement threading to prevent freezing? 
+#future development: prevent freezing? 
 #
 #automatic scoring:
 #not yet started
