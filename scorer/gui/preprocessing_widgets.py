@@ -167,7 +167,7 @@ class PreprocessWidget(QWidget):
                 times = (None, None)
                 if self.timechop_check.isChecked():
                     times = (self.timechop_start.text(), self.timechop_end.text())
-                for i, (ecog_chunk, emg_chunk, states_chunk) in enumerate(load_from_csv_in_chunks(self.selected_file, metadata = self.params, states = states, chunk_size = chunk_size, times = (None, None))):
+                for i, (ecog_chunk, emg_chunk, states_chunk) in enumerate(load_from_csv_in_chunks(self.selected_file, metadata = self.params, states = states, chunk_size = chunk_size, times = times)):
                     print(f'read chunk {i}')
                     tensor_seq = (ecog_chunk, emg_chunk)
                     if self.save_raw_check.isChecked():

@@ -407,23 +407,27 @@ def load_from_csv_in_chunks(path: str, metadata: dict = None, states: int = None
     if any(times):
         line_start, line_end = __get_num_lines(start_time, times, sr = sample_rate)
         
-    #now both need to exist
-    if isinstance(line_start, int) & isinstance(line_end, int):    
-        #update metadata to reflect cut
-        recstart_dt = pd.to_datetime(start_time)
-        newstart_dt = pd.to_datetime(times[0])
-        if newstart_dt.time() > recstart_dt.time(): #unless start is 0, then keep old
-            metadata['rec_start'] = str(recstart_dt.replace(hour = newstart_dt.hour, minute= newstart_dt.minute, second= newstart_dt.second, microsecond= newstart_dt.microsecond).isoformat())
-            print(f'updated rec_start: {metadata['rec_start']}')
-            
-        #read data
-        for chunk in pd.read_csv(path, chunksize = chunk_size, skiprows = line_start, nrows= (line_end - line_start)):
-            ecog_chunk = torch.tensor(chunk.iloc[:, ecog_channels].values, device=device)
-            emg_chunk = torch.tensor(chunk.iloc[:, emg_channels].values, device=device)
-            states_chunk = torch.tensor(chunk.iloc[:, states].values, device=device) if states else None 
-            yield ecog_chunk, emg_chunk, states_chunk
-        
-            
+        #now both need to exist
+        if isinstance(line_start, int) & isinstance(line_end, int):    
+            #update metadata to reflect cut
+            recstart_dt = pd.to_datetime(start_time)
+            newstart_dt = pd.to_datetime(times[0])
+            if newstart_dt.time() > recstart_dt.time(): #unless start is 0, then keep old
+                metadata['rec_start'] = str(recstart_dt.replace(hour = newstart_dt.hour, minute= newstart_dt.minute, second= newstart_dt.second, microsecond= newstart_dt.microsecond).isoformat())
+                print(f'updated rec_start: {metadata['rec_start']}')
+                
+            #read data
+            for chunk in pd.read_csv(path, chunksize = chunk_size, skiprows = line_start, nrows= (line_end - line_start)):
+                ecog_chunk = torch.tensor(chunk.iloc[:, ecog_channels].values, device=device)
+                emg_chunk = torch.tensor(chunk.iloc[:, emg_channels].values, device=device)
+                states_chunk = torch.tensor(chunk.iloc[:, states].values, device=device) if states else None 
+                yield ecog_chunk, emg_chunk, states_chunk
+        else:    
+            for chunk in pd.read_csv(path, chunksize = chunk_size):
+                ecog_chunk = torch.tensor(chunk.iloc[:, ecog_channels].values, device=device)
+                emg_chunk = torch.tensor(chunk.iloc[:, emg_channels].values, device=device)
+                states_chunk = torch.tensor(chunk.iloc[:, states].values, device=device) if states else None 
+                yield ecog_chunk, emg_chunk, states_chunk
     else:    
         for chunk in pd.read_csv(path, chunksize = chunk_size):
             ecog_chunk = torch.tensor(chunk.iloc[:, ecog_channels].values, device=device)

@@ -1,73 +1,30 @@
 import matplotlib.pyplot as plt
 import numpy as np
 from typing import Tuple
-
-def plot_signals(selected_data, labels: list, ylims: list[(float, float)] = [(0, 0.5, 1)], sample_rate: int = 250, names: list[str] = ['']) -> plt.figure:
-    """
-    depreciated
-    plots selected "raw" signals and labels
-    label plotting could be moved to a separate function
-    """
-
-    sleep_labels = {0:'Unlabeled',
-          1:'Wake',
-          2:'NREM',
-          3:'IS',
-          4:'REM'}
-    
-    start_label = labels[0] if isinstance(labels, list) else labels
-        
-    #get time axis
-    n_samples = selected_data.shape[-1]
-    time_axis = np.arange(n_samples) / sample_rate
-    #get channel num
-    n_channels = selected_data.shape[0]
-
-    fig, axs = plt.subplots(n_channels + 1, 1, figsize = (10, 1 * n_channels + 1), sharex = True)
-    for i, ax in enumerate(axs[:-1]):
-        ax.plot(time_axis, selected_data[i, :])
-        ax.grid(True, alpha = 0.3)
-        if (len(ylims) >= i) & (isinstance(ylims[i], tuple)):
-            ax.set_ylim(ylims[i][0], ylims[i][1])
-        if (len(names) >= i) & (isinstance(names, str)):
-            ax.set(ylabel = f'{names[i]}')
-    
-    # plot state labels if multiple provided
-    if isinstance(labels, list) and len(labels) > 1:
-        win_size = int(n_samples/len(labels))
-        label_arr = np.ravel(np.array([[l] * win_size for l in labels]))
-        axs[-1].plot(time_axis, label_arr, drawstyle='steps-post', linewidth=2)
-        axs[-1].set_yticks([0, 1, 2, 3, 4])
-        
-    else:       #if single label, write in text
-        axs[-1].text(0.5, 0.5, f'State: {sleep_labels[start_label]}', 
-                   ha='center', va='center', transform = axs[-1].transAxes, fontsize=14)
-    
-    axs[-1].set(xlabel = 'Time (s)', ylabel = 'Sleep State')
-    axs[-1].grid(True, alpha = 0.3)
-    
-    plt.tight_layout()
-    return fig
+import matplotlib.ticker as mticker
+from datetime import datetime
+DAY = 24 * 60 * 60
 
 def plot_signals_init(
         selected_data,
         ylims,
         sample_rate=250,
         names=None,
-        scorer_names=None):
+        scorer_names=None,
+        time_formatter = None):
     """
-    Initialize signal + label plots
+    initialize signal and label plots
 
     Returns:
         fig, axs, signal_lines, label_lines, label_text
     """
 
-    # ---------- BASIC SHAPES ----------
+    # shape
     n_samples = selected_data.shape[-1]
     time_axis = np.arange(n_samples) / sample_rate
     n_channels = selected_data.shape[0]
 
-    # ---------- CREATE FIGURE ----------
+    # figure
     fig, axs = plt.subplots(
         n_channels + 1, 1,
         figsize=(10, n_channels + 1),
@@ -82,10 +39,12 @@ def plot_signals_init(
 
         # y-limits
         if i < len(ylims):
-            lo, hi = ylims[i]
+            center, spread = ylims[i]
+            low = center - spread / 2
+            high = center + spread / 2
         else:
-            lo, hi = np.min(selected_data[i]), np.max(selected_data[i])
-        ax.set_ylim(lo, hi)
+            low, high = np.min(selected_data[i]), np.max(selected_data[i])
+        ax.set_ylim(low, high)
 
         # optional channel names
         if names and i < len(names):
@@ -96,9 +55,13 @@ def plot_signals_init(
     # label axis (last axis)
     label_ax = axs[-1]
     label_ax.grid(True, alpha=0.3)
-    label_ax.set_xlabel("Time (s)")
+    label_ax.set_xlabel("Time")
     label_ax.set_ylabel("State")
-
+    
+    if time_formatter is not None:
+        label_ax.xaxis.set_major_formatter(time_formatter)
+        label_ax.xaxis.set_major_locator(mticker.MaxNLocator(8))
+    
     #one line per scorer
     if scorer_names is None:
         scorer_names = ["default_scorer"]
@@ -303,3 +266,33 @@ def plot_fourier_update(line, fourier):
     """
     line.set_xdata(fourier[:, 1])
     line.set_ydata(fourier[:, 0])
+    
+class TimeOfDayFormatter(mticker.Formatter):
+    """
+    format x axis(seconds from window start) instead as time of day: recording start timestamp + window offset seconds
+    """
+    def __init__(self, rec_start_epoch_s: float, window_offset_s: float = 0.0, fmt: str = "%H:%M:%S"):
+        """
+        rec_start_epoch_s - recording start, seconds from midnight
+        window_offset_s - current_idx * win_len / sr    
+        fmt - format
+        """
+        self.rec_start_epoch_s = float(rec_start_epoch_s)
+        self.window_offset_s = float(window_offset_s)
+        self.fmt = fmt
+
+    def set_window_offset(self, window_offset_s: float):
+        self.window_offset_s = float(window_offset_s)   #updates window position in recording
+
+    def __call__(self, x, pos=None):
+        #x is seconds from window start in plot func
+        #converts to time of day in set format
+        t = (self.rec_start_epoch_s + self.window_offset_s + float(x)) % DAY
+        h = int(t // 3600)
+        m = int((t % 3600) // 60)
+        s = int(t % 60)
+        if self.fmt == "%H:%M:%S":
+            return f"{h:02d}:{m:02d}:{s:02d}"
+        # fallback: build a datetime for weird fmt
+        dt = datetime(2000, 1, 1, h, m, s)
+        return dt.strftime(self.fmt)

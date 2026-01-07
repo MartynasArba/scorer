@@ -11,11 +11,12 @@ import torch
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 import matplotlib.pyplot as plt
 import numpy as np
+from datetime import datetime
 
 from gui.plots import (
     plot_signals_init, plot_signals_update,
     plot_spectrogram_init, plot_spectrogram_update,
-    plot_fourier_init, plot_fourier_update
+    plot_fourier_init, plot_fourier_update, TimeOfDayFormatter
 )
 from data.storage import construct_paths, save_pickled_states, load_pickled_states
 from data.loaders import SleepSignals
@@ -228,6 +229,17 @@ class SleepGUI(QWidget):
             spectral_features=self.params.get('spectral_view', None),
             metadata=self.params
         )
+        
+        sample_rate = int(self.params.get("sample_rate", 250))
+        sample0 = self.dataset[0][0]    #get first sample
+        signals0 = sample0[0] if isinstance(sample0, tuple) else sample0
+        self.frame_n_samples = int(signals0.shape[-1])  #get frame sample numers - win len
+        self.frame_duration_s = self.frame_n_samples / sample_rate  # copnvert window len to seconds
+        #parse rec start
+        start_ts = self.params.get("rec_start", '2025-11-26 19:10:39.127974128')  # required
+        dt = _parse_iso(start_ts)
+        #store as seconds since midnight
+        self.rec_start_sod = dt.hour * 3600 + dt.minute * 60 + dt.second + dt.microsecond / 1e6
 
         # initialize states and indexing
         self.states = self.dataset.all_labels.cpu().numpy()
@@ -236,6 +248,9 @@ class SleepGUI(QWidget):
         # store ylims and defaults
         self.ylims = list(self.dataset.channel_ylims)
         self.ylim_defaults = list(self.dataset.channel_ylims).copy()
+        self.yscale = 1.0
+        self.ylims = [(c, s * self.yscale) for (c, s) in self.ylim_defaults]
+        
         print(f'loaded ylims: {self.ylims}')
         # store dataset length to avoid repeated calls
         self._len_dataset = len(self.dataset)
@@ -414,6 +429,7 @@ class SleepGUI(QWidget):
 
         # initialize signal figure and artists if not initialized
         if self.signal_fig is None:
+            self.time_formatter = TimeOfDayFormatter(self.rec_start_sod, window_offset_s = 0.0)
             (   self.signal_fig,
                 self.signal_axs,
                 self.signal_lines,
@@ -423,7 +439,8 @@ class SleepGUI(QWidget):
                     self.ylims,
                     sample_rate,
                     self.params.get('channels_after_preprocessing', []),
-                    scorer_names = list(all_scorers.keys())
+                    scorer_names = list(all_scorers.keys()),
+                    time_formatter=self.time_formatter
             )
 
             # create and configure canvas
@@ -445,6 +462,10 @@ class SleepGUI(QWidget):
                 for x in window_vals
             ]
 
+        #update window offset
+        window_offset_s = self.current_idx * self.frame_duration_s
+        self.time_formatter.set_window_offset(window_offset_s)
+
         # update artists (lines, label area)
         plot_signals_update(signals, 
                             self.signal_lines,
@@ -457,7 +478,7 @@ class SleepGUI(QWidget):
         self.signal_canvas.draw_idle()
 
         # spectrograms/fourier
-        if isinstance(sample, tuple) and self.params.get('spectral_view'):
+        if isinstance(sample, tuple) and (self.params.get('spectral_view') in ('spectrogram', 'fourier')):
             spect = sample[1]
             if spect is None:   #safety check if spectral view is set but spect is not available
                 return
@@ -571,10 +592,10 @@ class SleepGUI(QWidget):
         self.set_yscale(value * 0.01)
 
     def increase_yscale(self) -> None:
-        self.set_yscale(self.yscale + 0.05)
+        self.set_yscale(self.yscale * 1.1 )
 
     def decrease_yscale(self) -> None:
-        self.set_yscale(self.yscale - 0.05)
+        self.set_yscale(self.yscale / 1.1)
 
     # CHANGE TIME SCALE
     def increase_scale(self) -> None:
@@ -591,8 +612,9 @@ class SleepGUI(QWidget):
     # RESET ALL
     def reset_settings(self) -> None:
         self.scale = 1
-        self.ylims = list(self.ylim_defaults)
         self.yscale = 1.0
+        self.ylims = [(center, spread * self.yscale) for center, spread in self.ylim_defaults]    #explicit copy
+        
         self.label_whole_screen = False
         self._plot_cache = {"idx": None, "scale": None, "sample": None, "label": None}
         self.passive_scorers.clear()
@@ -628,3 +650,18 @@ class SleepGUI(QWidget):
         self.spect_canvas = None
         self.spect_ax = None
         self.spect_img = None
+        
+        
+def _parse_iso(ts: str) -> datetime:
+    """
+    helper to generate timestamp from metadata rec start
+    """
+    ts = ts.strip()  # remove \n, spaces
+
+    # truncate fractional seconds to 6 digits if present
+    if "." in ts:
+        head, frac = ts.split(".", 1)
+        frac = frac[:6]          # keep microseconds
+        ts = f"{head}.{frac}"
+
+    return datetime.fromisoformat(ts)

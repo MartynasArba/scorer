@@ -15,19 +15,16 @@ sys.exit(app.exec_())
 
 #TODO:
 #
-#chop_by_state depreciated, make sure it works in script as it is needed for testing of models
-
-#time axis:
-    #get recording start time in preprocessing when loading csv;
-        #in chunks, get only start time of chunk 0
-    #if start/end times are passed, calculate SKIP/PARSE/SKIP datapoints (rows), then reset start time
-    #make sure it's overwritten and displayed somewhere (prob print) each time a .csv is loaded
-
-    #implement time display in labeling: start time + idx * win len (datapoints*sr)
-    
+#timescale in plots is in time, but the 1st label repeats
+#change yscale slider to log scale
+#
+#chop_by_state is depreciated and removed from gui, make sure it works somewhere in script as it is needed for testing of models
+#
+#make sure timestamps match recordings, as they are only updated when loading from csv now
+#this means specific metadata files for each recording
+#
+#metadata label doesn't update when setting params after loading? looks like it only updates if param exists, don't use old metadata!
 #notch is still weird, should test it more
-#metadata label doesn't update when setting params after loading?
-
 #
 #TEST:
 #if calling preprocessing multiple times, metadata gets * (ecog, emg repeats etc) - @grok is this true?
