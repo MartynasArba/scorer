@@ -187,6 +187,8 @@ def save_windowed(tensors: tuple,
     #here it should still be channels x time
     if len(tensors) > 1:
         to_save = torch.cat(tensors, dim = 0)
+    else:
+        to_save = tensors[0]
         
     if states is None:
         states = torch.zeros(size = (1, to_save.size()[-1]), dtype=torch.long, device=to_save.device)
@@ -221,7 +223,78 @@ def save_windowed(tensors: tuple,
 
     del to_save, states
     
-    #importing in SleepDataset
+    
+def save_windowed_for_testing(tensors: tuple, 
+                              save_folder: str,
+                              file_name: str,
+                                states: torch.Tensor = None, 
+                                win_len: int = 1000,
+                                chunked: bool = True, 
+                                chunk_id: int = None,
+                                overwrite: bool = False):
+    """chops and saves data for ML testing"""
+    #get path
+    file_name = f'{file_name}' 
+    save_folder = Path(save_folder)
+    
+    if not os.path.exists(save_folder):
+        os.makedirs(save_folder)
+    if not chunked:
+        save_path = save_folder / file_name
+    else:
+        chunk_folder = save_folder / f'windowed_{file_name}'    #if chunked, create or select a folder to save in
+        if not os.path.exists(chunk_folder):
+            os.makedirs(chunk_folder)
+        save_path = chunk_folder / f'X_{file_name}_chunk{chunk_id}.pt'
+    
+    if not overwrite:
+        if os.path.exists(save_path):
+            print('file already exists, not saving')
+            return None
+
+    tensors = [tensor for tensor in tensors if isinstance(tensor, torch.Tensor)]
+    if len(tensors) == 0:
+        print('no tensors to save')
+        return None
+    #do the same as in save_tensor to align times (trim to shortest)
+    min_len = min(t.size(1) for t in tensors)
+    if len(set(t.size(1) for t in tensors)) > 1:
+        print(f"length mismatch in save_windowed: {[t.size(1) for t in tensors]}, truncating to {min_len}")
+    tensors = [tensor[:, : min_len] for tensor in tensors]
+    
+    #here it should still be channels x time
+    if len(tensors) > 1:
+        to_save = torch.cat(tensors, dim = 0)
+    else:
+        to_save = tensors[0]
+        
+    if states is None:
+        states = torch.zeros(size = (1, to_save.size()[-1]), dtype=torch.long, device=to_save.device)
+    else:
+        if states.dim() != 2:       #ensure states shape 1 x time, required to use the same chop function
+            states = states.unsqueeze(0)
+    to_save, states = _chop_by_state(states, to_save, win_len)
+    
+    if to_save.size(1) == 0:
+        print("Warning: to_save has 0 windows — skipping save.")
+        return
+            
+    with open(save_path, 'wb') as f:
+        torch.save(to_save, f) 
+
+    #handle states       
+    states_name = f'{file_name}_y.pt'
+    
+    if not chunked:
+        states_path = save_folder / states_name
+    else:
+        states_path = chunk_folder / f'y_{file_name}_chunk{chunk_id}.pt'
+
+    with open(states_path, 'wb') as f:
+        torch.save(states, f)
+
+    del to_save, states
+    
 def _chop(values: torch.Tensor, win_len: int):
     """
     chops data into win-len pieces
@@ -238,40 +311,75 @@ def _chop_by_state(states: torch.Tensor,
                   win_len: int) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     split values by state
+    Input (same format as _chop):
+      values: [channel, time]
+      states: [time] or [state, time]
+
+    Output (same format as _chop):
+      values_out: [channel, win_num, window(1000)]
+      states_out: [state, win_num, window(1000)]
     """
-    #states must be 1d (not sure if necessary)
-    states = states.flatten()
+    #validate shapees
+    if values.dim() != 2:
+        raise ValueError(f"values must be [C, L], got {tuple(values.shape)}")
+    C, L = values.shape
+
+    if states.dim() == 1:
+        states_ = states.unsqueeze(0)          # [1, L]
+    elif states.dim() == 2:
+        states_ = states                        # [S, L]
+    else:
+        raise ValueError(f"states must be [L] or [S, L], got {tuple(states.shape)}")
+
+    S, Ls = states_.shape
+    if Ls != L:
+        raise ValueError(f"states length ({Ls}) must match values length ({L})")
+
+
+    # use first state channel to detect changes (typical case S=1, only single state valuation)
+    st0 = states_[0].flatten()                  # [time (L)]
     #detect state changes
-    diffs = torch.diff(states)
-    state_changes = torch.nonzero(diffs != 0).squeeze(-1) + 1
+    diffs = torch.diff(st0)
+    change_idx = torch.nonzero(diffs != 0).flatten() + 1
+
     # add boundaries
-    state_changes = torch.cat([
-        torch.tensor([0], device=states.device),
-        state_changes,
-        torch.tensor([len(states)], device=states.device)
+    boundaries = torch.cat([
+        torch.tensor([0], device=st0.device),
+        change_idx.to(st0.device),
+        torch.tensor([L], device=st0.device)
     ])
 
-    X, y = [], []
-    for idx in range(len(state_changes) - 1):
-        start_idx = int(state_changes[idx])
-        end_idx = int(state_changes[idx + 1])
-        current_state = states[start_idx]
-        # process only if the segment is long enough
-        if end_idx - start_idx >= win_len:
-            i = start_idx
-            while i + win_len <= end_idx:
-                segment = values[..., i : i + win_len]
-                if segment.size(-1) == win_len:
-                    X.append(segment)
-                    y.append(current_state)
-                i += win_len
-    if len(X) == 0:
-        return torch.empty(0), torch.empty(0)
-    # stack into tensors
-    X = torch.stack(X)
-    y = torch.stack(y)
+    X_parts = []
+    S_parts = []
+    
+    for start, end in zip(boundaries[:-1], boundaries[1:]):
+        start = int(start)
+        end = int(end)
 
-    return X, y
+        seg_len = end - start
+        if seg_len < win_len:
+            continue
+
+        i = start
+        while i + win_len <= end:
+            # values window: [C, W] to [C, 1, W]
+            v_win = values[:, i:i + win_len].unsqueeze(1)
+            X_parts.append(v_win)
+
+            # states window: [S, W] to [S, 1, W]
+            s_win = states_[:, i:i + win_len].unsqueeze(1)
+            S_parts.append(s_win)
+
+            i += win_len
+
+    if len(X_parts) == 0:
+        values_out = values.new_empty((C, 0, win_len))
+        states_out = states_.new_empty((S, 0, win_len))
+        return values_out, states_out
+
+    values_out = torch.cat(X_parts, dim=1)     # [C, N, W]
+    states_out = torch.cat(S_parts, dim=1)     # [S, N, W]
+    return values_out, states_out
 
 def __get_start_time(path, time_channel):
     """

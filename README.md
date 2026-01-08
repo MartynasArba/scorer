@@ -8,6 +8,7 @@ A custom sleep scorer in development
 
 ## TODO:
 ### Priority:
+- add actual scoring models
 - bug: (in preprocessing) recording duration is calculated by provided hours, so if the recording starts later than the 1st number, the end will also shift
 
 ### Test:
