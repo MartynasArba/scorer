@@ -13,27 +13,21 @@ gui = SleepWindow(dataset = None)
 gui.show()
 sys.exit(app.exec_())
 
-#TODO:
-#
-#change yscale slider to log scale
-#
+#NOTE:
+#create fresh metadata for each recording
 #chop_by_state is depreciated and removed from gui, make sure it works somewhere in script as it is needed for testing of models
+#make sure start timestamps match recordings, as they are only updated when loading from csv in preprocessing - or use specific metadata per recording
 #
-#make sure timestamps match recordings, as they are only updated when loading from csv now
-#this means specific metadata files for each recording
+#TODO:
+#---PRIORITY:
+#missing axis labels
+#spectral plots are not very informative, should be depreciated
 #
-#metadata label doesn't update when setting params after loading? looks like it only updates if param exists, don't use old metadata!
-#notch is still weird, should test it more
-#
-#TEST:
+#---TEST:
 #if calling preprocessing multiple times, metadata gets * (ecog, emg repeats etc) - @grok is this true?
 #notch is still weird, should test it more (or depreciate it)
 #
-#BUGS:
-#fix fourier lims (or move to a different plot) - is fourier even useful?
-#fix plot axis labels
-#
-#MISSING FEATURES:
+#---MISSING FEATURES/IDEAS:
 #
 #settings: add default values or specify options
 #
@@ -54,7 +48,7 @@ sys.exit(app.exec_())
 # think about an interface for a pre-trained model
 #
 #manual labeling:
-#add channel toggles
+#add channel toggles(?)
 #add autoscale click
 #add scorer name to metadata and state save files correctly
 #save progress automatically every N scores? maybe add checkmark, overwrite option?
