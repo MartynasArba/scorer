@@ -8,46 +8,47 @@ A custom sleep scorer in development
 
 ## TODO:
 ### Priority:
-- missing axis labels
-- spectral plots are not very informative, should be depreciated
+- bug: (in preprocessing) recording duration is calculated by provided hours, so if the recording starts later than the 1st number, the end will also shift
 
 ### Test:
-if calling preprocessing multiple times, metadata might be messed up
-notch is still weird, should test it more (or depreciate it)
+- if calling preprocessing multiple times, metadata might be messed up
+- notch is still weird, should test it more (or depreciate it)
+- spectral plots are not very informative, should be depreciated (or can be left blank in settings)
 
 ### Missing features and ideas:
 
-`settings`: add default values or specify options
+`settings`:
 
 `utils`:
-could add additional qc metrics for converted obx files
-add a "create project folder structure" button
+- could add additional qc metrics for converted obx files
+- add a "create project folder structure" button
 
 `preprocessing`:
-future development: prevent freezing when it runs? 
+- future development: prevent freezing when it runs? 
 
 `automatic scoring`:
-not yet started
-aiming for these models:
-- heuristic-based
-- CNN
-- TimesFM/Moirai pretrained embeddings + classifier head
-add selection of which channels to use!
+- not yet started
+- aiming for these models:
+  - heuristic-based
+  - CNN
+  - TimesFM/Moirai pretrained embeddings + classifier head
+- add selection of which channels to use!
 
-*Use pre-trained models only. Pytorch grad is off in this project, and model training is not in scope of this. If for some reason grad is needed, do `torch.set_grad_enabled(True)`*
+*Use pre-trained models only. Pytorch grad is off in this project, and model training is out of scope. If for some reason grad is needed, do `torch.set_grad_enabled(True)`*
 
 `manual labeling`:
-add channel toggles(?)
-add autoscale click for y
-add scorer name to metadata and state save files correctly
-save progress automatically every N scores? maybe add checkmark, overwrite option?
-jump to next unscored sample
-decide how single label, multi scorer should be handled
+- move less common funcs to a separate menu in manual labeling, add screenshot (fig.savefig)
+- add channel toggles(?)
+- add autoscale click for y
+- add scorer name to metadata and state save files correctly
+- save progress automatically every N scores? maybe add checkmark, overwrite option?
+- jump to next unscored sample
+- decide how single label, multi scorer should be handled
 
 `report`:
-not yet started
-maybe export json report?
-for multilabel, add agreement/confidence 
+- not yet started
+- maybe export json report?
+- for multilabel, add agreement/confidence 
 
 ## Repo structure
 

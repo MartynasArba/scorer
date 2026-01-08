@@ -62,7 +62,7 @@ class PreprocessWidget(QWidget):
         self.filter_check = QCheckBox("bandpass filter ecog data? limits:") #add option to select filter boundaries
         self.low_bound_field = QLineEdit(self)
         self.high_bound_field = QLineEdit(self)
-        self.low_bound_field.setText("0.1")
+        self.low_bound_field.setText("0.5")
         self.high_bound_field.setText("49")
         filter_layout = QHBoxLayout()
         filter_layout.addWidget(self.filter_check)
@@ -203,7 +203,12 @@ class PreprocessWidget(QWidget):
                                     chunk_id = i,
                                     overwrite = self.save_overwrite_check.isChecked(),
                                     testing = False)
-        save_metadata(self.params['metadata_path'], self.params)
+                        
+        meta_path = self.params.get('metadata_path', None)
+        if meta_path is None:
+            print('warning - metadata path is not set! setting to project path')
+            meta_path = self.params.get('project_path', '.')
+        save_metadata(meta_path, self.params)
         
     def _not_chunked_warning(self):
         """

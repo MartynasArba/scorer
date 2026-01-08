@@ -25,7 +25,7 @@ from data.loaders import SleepSignals
 
 class SleepGUI(QWidget):
     """
-    Sleep labeling GUI with efficient persistent plotting (no canvas recreation).
+    Sleep labeling GUI with plotting (efficient, no canvas recreation).
     """
 
     def __init__(self, dataset: SleepSignals = None, metadata: dict = None) -> None:
@@ -194,7 +194,7 @@ class SleepGUI(QWidget):
         self.slider_frame.setOrientation(QtCore.Qt.Horizontal)
         self.slider_frame.setTracking(False)
         self.slider_frame.valueChanged.connect(self.frame_slider_func)
-        self.slider_frame_label = QLabel("Frame: 0")
+        self.slider_frame_label = QLabel("Min from start: 0")
         slider_layout.addWidget(self.slider_frame_label)
         slider_layout.addWidget(self.slider_frame)
 
@@ -388,7 +388,7 @@ class SleepGUI(QWidget):
             self.slider_frame.blockSignals(True)
             self.slider_frame.setValue(self.current_idx)
             self.slider_frame.blockSignals(False)
-        self.slider_frame_label.setText(f"frame: {self.current_idx}")
+        self.slider_frame_label.setText(f"Min from start: {(self.current_idx * self.frame_duration_s / 60):.2f}")
 
         slider_val = self._yscale_to_slider(self.yscale)
         if self.slider_yscale.value() != slider_val:
@@ -452,7 +452,7 @@ class SleepGUI(QWidget):
             self.signal_canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
             self.signal_canvas.updateGeometry()
             self.canvas_layout.addWidget(self.signal_canvas)
-            self.signal_fig.tight_layout()
+            # self.signal_fig.tight_layout()
             
         # convert scorer label arrays for the visible window
         scorer_window_labels = {}

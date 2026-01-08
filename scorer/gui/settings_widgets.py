@@ -21,6 +21,16 @@ class SettingsWidget(QWidget):
         self.params['project_path'] = '.'
         self.params['date'] = str(datetime.now().strftime('%Y_%m_%d'))
         
+        self.defaults = {'animal_id': '0',
+                        'sample_rate': '1000',
+                        'ecog_channels': '0,1',
+                        'emg_channels': '2',
+                        'time_channel': '3',
+                        'spectral_options': None,
+                        'ylim': 'infer_ephys',
+                        'device': 'cuda'
+                        }
+        
         #main layout
         layout = QVBoxLayout(self)
         
@@ -40,6 +50,11 @@ class SettingsWidget(QWidget):
         for p in self.params.keys():
             if (p != 'scoring_started') & (p != 'project_path'):
                 self.add_param_row(p)
+        
+        #set default
+        btn_default = QPushButton('set default')
+        btn_default.clicked.connect(self.default_metadata_func)
+        self.metadata_layout.addWidget(btn_default)
         
         #buttons to save and load
         btn_save = QPushButton('save all params to file')
@@ -136,12 +151,21 @@ class SettingsWidget(QWidget):
 
     def reset_metadata(self):
         """
-        resets metadata
+        resets metadata to nothing
         """
         for param in self.params.keys():
             self.params[param] = None
         self.params['scoring_started'] = str(datetime.now().strftime('%Y%m%d%H%M%S'))
         
+        self.update_label()
+        
+    def default_metadata_func(self):
+        """
+        fills metadata with some default values
+        """
+        for key, val in self.defaults.items():
+            if key in self.params.keys():
+                self.params[key] = val
         self.update_label()
         
     def validate_metadata(self):

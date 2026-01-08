@@ -36,7 +36,6 @@ class SleepSignals(Dataset):
         
         self.channel_ylims = []
         
-        
         self._load(data_path, score_path)
                 
         #move to device after loading        

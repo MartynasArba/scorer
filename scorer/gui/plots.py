@@ -48,15 +48,15 @@ def plot_signals_init(
 
         # optional channel names
         if names and i < len(names):
-            ax.set_ylabel(names[i])
+            ax.set_ylabel(names[i], rotation = 'horizontal', labelpad=4)
 
         ax.grid(True, alpha=0.3)
 
     # label axis (last axis)
     label_ax = axs[-1]
     label_ax.grid(True, alpha=0.3)
-    label_ax.set_xlabel("Time")
-    label_ax.set_ylabel("State")
+    label_ax.set_xlabel("time")
+    label_ax.set_ylabel("state")
     
     if time_formatter is not None:
         label_ax.xaxis.set_major_formatter(time_formatter)
@@ -89,6 +89,7 @@ def plot_signals_init(
     label_ax.set_ylim(-0.5, 4.5)
 
     fig.tight_layout()
+    fig.subplots_adjust(left=0.06)
     return fig, axs, signal_lines, label_lines, label_text
 
 def plot_signals_update(

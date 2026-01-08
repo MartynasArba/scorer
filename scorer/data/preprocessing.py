@@ -272,7 +272,7 @@ def band_powers(signal: torch.Tensor, bands: dict = {'delta': (0.5, 4)}, sr: int
         
         if kernel is not None:
             amplitude = F.conv1d(amplitude, kernel, padding = 'same').squeeze(0)
-        q = torch.quantile(amplitude[::10], q=0.9) #every 10th value for speed
+        q = torch.quantile(amplitude[::10], q=0.98) #every 10th value for speed
         amplitude = torch.clamp(amplitude, max = q) #remove vals above 90th quantile
         #also standardize by std (but not zero-center, because that should happen when filtering)
         amplitude /= torch.std(amplitude)
@@ -301,7 +301,7 @@ def sum_power(signal: torch.Tensor, smoothing: float = 0.2, sr: int = 250, devic
             avg_power = F.conv1d(power.unsqueeze(1), kernel, padding=pad)
             rms = torch.sqrt(avg_power.squeeze(1) + 1e-12)  #very small value ensures float smoothing is never <0
             if normalize:
-                q = torch.quantile(rms[::10], q=0.9) #every 10th value for speed
+                q = torch.quantile(rms[::10], q=0.98) #every 10th value for speed
                 rms = torch.clamp(rms, max = q) #remove vals above 90th quantile                
                 rms = (rms - torch.min(rms)) / (torch.max(rms) - torch.min(rms))    #scale
             out.append(rms)
