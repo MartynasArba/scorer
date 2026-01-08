@@ -12,6 +12,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 import matplotlib.pyplot as plt
 import numpy as np
 from datetime import datetime
+import math
 
 from gui.plots import (
     plot_signals_init, plot_signals_update,
@@ -63,6 +64,9 @@ class SleepGUI(QWidget):
         self.ylim_defaults = [(0, 1)]
         self.ylims = list(self.ylim_defaults)
         self.yscale = 1.0
+        self.yscale_log_min = math.log(0.1)   # for log slider
+        self.yscale_log_max = math.log(10.0)  
+        
 
         # annotation array and settings
         self.states = np.array([], dtype=int)
@@ -175,12 +179,12 @@ class SleepGUI(QWidget):
         all_scorers_check = QCheckBox("Show all loaded scorers?")
         all_scorers_check.stateChanged.connect(self.show_all_scorers_toggle)
         self.labeling_layout.addWidget(all_scorers_check)
-
-
+        
         # sliders
-        self.slider_yscale = QSlider(value=100, minimum=1, maximum=200, singleStep=5)
-        self.slider_yscale.setOrientation(QtCore.Qt.Horizontal)
-        self.slider_yscale.setTracking(False)
+        self.slider_yscale = QSlider(QtCore.Qt.Horizontal)
+        self.slider_yscale.setMinimum(0)
+        self.slider_yscale.setMaximum(1000)
+        self.slider_yscale.setSingleStep(10)
         self.slider_yscale.valueChanged.connect(self.change_yscale)
         self.yscale_label = QLabel("Y scale: 1")
         slider_layout.addWidget(self.yscale_label)
@@ -386,12 +390,12 @@ class SleepGUI(QWidget):
             self.slider_frame.blockSignals(False)
         self.slider_frame_label.setText(f"frame: {self.current_idx}")
 
-        yval = int(self.yscale * 100)
-        if self.slider_yscale.value() != yval:
+        slider_val = self._yscale_to_slider(self.yscale)
+        if self.slider_yscale.value() != slider_val:
             self.slider_yscale.blockSignals(True)
-            self.slider_yscale.setValue(yval)
+            self.slider_yscale.setValue(slider_val)
             self.slider_yscale.blockSignals(False)
-        self.yscale_label.setText(f"Y scale: {self.yscale:.3g}")
+        self.yscale_label.setText(f"Y scale: ×{self.yscale:.2f}")
 
         # labeling group
         state_idx = int(self.states[self.current_idx])
@@ -578,8 +582,20 @@ class SleepGUI(QWidget):
     def frame_slider_func(self, value: int) -> None:
         if 0 <= value < max(1, self._len_dataset):
             self._set_idx_and_update(value)
-
+    
     # CHANGE Y SCALE
+    def _slider_to_yscale(self, slider_val: int) -> float:
+        """map slider 0 to 1000 > yscale in log"""
+        frac = slider_val / 1000.0
+        log_y = self.yscale_log_min + frac * (self.yscale_log_max - self.yscale_log_min)
+        return math.exp(log_y)
+
+    def _yscale_to_slider(self, yscale: float) -> int:
+        """map yscale to slider position."""
+        log_y = math.log(max(yscale, 1e-9))
+        frac = (log_y - self.yscale_log_min) / (self.yscale_log_max - self.yscale_log_min)
+        return int(np.clip(frac * 1000, 0, 1000))
+    
     def set_yscale(self, s: float) -> None:
         new_yscale = max(float(s), 0.001)
         if abs(new_yscale - self.yscale) < 1e-9:
@@ -589,7 +605,8 @@ class SleepGUI(QWidget):
         self.update_screen()
 
     def change_yscale(self, value: int) -> None:
-        self.set_yscale(value * 0.01)
+        y = self._slider_to_yscale(value)
+        self.set_yscale(y)
 
     def increase_yscale(self) -> None:
         self.set_yscale(self.yscale * 1.1 )

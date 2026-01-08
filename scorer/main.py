@@ -15,7 +15,6 @@ sys.exit(app.exec_())
 
 #TODO:
 #
-#timescale in plots is in time, but the 1st label repeats
 #change yscale slider to log scale
 #
 #chop_by_state is depreciated and removed from gui, make sure it works somewhere in script as it is needed for testing of models
