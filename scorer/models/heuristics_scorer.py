@@ -36,16 +36,17 @@ class HeuristicScorer():
             window = self.data.all_samples[window_id, :, :]
             max_vals = window.max(dim = 1).values
             #first, checking by EMG power, channel 3
-            if max_vals[3] >= self.q90[3]:
+            if (max_vals[3] >= self.q90[3]).item():
                 state = 1   #W
-            # checking REM - high theta, very low emg
-            elif (max_vals[5] >= self.q50[5]).item() and (max_vals[3] <= self.q10[3]).item():
+            # checking REM - high theta, low emg, could add low delta?
+            elif (max_vals[5] >= self.q50[5]).item() and (max_vals[3] <= self.q50[3]).item() and (max_vals[4] <= self.q50[4]).item():
                 if window_id != 0:
                     if self.states[window_id-1] != 1:#previous state can't be W
                         state = 4 #REM
-            #checking for IS
-            elif (max_vals[7] > self.q50[7]).item() and ((max_vals[7] > max_vals[5]).item() and (torch.max(window[3, :]) <= self.q10[3]).item()):
+            #checking for IS - high sigma, sigma > theta, low emg
+            elif (max_vals[7] > self.q50[7]).item() and (max_vals[7] > max_vals[5]).item() and (max_vals[3] <= self.q50[3]).item():
                 state = 3
+            #NREM: high delta, low emg
             elif (max_vals[4] > self.q50[4]).item() and (max_vals[3] <= self.q50[3]).item():
                 state = 2
             self.states.append(state)

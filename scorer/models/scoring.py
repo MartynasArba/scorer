@@ -6,6 +6,8 @@ from scorer.data.loaders import SleepSignals
 from scorer.models.heuristics_scorer import HeuristicScorer
 from scorer.data.storage import save_pickled_states
 import numpy as np
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, accuracy_score
+import matplotlib.pyplot as plt
 
 if __name__ == "__main__":
     
@@ -25,7 +27,14 @@ if __name__ == "__main__":
     print(scorer)
     
     save_pickled_states(np.array(scorer.states), save_path)
-    # print(np.unique(np.array(scorer.states), return_counts = True))
-    #convert states to array and use the same saving func for consistency
     
+    old_states = dataset.all_labels.cpu().numpy()
+    print(np.unique(old_states, return_counts = True))
     
+    print(f'accuracy: {accuracy_score(old_states, scorer.states)}')
+    
+    cm1 = confusion_matrix(old_states, scorer.states)
+    
+    disp1 = ConfusionMatrixDisplay(cm1)
+    disp1.plot()
+    plt.show()
