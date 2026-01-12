@@ -4,7 +4,7 @@ from PyQt5.QtWidgets import (
 )
 
 from datetime import datetime
-from data.storage import save_metadata, load_metadata
+from scorer.data.storage import save_metadata, load_metadata
 
 class SettingsWidget(QWidget):
     """

@@ -5,8 +5,8 @@ from PyQt5.QtWidgets import (
 )
 
 from torchaudio.functional import resample
-from data.preprocessing import bandpass_filter, sum_power, band_powers, notch_filter
-from data.storage import save_tensor, save_windowed, save_metadata, load_from_csv, load_from_csv_in_chunks
+from scorer.data.preprocessing import bandpass_filter, sum_power, band_powers, notch_filter
+from scorer.data.storage import save_tensor, save_windowed, save_metadata, load_from_csv, load_from_csv_in_chunks
 from pathlib import Path
 
 class PreprocessWidget(QWidget):

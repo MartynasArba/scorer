@@ -1,7 +1,7 @@
 import sys
 import torch
 from PyQt5.QtWidgets import QApplication
-from gui.main_window import SleepWindow
+from scorer.gui.main_window import SleepWindow
 
 #this is because only pre-trained models are supported
 torch.set_grad_enabled(False) 

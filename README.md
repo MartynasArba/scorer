@@ -1,5 +1,5 @@
 # scorer
-A custom sleep scorer in development
+A custom semi-automated sleep scorer in development
 
 **Notes for use**:
 - create fresh metadata for each recording
@@ -45,6 +45,7 @@ A custom sleep scorer in development
 - save progress automatically every N scores? maybe add checkmark, overwrite option?
 - jump to next unscored sample
 - decide how single label, multi scorer should be handled
+- could add mouse click to change state (or better keyboard controlls)
 
 `report`:
 - not yet started

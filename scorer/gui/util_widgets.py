@@ -5,8 +5,8 @@ from PyQt5.QtWidgets import (
     QCheckBox
 )
 
-from data.onebox_utils import run_conversion, convert_multiple_recs, get_folder_quality_report
-from data.motionsensor_utils import parse_sensors
+from scorer.data.onebox_utils import run_conversion, convert_multiple_recs, get_folder_quality_report
+from scorer.data.motionsensor_utils import parse_sensors
 
 class UtilWidget(QWidget):
     """

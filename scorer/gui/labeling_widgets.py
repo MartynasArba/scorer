@@ -14,13 +14,13 @@ import numpy as np
 from datetime import datetime
 import math
 
-from gui.plots import (
+from scorer.gui.plots import (
     plot_signals_init, plot_signals_update,
     plot_spectrogram_init, plot_spectrogram_update,
     plot_fourier_init, plot_fourier_update, TimeOfDayFormatter
 )
-from data.storage import construct_paths, save_pickled_states, load_pickled_states
-from data.loaders import SleepSignals
+from scorer.data.storage import construct_paths, save_pickled_states, load_pickled_states
+from scorer.data.loaders import SleepSignals
 
 
 class SleepGUI(QWidget):

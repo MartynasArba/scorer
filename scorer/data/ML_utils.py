@@ -1,7 +1,7 @@
 #implements preprocessing + chop_by_state without GUI to generate a dataset for training/testing models
 
 from preprocessing import bandpass_filter, sum_power, band_powers
-from storage import load_from_csv_in_chunks, save_windowed_for_testing
+from scorer.data.storage import load_from_csv_in_chunks, save_windowed_for_testing
 from pathlib import Path
 
 def run_default_preprocessing(csv_path) -> None:
