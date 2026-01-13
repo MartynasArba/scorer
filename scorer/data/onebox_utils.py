@@ -45,12 +45,12 @@ def readMeta(binFullPath):
 # Use python command sys.float_info to get properties of float on your system.
 #
 def SampRate(meta):
-    if meta['typeThis'] == 'imec':
+    if meta['typeThis'] == 'obx':
+        srate = float(meta['obSampRate'])
+    elif meta['typeThis'] == 'imec':
         srate = float(meta['imSampRate'])
     elif meta['typeThis'] == 'nidq':
         srate = float(meta['niSampRate'])
-    elif meta['typeThis'] == 'obx':
-        srate = float(meta['obSampRate'])
     else:
         print('Error: unknown stream type')
         srate = 1
@@ -293,7 +293,7 @@ def run_conversion(bin_path: str, project_meta: dict,
                    save_folder = None, 
                    sr_new: int = 1000, 
                    chanlist = [x for x in range(12)],
-                   channel_to_box = {0:1, 1:4, 2:2, 3:3}):
+                   channel_to_box = {0:1, 1:3, 2:4, 3:2}):
     """
     converts obx bin file to 4 csv files
     some params can be changed if the setup is different
@@ -333,10 +333,11 @@ def run_conversion(bin_path: str, project_meta: dict,
         to_save = pd.DataFrame(sel_data.T, columns = ['f_ecog', 'p_ecog', 'emg'])
         to_save['time'] = timestamps
         to_save.to_csv(save_path, index = False)
+        print(f'{i}: channels {i*3}:{i*3+3} saved as {save_path}')
     print('saved!')
     return
 
-def file_converted(file, save_folder = "C:/Users/marty/Projects/scorer/proj_data/raw", channel_to_box = {0:1, 1:4, 2:2, 3:3}):
+def file_converted(file, save_folder = "C:/Users/marty/Projects/scorer/proj_data/raw", channel_to_box = {0:1, 1:3, 2:4, 3:2}):
     """
     checks if obx file is already converted
     converted if there are corresponding .csv files
@@ -369,7 +370,7 @@ def convert_multiple_recs(folder, project_meta, save_folder = None, sr_new = 100
                 run_conversion(file, project_meta, sr_new = sr_new, 
                                save_folder=save_folder,
                                chanlist = [x for x in range(12)],
-                               channel_to_box = {0:1, 1:4, 2:2, 3:3})
+                               channel_to_box = {0:1, 1:3, 2:4, 3:2})
             except Exception as e:
                 print(f'{file} NOT CONVERTED: {e}')
         else:
@@ -377,7 +378,7 @@ def convert_multiple_recs(folder, project_meta, save_folder = None, sr_new = 100
     print(f'all files in {folder} converted!!!')
     return
 
-def get_folder_quality_report(folder_path, savepath = None, save_fig = True):
+def get_folder_quality_report(folder_path, savepath = None, save_fig = True, overwrite = False):
     """
     generates a quality report for all .csv files in path
     """
@@ -394,7 +395,13 @@ def get_folder_quality_report(folder_path, savepath = None, save_fig = True):
             figure_folder = Path(savepath) / 'quality_plots'
             if not os.path.exists(figure_folder):
                 os.makedirs(figure_folder)
-            figure.savefig(str(figure_folder / "".join(Path(file).stem.split('.'))) + '.png')
+            if not overwrite:
+                if os.path.exists(str(figure_folder / "".join(Path(file).stem.split('.'))) + '.png'):
+                    print('plot exists, not overwriting')
+                else:
+                    figure.savefig(str(figure_folder / "".join(Path(file).stem.split('.'))) + '.png')
+            else:
+                figure.savefig(str(figure_folder / "".join(Path(file).stem.split('.'))) + '.png')
             plt.close()
             print('plot saved!')
     pd.concat(res_list).reset_index(drop = True).to_csv(savepath + '/quality_report.csv')
@@ -481,13 +488,13 @@ def _linenoise_ratio(arr, sr = 1000, line_f = 50, bw = 1):
     totalpow = pxx.sum(axis = 0)
     return linepow / totalpow
     
-    
 
 if __name__ == "__main__":
+    print('script ran directly')
     project_meta = {'project_path' : 'C:/Users/marty/Projects/scorer/proj_data', 'sample_rate' : 1000}
     # convert_multiple_recs(folder = 'G:/SLEEP-ECOG', project_meta = project_meta, overwrite = True)
     # get_folder_quality_report("C:/Users/marty/Projects/scorer/proj_data/raw")
-    path = r"C:\Users\marty\Projects\scorer\proj_data\raw\20251124-1_g0_t0.obx0.obx_box1.csv"
-    metrics, figure = generate_obx_quality_report(path, sample_size = 20, report_interval = 100, sr = 1000, return_figure = True)
-    plt.show()
-    print(metrics)
+    # path =
+    # metrics, figure = generate_obx_quality_report(path, sample_size = 20, report_interval = 100, sr = 1000, return_figure = True)
+    # plt.show()
+    # print(metrics)

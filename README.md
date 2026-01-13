@@ -5,10 +5,11 @@ A custom semi-automated sleep scorer in development
 - create fresh metadata for each recording
 - chop_by_state is depreciated and removed from gui, make sure it works somewhere in script as it is needed for testing of models
 - make sure start timestamps match recordings, as they are only updated when loading from csv in preprocessing - or use specific metadata per recording
+- one heuristic-based scorer is added, which not accurate (~40%), but might provide a starting point
 
 ## TODO:
 ### Priority:
-- add actual scoring models
+- add scorer to GUI
 - bug: (in preprocessing) recording duration is calculated by provided hours, so if the recording starts later than the 1st number, the end will also shift
 
 ### Test:
