@@ -28,6 +28,9 @@ class HeuristicScorer():
         self.data = dataset
         self.states = []
         self.q10, self.q50, self.q90 = self._get_qs(self.data, sub_factor = 10)
+        if int(self.data.all_samples.size(dim = 1)) != 8:
+            raise ValueError('there must be 8 channels in data: ecog, emg, ecog_pow, emg_pow, delta, theta, alpha, sigma')
+        
         
     def score(self):
         print('heuristic-based scoring started')

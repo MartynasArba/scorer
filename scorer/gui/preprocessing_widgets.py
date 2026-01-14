@@ -274,8 +274,8 @@ class PreprocessWidget(QWidget):
             if warn == QMessageBox.StandardButton.Cancel:
                 print('sum pow calculation cancelled')
             else:
-                ecog_power = sum_power(ecog, smoothing = 0.2, sr = int(self.params.get('sample_rate', 250)), device = self.params.get('device', 'cuda'), normalize = True)
-                emg_power = sum_power(emg, smoothing = 0.2, sr = int(self.params.get('sample_rate', 250)), device = self.params.get('device', 'cuda'), normalize = True)
+                ecog_power = sum_power(ecog, smoothing = 0.2, sr = int(self.params.get('sample_rate', 250)), device = self.params.get('device', 'cuda'), normalize = True, gaussian_smoothen=0.2)
+                emg_power = sum_power(emg, smoothing = 0.2, sr = int(self.params.get('sample_rate', 250)), device = self.params.get('device', 'cuda'), normalize = True, gaussian_smoothen=0.2)
                 self.params['preprocessing']+= ['sum_pows_calculated']
                 self.params['channels_after_preprocessing'] += ['ecog_sum_power'] * len(self.params['ecog_channels'].split(',')) + ['emg_sum_power'] * len(self.params['emg_channels'].split(','))
                 print('sum pows calculated')

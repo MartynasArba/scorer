@@ -272,6 +272,7 @@ def band_powers(signal: torch.Tensor, bands: dict = {'delta': (0.5, 4)}, sr: int
         
         if kernel is not None:
             amplitude = F.conv1d(amplitude, kernel, padding = 'same').squeeze(0)
+            
         q = torch.quantile(amplitude[::10], q=0.98) #every 10th value for speed
         amplitude = torch.clamp(amplitude, max = q) #remove vals above 90th quantile
         #also standardize by std (but not zero-center, because that should happen when filtering)
@@ -280,7 +281,7 @@ def band_powers(signal: torch.Tensor, bands: dict = {'delta': (0.5, 4)}, sr: int
         band_envelopes[name] = amplitude
     return band_envelopes   
 
-def sum_power(signal: torch.Tensor, smoothing: float = 0.2, sr: int = 250, device: str = 'cuda', normalize = True):
+def sum_power(signal: torch.Tensor, smoothing: float = 0.2, sr: int = 250, device: str = 'cuda', normalize = True, gaussian_smoothen = 0.2):
     """
     calculates sum power by rms with moving average smoothing kernel
     """    
@@ -291,6 +292,12 @@ def sum_power(signal: torch.Tensor, smoothing: float = 0.2, sr: int = 250, devic
             signal = signal.to(device)
         if signal.ndim == 1:
             signal = signal.unsqueeze(0)
+            
+        if gaussian_smoothen is not None:
+            smoothing_kernel = gaussian_kernel(sigma = gaussian_smoothen, sr = sr, device = device)
+        else:
+            smoothing_kernel = None
+        
         out = []
         #here loop over dim 0 - calcualte for all channels
         for ch in range(signal.size(dim = 0)):
@@ -300,6 +307,11 @@ def sum_power(signal: torch.Tensor, smoothing: float = 0.2, sr: int = 250, devic
             pad = win_len // 2  #add some padding
             avg_power = F.conv1d(power.unsqueeze(1), kernel, padding=pad)
             rms = torch.sqrt(avg_power.squeeze(1) + 1e-12)  #very small value ensures float smoothing is never <0
+            
+            #add gaussian smoothing if set
+            if smoothing_kernel is not None:
+                amplitude = F.conv1d(rms, smoothing_kernel, padding = 'same').squeeze(0)
+            
             if normalize:
                 q = torch.quantile(rms[::10], q=0.98) #every 10th value for speed
                 rms = torch.clamp(rms, max = q) #remove vals above 90th quantile                

@@ -9,7 +9,6 @@ A custom semi-automated sleep scorer in development
 
 ## TODO:
 ### Priority:
-- add scorer to GUI
 - bug: (in preprocessing) recording duration is calculated by provided hours, so if the recording starts later than the 1st number, the end will also shift
 
 ### Test:
