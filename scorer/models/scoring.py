@@ -4,6 +4,7 @@
 #do scoring: launcher function 
 from scorer.data.loaders import SleepSignals
 from scorer.models.heuristic_scorer import HeuristicScorer
+from scorer.models.heuristic_scorer_v2 import HeuristicScorer2
 from scorer.data.storage import save_pickled_states
 import numpy as np
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, accuracy_score
@@ -54,7 +55,8 @@ if __name__ == "__main__":
         spectral_features = None,
         metadata = {'ecog_channels' : '1', 'emg_channels' : '2', 'sample_rate' : '250', 'ylim' : 'standard'}
     )    
-    scorer = HeuristicScorer(dataset)
+        
+    scorer = HeuristicScorer2(dataset)
     scorer.score()
     print(scorer)
     
@@ -66,6 +68,7 @@ if __name__ == "__main__":
     print(f'accuracy: {accuracy_score(old_states, scorer.states)}')
     
     cm1 = confusion_matrix(old_states, scorer.states)
+    print(cm1)
     
     disp1 = ConfusionMatrixDisplay(cm1)
     disp1.plot()

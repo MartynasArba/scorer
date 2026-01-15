@@ -12,7 +12,7 @@ class AutoScoringWidget(QWidget):
         super().__init__()
         
         self.params = meta
-        available_models = ['none', 'heuristic']
+        available_models = ['select model', 'heuristic']
         layout = QVBoxLayout(self)
         
         self.file_folder = '.'
@@ -33,7 +33,7 @@ class AutoScoringWidget(QWidget):
         layout.addWidget(button_sel_file)
         
         #button to select state folder
-        button_sel_state= QPushButton('select data folder')
+        button_sel_state= QPushButton('select scores folder')
         button_sel_state.clicked.connect(self.select_state_folder)
         layout.addWidget(button_sel_state)
                 

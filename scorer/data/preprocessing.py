@@ -252,7 +252,7 @@ def band_powers(signal: torch.Tensor, bands: dict = {'delta': (0.5, 4)}, sr: int
     if signal.ndim == 1:        #just in case a single channel with [, time] is passed
             signal = signal.unsqueeze(0)
     if signal.size(dim = 0) > 1:    #if there are more channels, takes the first one
-        signal = signal[0, :].unsqueeze(0)
+        signal = signal[0, :]   #should be 1, time
     
     band_envelopes = {}
     if smoothen:
@@ -261,24 +261,34 @@ def band_powers(signal: torch.Tensor, bands: dict = {'delta': (0.5, 4)}, sr: int
         kernel = None
 
     for name, (low, high) in bands.items():
-        filtered = bandpass_filter(signal, sr, freqs = (low, high), device=device)
-        filtered = filtered.squeeze(0)
-        analytic = hilbert_transform(filtered)
+        filtered = bandpass_filter(signal, sr, freqs = (low, high), device=device)  #still 1, time
+        filtered1d = filtered[0]    #1d for hilbert transform
+        analytic = hilbert_transform(filtered1d)
         amplitude = torch.abs(analytic) 
-        if amplitude.ndim == 1:
-            amplitude = amplitude.unsqueeze(0).unsqueeze(0)
-        elif amplitude.ndim == 2:
-            amplitude = amplitude.unsqueeze(0)
+        
+        #expand for convolution to 1, 1, time
+        amplitude = amplitude.unsqueeze(0).unsqueeze(0)
         
         if kernel is not None:
             amplitude = F.conv1d(amplitude, kernel, padding = 'same').squeeze(0)
-            
-        q = torch.quantile(amplitude[::10], q=0.98) #every 10th value for speed
+        
+        #force 1, time always - reduce to single dim, then expand
+        amplitude = amplitude.squeeze(0).squeeze(0).unsqueeze(0)
+        
+        eps = 1e-20
+        sub = amplitude[0, ::10]
+        q = torch.quantile(sub, q=0.98) #every 10th value for speed
+        q25 = torch.quantile(sub, q=0.25)
+        q75 = torch.quantile(sub, q=0.75)
         amplitude = torch.clamp(amplitude, max = q) #remove vals above 90th quantile
         #also standardize by std (but not zero-center, because that should happen when filtering)
-        amplitude /= torch.std(amplitude)
-        amplitude = (amplitude - amplitude.min()) / (amplitude.max() - amplitude.min() + 1e-12)
+        # amplitude /= torch.std(amplitude)
+        # amplitude = (amplitude - amplitude.min()) / (amplitude.max() - amplitude.min() + 1e-12)
+        #robust scaling
+        amplitude = (amplitude - q25) / (q75 - q25 + eps)
+        amplitude = torch.clamp(amplitude, min = -2, max = 6)        
         band_envelopes[name] = amplitude
+        
     return band_envelopes   
 
 def sum_power(signal: torch.Tensor, smoothing: float = 0.2, sr: int = 250, device: str = 'cuda', normalize = True, gaussian_smoothen = 0.2):
@@ -310,13 +320,30 @@ def sum_power(signal: torch.Tensor, smoothing: float = 0.2, sr: int = 250, devic
             
             #add gaussian smoothing if set
             if smoothing_kernel is not None:
-                amplitude = F.conv1d(rms, smoothing_kernel, padding = 'same').squeeze(0)
+                if rms.ndim == 2:
+                    rms = rms.unsqueeze(1)
+                elif rms.ndim == 1:
+                    rms = rms.unsqueeze(0).unsqueeze(1)  # (1, 1, T)
+
+                rms = F.conv1d(rms, smoothing_kernel, padding='same')  # (1, 1, T)
+                rms = rms.squeeze(1)  # (1, T)   (keeps 2D)
             
             if normalize:
-                q = torch.quantile(rms[::10], q=0.98) #every 10th value for speed
+                eps = 1e-20
+                sub = rms[..., ::10]    #assuming shape 1 (channel), time
+                q = torch.quantile(sub, q=0.98) #every 10th value for speed
+                q25 = torch.quantile(sub, q=0.25)
+                q75 = torch.quantile(sub, q=0.75)
                 rms = torch.clamp(rms, max = q) #remove vals above 90th quantile                
-                rms = (rms - torch.min(rms)) / (torch.max(rms) - torch.min(rms))    #scale
+                # rms = (rms - torch.min(rms)) / (torch.max(rms) - torch.min(rms))    #scale
+                #use more robust scaling instead of minmax
+                rms = (rms - q25) / (q75 - q25 + eps)
+                rms = torch.clamp(rms, min = 0, max = 2)
+                
+            if rms.ndim == 1:
+                rms = rms.unsqueeze(0)  # make (1(channel), T)
             out.append(rms)
+            
         if len(out) == 1:
             return out[0]
         else:

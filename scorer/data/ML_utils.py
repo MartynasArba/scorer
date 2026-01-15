@@ -1,6 +1,6 @@
 #implements preprocessing + chop_by_state without GUI to generate a dataset for training/testing models
 
-from preprocessing import bandpass_filter, sum_power, band_powers
+from scorer.data.preprocessing import bandpass_filter, sum_power, band_powers
 from scorer.data.storage import load_from_csv_in_chunks, save_windowed_for_testing
 from pathlib import Path
 
@@ -41,14 +41,6 @@ def run_default_preprocessing(csv_path) -> None:
                                               overwrite = True)
                 else:           
                     print('not implemented')      
-                    # save_windowed(tensors = tensor_seq, 
-                    #             states = states_chunk, 
-                    #             metadata = self.params, 
-                    #             win_len = win_len,
-                    #             chunked = True, #append_file previously
-                    #             chunk_id = i,
-                    #             overwrite = False,
-                    #             testing = False)
         
 def _bandpass(signal, freqs, metadata):
         """
@@ -91,20 +83,20 @@ def _preprocess(ecog, emg, metadata):
         return (ecog, emg, ecog_power, emg_power) + tuple(bands.values())
     
 if __name__ == "__main__":
-    import torch
-#converts whole folder to windows for ml
-    # import glob
-    # import tqdm
-    # paths = glob.glob(r'G:\oslo_data\*.csv')
-    # for path in tqdm.tqdm(paths):
-    #     print(path)
-    #     run_default_preprocessing(path)
-#let's try checking whether states were actually saved
+    # import torch
+# converts whole folder to windows for ml
+    import glob
+    import tqdm
+    paths = glob.glob(r'G:\oslo_data\*.csv')
+    for i, path in enumerate(tqdm.tqdm(paths)):
+        print(i, path)
+        run_default_preprocessing(path)
+# let's try checking whether states were actually saved
 #open one file, check shapes, check unique values in states
-    val_path = r"G:\oslo_data\windowed_trial_1_mouse_b1aqm2\X_trial_1_mouse_b1aqm2_chunk0.pt"
-    score_path = r"G:\oslo_data\windowed_trial_1_mouse_b1aqm2\y_trial_1_mouse_b1aqm2_chunk0.pt"
-    vals = torch.load(val_path)
-    scores = torch.load(score_path)
-    print(vals.size())
-    print(scores.size())
-    print(scores.unique(return_counts = True))
+    # val_path = r"G:\oslo_data\windowed_trial_1_mouse_b1aqm2\X_trial_1_mouse_b1aqm2_chunk0.pt"
+    # score_path = r"G:\oslo_data\windowed_trial_1_mouse_b1aqm2\y_trial_1_mouse_b1aqm2_chunk0.pt"
+    # vals = torch.load(val_path)
+    # scores = torch.load(score_path)
+    # print(vals.size())
+    # print(scores.size())
+    # print(scores.unique(return_counts = True))
