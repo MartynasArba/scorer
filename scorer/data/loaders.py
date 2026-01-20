@@ -240,3 +240,131 @@ class SleepSignals(Dataset):
                     ylims.append((center, spread))
         print('ylims in loaders.py', ylims)
         return ylims
+    
+    
+class SleepTraining(Dataset):
+    """
+    This is a dataset made to load training data with labels, not to score data.
+    It follows the main SleepDataset class.
+    
+    Dataset structure for chopped signals and labels, developed using 1000-datapoint windows
+    Generally, there are 2 channels (ECoG, EMG)
+    Sleep is labeled as: 
+          0:'Unlabeled',
+          1:'Wake',
+          2:'NREM',
+          3:'IS',
+          4:'REM'
+    """
+    def __init__(self, data_path, random_state = 0, n_files_to_pick = 100, device = 'cuda', transform = None, augment = False, metadata: dict = {}) -> None:
+        
+        torch.manual_seed(random_state)
+
+        self.params = metadata
+        
+        self.all_samples = None
+        self.all_labels = None
+        
+        self._load(data_path, n_files_to_pick)
+                
+        #move to device after loading        
+        self.all_samples = self.all_samples.to(device)
+        self.all_labels = self.all_labels.to(device)
+        
+        self.device = device
+        self.transform = transform
+        self.augment = augment        
+        
+    def __len__(self) -> int:
+        return len(self.all_labels)
+    
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int]:
+        
+        if torch.is_tensor(idx):
+            idx = idx.tolist()
+            
+        sample = self.all_samples[idx, :, :]
+        label = self.all_labels[idx]
+        
+        if self.augment:
+            sample = self._augment(sample)
+        if self.transform:
+            sample = self.transform(sample)
+        
+        return sample, label
+    
+    def _load(self, data_path, n_files_to_pick):
+        """
+        important change from the other dataset:
+        1. scans all files from passed data path, selects subset of n_files_to_pick
+        2. loads as usual, joins into one output
+        """
+        import glob
+        data_paths = sorted(glob.glob(data_path + './*/X*.pt'))
+        score_paths = sorted(glob.glob(data_path + './*/y*.pt'))
+        subset_idxs = np.random.choice(len(data_paths), size = n_files_to_pick, replace = False)
+        
+        x_paths = [data_paths[idx] for idx in subset_idxs]
+        y_paths = [score_paths[idx] for idx in subset_idxs]
+        
+        if not (x_paths or y_paths):
+                raise RuntimeError(f"No X_*.pt or no y_*.pt found in folder: {data_path}")
+    
+        x_chunks = [torch.load(f).float() for f in x_paths]
+        X = torch.cat(x_chunks, dim=1)        # concat on sample dimension
+
+        if X.ndim == 3:
+            X = X.permute(1, 0, 2)            # [samples, channels, win_len]
+
+        self.all_samples = X
+        print(f"Loaded {len(x_paths)} X files: {X.shape}")
+
+        y_chunks = [torch.load(f).long() for f in y_paths]
+        #chunk state dimensions are 1channel, samples, win_len
+        Y = torch.cat(y_chunks, dim = 1) 
+        Y = Y.to(dtype = torch.long)
+        Y = Y.permute(1, 0, 2)
+        if Y.ndim == 3 and Y.size(1) == 1:
+            Y = Y[..., 0].squeeze(1)    #keep only the 1st state and collapse channel 
+        else:
+            print(f'error when loading states, ndim = {Y.ndim}, shape: {Y.size()}')
+            return        
+        self.all_labels = Y
+        print(f"Loaded y files, final y shape: {Y.shape}")        
+        return
+    
+    def _augment(self, x: torch.Tensor) -> torch.Tensor:
+        """randomly apply time series augmentations - noise, scale, time shift"""
+        x = x.clone()
+        
+        # Random noise
+        if random.random() < 0.7:
+            noise = torch.randn_like(x) * 0.01
+            x = x + noise
+        
+        # Random scaling
+        if random.random() < 0.5:
+            scale = 0.8 + random.random() * 0.4  # Scale between 0.8 and 1.2
+            x = x * scale
+        
+        # Random time shift
+        if random.random() < 0.5:
+            max_shift = int(x.shape[1] * 0.02)  # 2% of sequence length
+            shift = random.randint(-max_shift, max_shift)
+            if shift > 0:
+                x = torch.cat([x[:, shift:], x[:, :shift]], dim=0)
+            elif shift < 0:
+                x = torch.cat([x[:, shift:], x[:, :shift]], dim=0)
+        return x
+    
+    
+if __name__ == "__main__":
+    dataset = SleepTraining(
+        data_path = 'G:/oslo_data',
+        n_files_to_pick = 100,
+        random_state = 0,
+        device = 'cuda',
+        transform = None,
+        augment = False,
+        metadata = {'ecog_channels' : '1', 'emg_channels' : '2', 'sample_rate' : '250', 'ylim' : 'standard'}
+    )    

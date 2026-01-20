@@ -1,0 +1,197 @@
+import torch
+from torch.utils.data import DataLoader
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optim
+# load into SleepSignals
+#do scoring: launcher function 
+from scorer.data.loaders import SleepTraining
+from scorer.models.sleep_cnn import SleepCNN
+
+import numpy as np
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, accuracy_score, classification_report
+import matplotlib.pyplot as plt
+
+#helpers
+import tqdm
+from pathlib import Path
+
+def train_model(model, trainloader, optimizer, criterion, device = 'cuda', epochs = 20, save_n_epochs = None, save_path = None):
+    """
+    trains model
+    """
+    model.train()
+    
+    stop_criterion = 20
+    not_improved = 0
+    prev_loss = 9999
+    
+    losses = []
+    
+    for epoch in range(epochs):  #
+        running_loss = 0.0
+        
+        for i, data in enumerate(trainloader, 0):
+
+            sample, label = data
+            
+            # # zero the parameter gradients
+            optimizer.zero_grad()
+
+            # forward + backward + optimize
+            outputs = model(sample)
+            loss = criterion(outputs, label)
+            loss.backward()
+            optimizer.step()
+            
+            #early stopping if loss doesn't improve in 20 batches
+            if loss.item() >= prev_loss:
+                not_improved += 1
+                prev_loss = loss.item()
+            else:
+                not_improved = 0
+            
+            if not_improved >= stop_criterion:
+                print(f'stopped early at epoch {epoch}, iter {i}')
+                break
+
+            # print statistics
+            running_loss += loss.item()       
+            
+            if i % 200 == 199:    # print every 200 mini-batches
+                print(f'[{epoch + 1}, {i + 1:5d}] loss: {running_loss / 200:.3f}')
+                losses.append(running_loss / 200)
+                running_loss = 0.0
+        if save_n_epochs is not None:
+            if epoch % save_n_epochs == 0 and epoch > 1:
+                 torch.save(model, save_path / f'weights/sleepcnn_{epoch}_2026-01-19.pt')
+                
+    print('train done')
+    return losses
+
+def evaluate_model(model, testloader):
+    
+    total = 0
+    correct  = 0
+
+    all_preds = []
+    all_labels = []
+    maxprobs = []
+        
+    model.eval()
+    with torch.no_grad():
+        for i, data in tqdm.tqdm(enumerate(testloader)):
+            sample, label = data
+            outputs = model(sample)
+            probs = F.softmax(outputs, dim = 1)
+            _, pred = torch.max(outputs.data, 1)
+            total += label.size(0)
+            correct += (pred == label).sum().item()
+            
+            #to get final predictions
+            all_preds.extend(pred.to('cpu').numpy().tolist())
+            all_labels.extend(label.to('cpu').numpy().tolist())
+            probs, _ = torch.max(probs, 1)
+            maxprobs.extend(probs.to('cpu').numpy().tolist())
+            
+            if not i % 2000:
+                print(f'accuracy: {correct/total}')
+                
+    return all_labels, all_preds, maxprobs
+        
+def eval_plots(all_labels, all_preds, maxprobs, save_path):
+    statedict = {
+        0 : "Unlabeled",
+        1 : "Awake",
+        2 : "NREM",
+        3 : "IS",
+        4 : "REM"
+    }
+
+    im = plt.imshow(confusion_matrix(all_labels, all_preds))#could normalize also
+    cb = plt.colorbar(im)
+    plt.xlabel('prediction')
+    plt.ylabel('label')
+    plt.savefig(save_path / 'training_plots/conf_matrix.png')
+    plt.close()
+
+    #check "confidence" by state - plot maximum probability
+    fig, ax = plt.subplots(1, 5, figsize = (10, 3), sharex = True)
+
+    for state in (0, 1, 2, 3, 4):
+        stateprobs = np.array(maxprobs)[np.where(np.array(all_preds) == state)[0]]
+        ax[state].hist(stateprobs, alpha = 0.3)
+        ymin, ymax = ax[state].get_ylim()
+        ax[state].vlines(np.mean(stateprobs), ymin, ymax)
+        ax[state].set(xlabel = statedict[state])
+    fig.supxlabel("Confidence when predicting state")
+    plt.tight_layout()
+    plt.savefig(save_path / 'training_plots/state_confidence.png')
+    plt.close()
+
+    #[0-unlabeled, 1-AWAKE, 2-NREM, 3-IS, 4-REM]
+    print(classification_report(all_labels, all_preds, target_names = ["0-unlabeled", "1-AWAKE", "2-NREM", "3-IS", "4-REM"]))        
+
+
+if __name__ == "__main__":
+    
+    torch.set_grad_enabled(True)
+    
+    save_path = Path(r"C:\Users\marty\Projects\scorer\scorer\models")
+    
+    metadata = {'ecog_channels' : '1', 'emg_channels' : '2', 'sample_rate' : '250', 'ylim' : 'standard', 'device':'cuda'}
+    
+    #load dataset
+    dataset = SleepTraining(
+        data_path = 'G:/oslo_data',
+        n_files_to_pick = 400,
+        random_state = 0,
+        device = 'cuda',
+        transform = None,
+        augment = False,
+        metadata = metadata
+    )    
+    
+    #create dataloaders
+    
+    train_size = .8
+    test_size = .2
+    
+    lengths = [int(len(dataset) * train_size), int(len(dataset) * test_size)]
+    while sum(lengths) != len(dataset):
+        if sum(lengths) > len(dataset):
+            lengths[0] -= 1
+        elif sum(lengths) < len(dataset):
+            lengths[0] += 1
+            
+    train_set, val_set = torch.utils.data.random_split(dataset, lengths)
+    trainloader = DataLoader(train_set, batch_size = 64)
+    testloader = DataLoader(val_set, batch_size = 64)
+    num_classes = len(torch.unique(dataset.all_labels))
+    device = metadata.get('device', 'cuda')
+        
+    #create model
+    model = SleepCNN(num_classes = num_classes).to(device= device)
+    #crossentropy loss
+    criterion = nn.CrossEntropyLoss() # crossentropy for classification
+    # optimizer adam
+    optimizer = optim.Adam(model.parameters(),lr = 1e-3)
+       
+    #train 
+    losses = train_model(model, trainloader, optimizer, criterion, device = 'cuda', epochs = 200, save_n_epochs = 20, save_path = save_path)
+    #could add save every X epochs
+    
+    #should add save model, then load later if needed
+    torch.save(model, save_path / 'weights/sleepcnn2026-01-20.pt')
+    
+    #plot loss
+    plt.plot(losses)
+    plt.savefig(save_path / 'training_plots/loss.png')
+    plt.close()
+    
+    all_labels, all_preds, maxprobs = evaluate_model(model, testloader)
+    
+    print(accuracy_score(all_labels, all_preds))
+    
+    eval_plots(all_labels, all_preds, maxprobs, save_path)
+    #also augment the data later

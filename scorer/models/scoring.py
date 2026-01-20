@@ -1,5 +1,4 @@
 # code to do pre-trained scoring should go here
-
 # load into SleepSignals
 #do scoring: launcher function 
 from scorer.data.loaders import SleepSignals
@@ -10,6 +9,7 @@ import numpy as np
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, accuracy_score
 import matplotlib.pyplot as plt
 from pathlib import Path
+
 
 def score_signal(data_path, state_save_folder, meta, scorer_type = 'heuristic'):
     """
@@ -55,21 +55,20 @@ if __name__ == "__main__":
         spectral_features = None,
         metadata = {'ecog_channels' : '1', 'emg_channels' : '2', 'sample_rate' : '250', 'ylim' : 'standard'}
     )    
-        
     scorer = HeuristicScorer2(dataset)
     scorer.score()
     print(scorer)
-    
+
     save_pickled_states(np.array(scorer.states), save_path)
-    
+
     old_states = dataset.all_labels.cpu().numpy()
     print(np.unique(old_states, return_counts = True))
-    
+
     print(f'accuracy: {accuracy_score(old_states, scorer.states)}')
-    
+
     cm1 = confusion_matrix(old_states, scorer.states)
     print(cm1)
-    
+
     disp1 = ConfusionMatrixDisplay(cm1)
     disp1.plot()
     plt.show()
