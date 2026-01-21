@@ -37,10 +37,12 @@ class SleepSignals(Dataset):
         self.channel_ylims = []
         
         self._load(data_path, score_path)
-                
+        
         #move to device after loading        
         self.all_samples = self.all_samples.to(device)
         self.all_labels = self.all_labels.to(device)
+        
+        self.mean, self.std = self._compute_mean_std() 
         
         self.device = device
         self.transform = transform
@@ -241,6 +243,18 @@ class SleepSignals(Dataset):
         print('ylims in loaders.py', ylims)
         return ylims
     
+    def _compute_mean_std(self):
+            """
+            compute mean and std of dataset per-channel (8 vals each)
+            """
+            X = self.all_samples
+            mean = X.mean(dim=(0, 2))
+            std  = X.std(dim=(0, 2))
+            # avoid divide by zero/low val in later norm
+            std[std < 1e-8] = 1.0
+            
+            return mean, std
+    
     
 class SleepTraining(Dataset):
     """
@@ -256,7 +270,11 @@ class SleepTraining(Dataset):
           3:'IS',
           4:'REM'
     """
-    def __init__(self, data_path, random_state = 0, n_files_to_pick = 100, device = 'cuda', transform = None, augment = False, metadata: dict = {}) -> None:
+    def __init__(self, data_path, random_state = 0,
+                 n_files_to_pick = 100, device = 'cuda', 
+                 transform = None, augment = False,
+                 metadata: dict = {}, balance: str = "none", # "none" | "undersample" | "oversample") -> None:
+                 exclude_labels: tuple = ()):  
         
         torch.manual_seed(random_state)
 
@@ -266,10 +284,16 @@ class SleepTraining(Dataset):
         self.all_labels = None
         
         self._load(data_path, n_files_to_pick)
+        
+        if balance != "none":
+            self._balance_labels(balance=balance, exclude_labels=exclude_labels, seed=random_state)
+            self._remap_labels_to_contiguous()
                 
         #move to device after loading        
         self.all_samples = self.all_samples.to(device)
         self.all_labels = self.all_labels.to(device)
+        
+        self.mean, self.std = self._compute_mean_std() 
         
         self.device = device
         self.transform = transform
@@ -351,12 +375,107 @@ class SleepTraining(Dataset):
         if random.random() < 0.5:
             max_shift = int(x.shape[1] * 0.02)  # 2% of sequence length
             shift = random.randint(-max_shift, max_shift)
-            if shift > 0:
-                x = torch.cat([x[:, shift:], x[:, :shift]], dim=0)
-            elif shift < 0:
-                x = torch.cat([x[:, shift:], x[:, :shift]], dim=0)
+            x = torch.roll(x, shifts=shift, dims=1)
+            
         return x
     
+    def _compute_mean_std(self):
+            """
+            compute mean and std of dataset per-channel (8 vals each)
+            """
+            X = self.all_samples
+            mean = X.mean(dim=(0, 2))
+            std  = X.std(dim=(0, 2))
+            # avoid divide by zero/low val in later norm
+            std[std < 1e-8] = 1.0
+            
+            return mean, std
+        
+    def _balance_labels(self, balance="undersample", exclude_labels=(0,), seed=0):
+        """
+        balance: "undersample" (downsample to min class) or "oversample" (upsample to max class)
+        exclude_labels: labels to remove before balancing  (0 for unlabeled)
+        """
+        if balance not in ("undersample", "oversample"):
+            raise ValueError(f"balance must be 'undersample' or 'oversample', got {balance}")
+
+        # on CPU for indexing
+        labels = self.all_labels
+        if labels.is_cuda:
+            labels = labels.cpu()
+
+        # exclude labels
+        keep_mask = torch.ones_like(labels, dtype=torch.bool)
+        for lab in exclude_labels or ():
+            keep_mask &= (labels != lab)
+
+        keep_idx = torch.where(keep_mask)[0]
+        if keep_idx.numel() == 0:
+            raise RuntimeError("after excluding labels, no samples remain.")
+        labels_kept = labels[keep_idx]
+
+        # get idx per class
+        classes = torch.unique(labels_kept).tolist()
+        per_class = {}
+        for c in classes:
+            per_class[c] = keep_idx[torch.where(labels_kept == c)[0]]
+
+        counts = {c: int(per_class[c].numel()) for c in classes}
+        print("class counts before balance:", counts)
+
+        if balance == "undersample":
+            target = min(counts.values())
+            replace = False
+        else:  # oversample
+            target = max(counts.values())
+            replace = True
+
+        g = torch.Generator().manual_seed(seed)
+        balanced_idx = []
+        for c in classes:
+            idx_c = per_class[c]
+            if idx_c.numel() == 0:
+                continue
+            if replace:
+                # sample with replacement up to target
+                pick = idx_c[torch.randint(0, idx_c.numel(), (target,), generator=g)]
+            else:
+                # sample without replacement down to target
+                perm = idx_c[torch.randperm(idx_c.numel(), generator=g)[:target]]
+                pick = perm
+
+            balanced_idx.append(pick)
+        balanced_idx = torch.cat(balanced_idx)
+        # shuffle final set
+        balanced_idx = balanced_idx[torch.randperm(balanced_idx.numel(), generator=g)]
+
+        # Apply subset
+        self.all_samples = self.all_samples[balanced_idx]
+        self.all_labels = self.all_labels[balanced_idx]
+
+        # Print after
+        labels2 = self.all_labels
+        if labels2.is_cuda:
+            labels2 = labels2.cpu()
+        new_counts = {int(c): int((labels2 == c).sum()) for c in torch.unique(labels2)}
+        print("class counts after balance :", new_counts)
+        
+    def _remap_labels_to_contiguous(self):
+        # make labels 0..K-1
+        labels_cpu = self.all_labels.detach().cpu()
+        uniq = torch.unique(labels_cpu)
+        mapping = {int(old): i for i, old in enumerate(uniq.tolist())}
+
+        # vectorized remap
+        new = torch.empty_like(labels_cpu)
+        for old, new_id in mapping.items():
+            new[labels_cpu == old] = new_id
+
+        self.label_mapping = mapping          # e.g. {1:0, 2:1, 4:2}
+        self.inv_label_mapping = {v:k for k,v in mapping.items()}
+        self.all_labels = new.to(self.all_labels.device)
+
+        print("label remap:", self.label_mapping)
     
 if __name__ == "__main__":
     dataset = SleepTraining(

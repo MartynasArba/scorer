@@ -3,8 +3,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class SleepCNN(nn.Module):
-    def __init__(self, num_classes):
+    def __init__(self, num_classes: int, mean_std = None):
         super().__init__()             
+    
+        self.mean_std = mean_std if mean_std is not None else None  #standardize
+        
         # "Feature extraction"
         self.conv1 = nn.Conv1d(8, 16, kernel_size = 11, padding = 5)
         self.conv2 = nn.Conv1d(16, 32, kernel_size = 7, padding = 3)
@@ -23,7 +26,9 @@ class SleepCNN(nn.Module):
         
     def forward(self, x):
         
-        # x = x.permute(0, 2, 1) #not needed as loader is fixed
+        if self.mean_std is not None:
+            mean, std = self.mean_std
+            x = (x - mean[None, :, None]) / std[None, :, None]
         
         x = F.relu(self.conv1(x))
         x = self.pool(x)

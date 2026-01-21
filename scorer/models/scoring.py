@@ -3,13 +3,17 @@
 #do scoring: launcher function 
 from scorer.data.loaders import SleepSignals
 from scorer.models.heuristic_scorer import HeuristicScorer
-from scorer.models.heuristic_scorer_v2 import HeuristicScorer2
+# from scorer.models.heuristic_scorer_v2 import HeuristicScorer2
+from scorer.models.sleep_cnn import SleepCNN
 from scorer.data.storage import save_pickled_states
 import numpy as np
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, accuracy_score
 import matplotlib.pyplot as plt
 from pathlib import Path
-
+import torch
+from torch.utils.data import DataLoader
+import torch.nn.functional as F
+import tqdm
 
 def score_signal(data_path, state_save_folder, meta, scorer_type = 'heuristic'):
     """
@@ -21,23 +25,44 @@ def score_signal(data_path, state_save_folder, meta, scorer_type = 'heuristic'):
     state_save_folder is passed from GUI selection
     
     """
-    available_scorers = {'heuristic': HeuristicScorer}
+    available_scorers = {'heuristic': HeuristicScorer, 'CNN': SleepCNN}
     
     selected_scorer = available_scorers.get(scorer_type)
-    if selected_scorer is not None:
-        dataset = SleepSignals(data_path = data_path, 
-                               score_path = data_path, 
-                               device = meta.get('device', 'cpu'),
-                               transform = None,
-                               augment = False,
-                               spectral_features = None,
-                               metadata = meta)
+    
+    dataset = SleepSignals(data_path = data_path, 
+                        score_path = data_path, 
+                        device = meta.get('device', 'cpu'),
+                        transform = None,
+                        augment = False,
+                        spectral_features = None,
+                        metadata = meta)
+    
+    if selected_scorer == HeuristicScorer:
         scorer = selected_scorer(dataset)
         scorer.score()
         print(scorer)
         state_save_path = Path(state_save_folder) / str(meta.get('scoring_started', '') + '_' + meta.get('filename', '') + scorer_type + '_states.pkl')
         save_pickled_states(np.array(scorer.states), state_save_path)
         print(f'scoring done, states saved as {state_save_path}')
+        
+    elif selected_scorer == SleepCNN:
+        loader = DataLoader(dataset, batch_size = 64, shuffle = False)
+        #predict 
+        scorer = torch.load(r'C:\Users\marty\Projects\scorer\scorer\models\weights\sleepcnn2026-01-20.pt', weights_only= False)
+        all_preds = []
+        scorer.eval()
+        with torch.no_grad():
+            for i, data in tqdm.tqdm(enumerate(loader)):
+                sample, label = data
+                outputs = scorer(sample)
+                _, pred = torch.max(outputs.data, 1)
+                #to get final predictions
+                all_preds.extend(pred.to('cpu').numpy().tolist())
+                
+        state_save_path = Path(state_save_folder) / str(meta.get('scoring_started', '') + '_' + meta.get('filename', '') + scorer_type + '_states.pkl')
+        save_pickled_states(np.array(all_preds), state_save_path)
+        print(f'scoring done, states saved as {state_save_path}')
+
     else:
         print(f'unavailable scorer selected: {scorer_type}')
     
@@ -55,7 +80,7 @@ if __name__ == "__main__":
         spectral_features = None,
         metadata = {'ecog_channels' : '1', 'emg_channels' : '2', 'sample_rate' : '250', 'ylim' : 'standard'}
     )    
-    scorer = HeuristicScorer2(dataset)
+    scorer = HeuristicScorer(dataset)
     scorer.score()
     print(scorer)
 
