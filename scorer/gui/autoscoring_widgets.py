@@ -12,7 +12,7 @@ class AutoScoringWidget(QWidget):
         super().__init__()
         
         self.params = meta
-        available_models = ['select model', 'heuristic', 'CNN']
+        available_models = ['select model', 'heuristic', 'CNN', '3state_CNN']
         layout = QVBoxLayout(self)
         
         self.file_folder = '.'

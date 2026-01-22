@@ -20,7 +20,7 @@ class SleepCNN(nn.Module):
         # Global average pooling to reduce parameters after convolutions
         self.global_pool = nn.AdaptiveAvgPool1d(1)
         
-        # Smaller FC layers
+        # Smaller FC layers - classifier
         self.fc1 = nn.Linear(128, 64)
         self.fc2 = nn.Linear(64, num_classes)
         

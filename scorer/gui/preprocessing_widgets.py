@@ -162,7 +162,13 @@ class PreprocessWidget(QWidget):
                                     chunked = False, 
                                     overwrite = self.save_overwrite_check.isChecked(),
                                     testing = False)
-    
+                    
+                #fix sample rate if resampling in the end
+                if self.resample_check.isChecked():
+                    self.params['preprocessing']+= ['resampling']
+                    self.params['old_sample_rate'] = self.params['sample_rate']
+                    self.params['sample_rate'] = int(self.sr_field.text())
+            
             else:
                 times = (None, None)
                 if self.timechop_check.isChecked():
@@ -203,6 +209,11 @@ class PreprocessWidget(QWidget):
                                     chunk_id = i,
                                     overwrite = self.save_overwrite_check.isChecked(),
                                     testing = False)
+                #if resampling, fix metadata
+                if self.resample_check.isChecked():
+                    self.params['preprocessing']+= ['resampling']
+                    self.params['old_sample_rate'] = self.params['sample_rate']
+                    self.params['sample_rate'] = int(self.sr_field.text())
                         
         meta_path = self.params.get('metadata_path', None)
         if meta_path is None:
@@ -234,11 +245,6 @@ class PreprocessWidget(QWidget):
         
         self.params['preprocessing'] = []
         ecog, emg = ecog.T, emg.T       #torch usually requires channels x time
-        
-        if self.resample_check.isChecked():
-            print(f'before resampling: {ecog.size()}')
-            ecog, emg = self._resample(ecog, emg)   #should be fine here still
-            print(f'after resampling: {ecog.size()}')
             
         if ((self.filter_check.isChecked() | self.emg_filter_check.isChecked()) | self.notch_check.isChecked() | 
             self.calculate_band_power_check.isChecked() | self.calculate_sum_power_check.isChecked()) & (not self.chunk_check.isChecked()):
@@ -299,6 +305,11 @@ class PreprocessWidget(QWidget):
         else:
             bands = {None : None}        
         
+        if self.resample_check.isChecked(): #this has to be at the end as sample rate only gets overwritten after preprocessing, so filters need to use old sample rate
+            print(f'before resampling: {ecog.size()}')
+            ecog, emg = self._resample(ecog, emg)   #should be fine here still
+            print(f'after resampling: {ecog.size()}')
+        
         print('preprocessing done')
         self.label.setText('preprocessing done')
         
@@ -312,11 +323,14 @@ class PreprocessWidget(QWidget):
         
         sample_rate = float(self.params.get('sample_rate', 250))
         new_rate = int(self.sr_field.text())
-        self.params['preprocessing']+= ['resampling']
-        self.params['old_sample_rate'] = self.params['sample_rate']
-        self.params['sample_rate'] = new_rate
+        
+        if sample_rate == new_rate:
+            print('not resampling: old sr = new sr')
+            return ecog, emg
+        
         ecog = resample(ecog.contiguous(), sample_rate, new_rate)
         emg = resample(emg.contiguous(), sample_rate, new_rate)
+        
         return ecog, emg
         
     def _bandpass(self, signal, freqs):

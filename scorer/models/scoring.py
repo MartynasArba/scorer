@@ -25,7 +25,7 @@ def score_signal(data_path, state_save_folder, meta, scorer_type = 'heuristic'):
     state_save_folder is passed from GUI selection
     
     """
-    available_scorers = {'heuristic': HeuristicScorer, 'CNN': SleepCNN}
+    available_scorers = {'heuristic': HeuristicScorer, 'CNN': SleepCNN, '3state_CNN': SleepCNN}
     
     selected_scorer = available_scorers.get(scorer_type)
     
@@ -45,10 +45,10 @@ def score_signal(data_path, state_save_folder, meta, scorer_type = 'heuristic'):
         save_pickled_states(np.array(scorer.states), state_save_path)
         print(f'scoring done, states saved as {state_save_path}')
         
-    elif selected_scorer == SleepCNN:
+    elif scorer_type == 'CNN':
         loader = DataLoader(dataset, batch_size = 64, shuffle = False)
         #predict 
-        scorer = torch.load(r'C:\Users\marty\Projects\scorer\scorer\models\weights\sleepcnn2026-01-20.pt', weights_only= False)
+        scorer = torch.load(r'C:\Users\marty\Projects\scorer\scorer\models\weights\sleepcnn2026-01-21-1.pt', weights_only= False)
         all_preds = []
         scorer.eval()
         with torch.no_grad():
@@ -58,9 +58,32 @@ def score_signal(data_path, state_save_folder, meta, scorer_type = 'heuristic'):
                 _, pred = torch.max(outputs.data, 1)
                 #to get final predictions
                 all_preds.extend(pred.to('cpu').numpy().tolist())
+        #now reset states to include 0 - shift by 1
+        all_preds = np.array(all_preds) + 1
                 
         state_save_path = Path(state_save_folder) / str(meta.get('scoring_started', '') + '_' + meta.get('filename', '') + scorer_type + '_states.pkl')
-        save_pickled_states(np.array(all_preds), state_save_path)
+        save_pickled_states(all_preds, state_save_path)
+        print(f'scoring done, states saved as {state_save_path}')
+        
+    elif scorer_type == '3state_CNN':
+        loader = DataLoader(dataset, batch_size = 64, shuffle = False)
+        #predict 
+        scorer = torch.load(r'C:\Users\marty\Projects\scorer\scorer\models\weights\sleepcnn2026-01-20-3.pt', weights_only= False)
+        all_preds = []
+        scorer.eval()
+        with torch.no_grad():
+            for i, data in tqdm.tqdm(enumerate(loader)):
+                sample, label = data
+                outputs = scorer(sample)
+                _, pred = torch.max(outputs.data, 1)
+                #to get final predictions
+                all_preds.extend(pred.to('cpu').numpy().tolist())
+        #now reset states to include 0 - shift by 1, then reset REM to 4
+        all_preds = np.array(all_preds) + 1
+        all_preds[all_preds == 3] = 4    
+            
+        state_save_path = Path(state_save_folder) / str(meta.get('scoring_started', '') + '_' + meta.get('filename', '') + scorer_type + '_states.pkl')
+        save_pickled_states(all_preds, state_save_path)
         print(f'scoring done, states saved as {state_save_path}')
 
     else:

@@ -363,12 +363,12 @@ class SleepTraining(Dataset):
         
         # Random noise
         if random.random() < 0.7:
-            noise = torch.randn_like(x) * 0.01
+            noise = torch.randn_like(x) * 0.2       #CHANGED FROM 0.01
             x = x + noise
         
         # Random scaling
         if random.random() < 0.5:
-            scale = 0.8 + random.random() * 0.4  # Scale between 0.8 and 1.2
+            scale = 0.5 + random.random() * 1.0 # Scale between 0.8 and 1.2 #CHANGED FROM 0.8, 0.4
             x = x * scale
         
         # Random time shift

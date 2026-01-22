@@ -130,7 +130,7 @@ def eval_plots(all_labels, all_preds, maxprobs, save_path):
     plt.close()
 
     #[0-unlabeled, 1-AWAKE, 2-NREM, 3-IS, 4-REM]
-    print(classification_report(all_labels, all_preds, target_names = ["1-AWAKE", "2-NREM", "4-REM"]))        #"0-unlabeled", "3-IS", 
+    print(classification_report(all_labels, all_preds, target_names = ["1-AWAKE", "2-NREM", "3-IS", "4-REM"]))        #"0-unlabeled", "3-IS", 
 
 
 if __name__ == "__main__":
@@ -151,7 +151,7 @@ if __name__ == "__main__":
         augment = True,
         metadata = metadata, 
         balance = 'oversample',
-        exclude_labels = (0, 3)
+        exclude_labels = (0,)#add labels to exclude here
     )    
     
     #create dataloaders
@@ -172,31 +172,31 @@ if __name__ == "__main__":
     num_classes = len(torch.unique(dataset.all_labels))
     device = metadata.get('device', 'cuda')
     
-    model_name = 'weights/sleepcnn2026-01-20-3.pt'
+    model_name = 'weights/sleepcnn2026-01-21-1.pt'
         
-    # #create model
-    # model = SleepCNN(num_classes = num_classes, mean_std = (dataset.mean, dataset.std)).to(device= device)
-    # #crossentropy loss
-    # criterion = nn.CrossEntropyLoss() # crossentropy for classification
-    # # optimizer adam
-    # optimizer = optim.Adam(model.parameters(),lr = 1e-3)
+    #create model
+    model = SleepCNN(num_classes = num_classes, mean_std = (dataset.mean, dataset.std)).to(device= device)
+    #crossentropy loss
+    criterion = nn.CrossEntropyLoss() # crossentropy for classification
+    # optimizer adam
+    optimizer = optim.Adam(model.parameters(),lr = 1e-3)
        
-    # #train 
-    # losses = train_model(model, trainloader, optimizer, criterion, device = 'cuda', epochs = 200, save_n_epochs = 20, save_path = save_path)
-    # #could add save every X epochs
+    #train 
+    losses = train_model(model, trainloader, optimizer, criterion, device = 'cuda', epochs = 200, save_n_epochs = 20, save_path = save_path)
+    #could add save every X epochs
     
-    # #should add save model, then load later if needed
-    # torch.save(model, save_path / model_name)
+    #should add save model, then load later if needed
+    torch.save(model, save_path / model_name)
           
-    # #plot loss
-    # plt.plot(losses)
-    # plt.savefig(save_path / 'training_plots/loss.png')
-    # plt.close()
+    #plot loss
+    plt.plot(losses)
+    plt.savefig(save_path / 'training_plots/loss.png')
+    plt.close()
     
     #3 cat to 5 cat
     #5 cat to 3 cat
     
-    model = torch.load(save_path / model_name, weights_only= False)
+    # model = torch.load(save_path / model_name, weights_only= False)
     
     all_labels, all_preds, maxprobs = evaluate_model(model, testloader)
     
