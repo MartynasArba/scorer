@@ -274,7 +274,8 @@ class SleepTraining(Dataset):
                  n_files_to_pick = 100, device = 'cuda', 
                  transform = None, augment = False,
                  metadata: dict = {}, balance: str = "none", # "none" | "undersample" | "oversample") -> None:
-                 exclude_labels: tuple = ()):  
+                 exclude_labels: tuple = (), 
+                 merge_nrem: bool = False):  
         
         torch.manual_seed(random_state)
 
@@ -284,6 +285,9 @@ class SleepTraining(Dataset):
         self.all_labels = None
         
         self._load(data_path, n_files_to_pick)
+        
+        if merge_nrem:
+            self.all_labels[self.all_labels == 3] = 2
         
         if balance != "none":
             self._balance_labels(balance=balance, exclude_labels=exclude_labels, seed=random_state)
@@ -363,12 +367,12 @@ class SleepTraining(Dataset):
         
         # Random noise
         if random.random() < 0.7:
-            noise = torch.randn_like(x) * 0.2       #CHANGED FROM 0.01
+            noise = torch.randn_like(x) * 0.1       #CHANGED FROM 0.01
             x = x + noise
         
         # Random scaling
         if random.random() < 0.5:
-            scale = 0.5 + random.random() * 1.0 # Scale between 0.8 and 1.2 #CHANGED FROM 0.8, 0.4
+            scale = 0.8 + random.random() * 0.4 # Scale between 0.8 and 1.2 #CHANGED FROM 0.8, 0.4
             x = x * scale
         
         # Random time shift

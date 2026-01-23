@@ -1,8 +1,10 @@
 #implements preprocessing + chop_by_state without GUI to generate a dataset for training/testing models
 
 from scorer.data.preprocessing import bandpass_filter, sum_power, band_powers
-from scorer.data.storage import load_from_csv_in_chunks, save_windowed_for_testing
+from scorer.data.storage import load_from_csv_in_chunks, save_windowed_for_testing, load_from_csv
 from pathlib import Path
+
+from pyedflib import highlevel
 
 def run_default_preprocessing(csv_path) -> None:
         """
@@ -41,6 +43,7 @@ def run_default_preprocessing(csv_path) -> None:
                                               overwrite = True)
                 else:           
                     print('not implemented')      
+                    
         
 def _bandpass(signal, freqs, metadata):
         """
@@ -82,15 +85,38 @@ def _preprocess(ecog, emg, metadata):
         print('preprocessing done')
         return (ecog, emg, ecog_power, emg_power) + tuple(bands.values())
     
+def raw_to_edf(csv_path):
+    """ go from raw csv with default preprocessing to edf, to test intelliscorer """
+    if csv_path is not None:
+        out_path = Path(csv_path).with_suffix('.edf')
+        
+        metadata = {'time_channel': '3',
+                    'ecog_channels':'0',
+                    'emg_channels':'2',
+                    'device':'cuda',
+                    'sample_rate':'1000'
+                    }
+        ecog, emg, _ = load_from_csv(csv_path, metadata = metadata)
+        tensor_seq = _preprocess(ecog, emg, metadata)
+        ecog, emg = tensor_seq[0].detach().cpu().numpy(), tensor_seq[1].detach().cpu().numpy()
+        
+        names = ['EEG', 'EMG']
+        signal_headers = highlevel.make_signal_headers(names, sample_frequency= int(metadata.get('sample_rate', 1000)))
+        header = highlevel.make_header()
+        highlevel.write_edf(str(out_path), [ecog, emg], signal_headers, header)
+        
 if __name__ == "__main__":
     # import torch
+    
+    raw_to_edf(r'g:\sleep-ecog-DOWNSAMPLED\20251124-1_g0_t0.obx0.obx_box1.csv')
+    
 # converts whole folder to windows for ml
-    import glob
-    import tqdm
-    paths = glob.glob(r'G:\oslo_data\*.csv')
-    for i, path in enumerate(tqdm.tqdm(paths)):
-        print(i, path)
-        run_default_preprocessing(path)
+    # import glob
+    # import tqdm
+    # paths = glob.glob(r'G:\oslo_data\*.csv')
+    # for i, path in enumerate(tqdm.tqdm(paths)):
+    #     print(i, path)
+    #     run_default_preprocessing(path)
 # let's try checking whether states were actually saved
 #open one file, check shapes, check unique values in states
     # val_path = r"G:\oslo_data\windowed_trial_1_mouse_b1aqm2\X_trial_1_mouse_b1aqm2_chunk0.pt"

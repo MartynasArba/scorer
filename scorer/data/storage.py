@@ -455,18 +455,19 @@ def load_from_csv(path: str, metadata: dict = None, states: int = None, times = 
     metadata['rec_start'] = start_time
     
     #get line_start, line_end if start and end times are passed
-    if any(times):
+    if (times[0] is not None) and (times[1] is not None):
         line_start, line_end = __get_num_lines(start_time, times, sr = sample_rate)
-        
-    #now both need to exist
-    if isinstance(line_start, int) & isinstance(line_end, int):    
-        #update metadata to reflect cut
-        recstart_dt = pd.to_datetime(start_time)
-        newstart_dt = pd.to_datetime(times[0])
-        if newstart_dt.time() > recstart_dt.time(): #unless start is 0, then keep old
-            metadata['rec_start'] = str(recstart_dt.replace(hour = newstart_dt.hour, minute= newstart_dt.minute, second= newstart_dt.second, microsecond= newstart_dt.microsecond).isoformat())
-            print(f'updated rec_start: {metadata['rec_start']}')
-        data = pd.read_csv(path, skiprows = line_start, nrows= (line_end - line_start))
+        #now both need to exist
+        if isinstance(line_start, int) & isinstance(line_end, int):    
+            #update metadata to reflect cut
+            recstart_dt = pd.to_datetime(start_time)
+            newstart_dt = pd.to_datetime(times[0])
+            if newstart_dt.time() > recstart_dt.time(): #unless start is 0, then keep old
+                metadata['rec_start'] = str(recstart_dt.replace(hour = newstart_dt.hour, minute= newstart_dt.minute, second= newstart_dt.second, microsecond= newstart_dt.microsecond).isoformat())
+                print(f'updated rec_start: {metadata['rec_start']}')
+            data = pd.read_csv(path, skiprows = line_start, nrows= (line_end - line_start))
+        else:
+            raise ValueError('pass two numbers when clipping time!')
     else:
         data = pd.read_csv(path)  
         
@@ -512,7 +513,7 @@ def load_from_csv_in_chunks(path: str, metadata: dict = None, states: int = None
     metadata['rec_start'] = start_time
     
     #get line_start, line_end if start and end times are passed
-    if any(times):
+    if (times[0] is not None) and (times[1] is not None):
         line_start, line_end = __get_num_lines(start_time, times, sr = sample_rate)
         
         #now both need to exist

@@ -6,7 +6,8 @@ import torch.optim as optim
 # load into SleepSignals
 #do scoring: launcher function 
 from scorer.data.loaders import SleepTraining
-from scorer.models.sleep_cnn import SleepCNN
+from scorer.models.sleep_cnn import SleepCNN, EphysSleepCNN, FreqSleepCNN
+
 
 import numpy as np
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, accuracy_score, classification_report
@@ -130,7 +131,7 @@ def eval_plots(all_labels, all_preds, maxprobs, save_path):
     plt.close()
 
     #[0-unlabeled, 1-AWAKE, 2-NREM, 3-IS, 4-REM]
-    print(classification_report(all_labels, all_preds, target_names = ["1-AWAKE", "2-NREM", "3-IS", "4-REM"]))        #"0-unlabeled", "3-IS", 
+    print(classification_report(all_labels, all_preds, target_names = ["1-AWAKE", "2-NREM", "3-IS", "4-REM"]))        #"0-unlabeled",
 
 
 if __name__ == "__main__":
@@ -151,7 +152,8 @@ if __name__ == "__main__":
         augment = True,
         metadata = metadata, 
         balance = 'oversample',
-        exclude_labels = (0,)#add labels to exclude here
+        exclude_labels = (0,),#add labels to exclude here
+        merge_nrem = True
     )    
     
     #create dataloaders
@@ -172,18 +174,17 @@ if __name__ == "__main__":
     num_classes = len(torch.unique(dataset.all_labels))
     device = metadata.get('device', 'cuda')
     
-    model_name = 'weights/sleepcnn2026-01-21-1.pt'
+    model_name = 'weights/sleepcnn2026-01-23-4.pt'
         
     #create model
-    model = SleepCNN(num_classes = num_classes, mean_std = (dataset.mean, dataset.std)).to(device= device)
+    model = SleepCNN(num_classes = num_classes).to(device= device)#SleepCNN / FreqSleepCNN / EphysSleepCNN to use all features, mean_std = (dataset.mean, dataset.std) to standardize inputs
     #crossentropy loss
     criterion = nn.CrossEntropyLoss() # crossentropy for classification
     # optimizer adam
     optimizer = optim.Adam(model.parameters(),lr = 1e-3)
        
     #train 
-    losses = train_model(model, trainloader, optimizer, criterion, device = 'cuda', epochs = 200, save_n_epochs = 20, save_path = save_path)
-    #could add save every X epochs
+    losses = train_model(model, trainloader, optimizer, criterion, device = 'cuda', epochs = 100, save_n_epochs = 20, save_path = save_path)
     
     #should add save model, then load later if needed
     torch.save(model, save_path / model_name)

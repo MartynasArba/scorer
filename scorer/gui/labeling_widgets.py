@@ -52,7 +52,11 @@ class SleepGUI(QWidget):
         self.spect_img = None
         self.spect_canvas = None
         
+        self._mouse_canvas = None
+        self._mouse_cids = []
+        
         self.show_all_scorers = False
+        self.active_label_value = 0 #for mouse labeling, tracks current label ID, defaults to 0
 
         # data tracking
         self.dataset = dataset
@@ -70,7 +74,7 @@ class SleepGUI(QWidget):
 
         # annotation array and settings
         self.states = np.array([], dtype=int)
-        self.label_whole_screen = False
+        # self.label_whole_screen = False
         self.passive_scorers = {}   #other scorers that are displayed but can't be interacted with. name:state_arr structure
 
         # small cache for last requested window (idx, scale)
@@ -172,9 +176,9 @@ class SleepGUI(QWidget):
         self.labeling_group.setExclusive(True)
         self.labeling_group.buttonClicked[int].connect(self.label_data)
 
-        whole_screen_check = QCheckBox("Label the whole screen?")
-        whole_screen_check.stateChanged.connect(self.label_screen_toggle)
-        self.labeling_layout.addWidget(whole_screen_check)
+        # whole_screen_check = QCheckBox("Label the whole screen?")
+        # whole_screen_check.stateChanged.connect(self.label_screen_toggle)
+        # self.labeling_layout.addWidget(whole_screen_check)
         
         all_scorers_check = QCheckBox("Show all loaded scorers?")
         all_scorers_check.stateChanged.connect(self.show_all_scorers_toggle)
@@ -190,7 +194,7 @@ class SleepGUI(QWidget):
         slider_layout.addWidget(self.yscale_label)
         slider_layout.addWidget(self.slider_yscale)
 
-        self.slider_frame = QSlider(value=0, minimum=0, maximum=max(0, self._len_dataset - 1), singleStep=1)
+        self.slider_frame = QSlider(value=0, minimum=0, maximum=max(0, self._len_dataset - 1), singleStep=1, pageStep = 8)
         self.slider_frame.setOrientation(QtCore.Qt.Horizontal)
         self.slider_frame.setTracking(False)
         self.slider_frame.valueChanged.connect(self.frame_slider_func)
@@ -286,6 +290,12 @@ class SleepGUI(QWidget):
         self.spect_ax = None
         self.spect_img = None
         self.spect_canvas = None
+        
+        self._mouse_canvas = None
+        self._mouse_cids = []
+        self._dragging = False
+        self._drag_x0 = None
+        self._drag_preview = None
 
         self._plot_cache = {"idx": None, "scale": None, "sample": None, "label": None}
 
@@ -351,23 +361,198 @@ class SleepGUI(QWidget):
 
     # LABELING
     def label_data(self, value) -> None:
-        if self.label_whole_screen:
-            end = min(self.current_idx + self.scale, self._len_dataset)
-            self.states[self.current_idx:end] = value
-        else:
-            self.states[self.current_idx] = value
-        #clear cache
-        self._plot_cache["label"] = None
-        self._plot_cache["idx"] = None
-        self.update_screen()
+        
+        self.active_label_value = value # update mouse val
+        #this is commented out as controlls clash with mouse. Mouse is more convenient, so keeping it
+                
+        # if self.label_whole_screen:
+        #     end = min(self.current_idx + self.scale, self._len_dataset)
+        #     self.states[self.current_idx:end] = value
+        # else:
+        #     self.states[self.current_idx] = value
+        # #clear cache
+        # self._plot_cache["label"] = None
+        # self._plot_cache["idx"] = None
+        # self.update_screen()
 
-    def label_screen_toggle(self) -> None:
-        self.label_whole_screen = not self.label_whole_screen
+    # def label_screen_toggle(self) -> None:
+    #     self.label_whole_screen = not self.label_whole_screen
     
     def show_all_scorers_toggle(self) -> None:
         self.show_all_scorers = not self.show_all_scorers
         self.update_screen()
+        
+    #MOUSE CONTROLLS
+        
+    def _install_mouse_labeling(self):
+        """connect mouse controls to the current signal_canvas"""
+        if self.signal_canvas is None:
+            return
 
+        # disconnect from old canvas if it changed
+        if self._mouse_canvas is not None and self._mouse_canvas is not self.signal_canvas:
+            try:
+                for cid in self._mouse_cids:
+                    self._mouse_canvas.mpl_disconnect(cid)
+            except Exception:
+                pass
+            self._mouse_cids = []
+
+        # already connected to this canvas
+        if self._mouse_canvas is self.signal_canvas and self._mouse_cids:
+            return
+        
+        #connect
+        self._mouse_canvas = self.signal_canvas
+        self._mouse_cids = [
+            self.signal_canvas.mpl_connect("button_press_event", self._on_mouse_press),
+            self.signal_canvas.mpl_connect("motion_notify_event", self._on_mouse_move),
+            self.signal_canvas.mpl_connect("button_release_event", self._on_mouse_release),
+        ]
+
+        # reset drag state
+        self._dragging = False
+        self._drag_x0 = None
+        self._drag_preview = None    
+        
+    def _x_to_global_frame(self, x_seconds: float) -> int:
+        """converts mouse x to frame ID"""
+        if x_seconds is None or self._len_dataset == 0:
+            return self.current_idx
+        #window goes from 0 to scale * frame_duration s
+        win_offset = int(math.floor(x_seconds / max(self.frame_duration_s, 1e-9)))
+        win_offset = max(0, min(win_offset, self.scale - 1))
+        
+        sel_window = self.current_idx + win_offset
+        sel_window = max(0, min(sel_window, self._len_dataset - 1))
+        return sel_window
+    
+    def _frames_to_x_span(self, i0: int, i1: int) -> tuple[float, float]:
+        """        
+        converts frame indices to x-span in seconds within current window
+        returns (x_start, x_end) in seconds for preview shading
+        """
+        # clamp to current window
+        w0 = self.current_idx
+        w1 = min(self.current_idx + self.scale - 1, self._len_dataset - 1)
+
+        i0 = max(w0, min(i0, w1))
+        i1 = max(w0, min(i1, w1))
+        if i1 < i0:
+            i0, i1 = i1, i0
+
+        # local frame offsets
+        l0 = i0 - self.current_idx
+        l1 = i1 - self.current_idx
+
+        x0 = l0 * self.frame_duration_s
+        x1 = (l1 + 1) * self.frame_duration_s  # end at end of last frame
+        return x0, x1
+       
+    def _on_mouse_press(self, event):
+        if event.button != 1:
+            return
+        if event.inaxes is None:
+            return
+        if self.signal_axs is None or len(self.signal_axs) == 0:
+            return
+
+        label_ax = self.signal_axs[-1]
+        if event.inaxes != label_ax:
+            return
+
+        self._dragging = True
+        self._drag_x0 = event.xdata
+
+        # remove old preview
+        if getattr(self, "_drag_preview", None) is not None:
+            try:
+                self._drag_preview.remove()
+            except Exception:
+                pass
+            self._drag_preview = None
+
+        x0 = float(event.xdata) if event.xdata is not None else 0.0
+        #gives a tiny non-zero width so it’s a rectangle
+        self._drag_preview = label_ax.axvspan(x0, x0 + 1e-9, alpha=0.2)
+        self.signal_canvas.draw_idle()
+
+
+    def _on_mouse_move(self, event):
+        if not getattr(self, "_dragging", False):
+            return
+        if event.inaxes is None:
+            return
+        if self.signal_axs is None or len(self.signal_axs) == 0:
+            return
+
+        label_ax = self.signal_axs[-1]
+        if event.inaxes != label_ax:
+            return
+
+        if self._drag_x0 is None or event.xdata is None:
+            return
+        if getattr(self, "_drag_preview", None) is None:
+            return
+
+        x0 = float(self._drag_x0)
+        x1 = float(event.xdata)
+        left = min(x0, x1)
+        right = max(x0, x1)
+
+        try:
+            self._drag_preview.set_x(left)
+            self._drag_preview.set_width(max(right - left, 1e-12))
+        except Exception:
+            # fallback: recreate preview if patch type isn't compatible
+            try:
+                self._drag_preview.remove()
+            except Exception:
+                pass
+            self._drag_preview = label_ax.axvspan(left, right, alpha=0.2)
+
+        self.signal_canvas.draw_idle()
+
+
+    def _on_mouse_release(self, event):
+        if not getattr(self, "_dragging", False):
+            return
+        self._dragging = False
+
+        if self.signal_axs is None or len(self.signal_axs) == 0:
+            return
+
+        # remove preview
+        if getattr(self, "_drag_preview", None) is not None:
+            try:
+                self._drag_preview.remove()
+            except Exception:
+                pass
+            self._drag_preview = None
+
+        x0 = self._drag_x0
+        self._drag_x0 = None
+
+        if x0 is None:
+            self.signal_canvas.draw_idle()
+            return
+
+        x1 = event.xdata if (event is not None and event.xdata is not None) else x0
+
+        # map to global frame indices
+        i0 = self._x_to_global_frame(x0)
+        i1 = self._x_to_global_frame(x1)
+        if i1 < i0:
+            i0, i1 = i1, i0
+
+        val = int(getattr(self, "active_label_value", 0))
+        self.states[i0:i1 + 1] = val
+
+        self._plot_cache["label"] = None
+        self._plot_cache["idx"] = None
+        self.update_screen()
+
+        
     # UPDATE UI
     def update_screen(self) -> None:
         if self._updating:
@@ -453,6 +638,8 @@ class SleepGUI(QWidget):
             self.signal_canvas.updateGeometry()
             self.canvas_layout.addWidget(self.signal_canvas)
             # self.signal_fig.tight_layout()
+            #also add mouse labeling from signalcanvas
+            self._install_mouse_labeling()
             
         # convert scorer label arrays for the visible window
         scorer_window_labels = {}
@@ -528,7 +715,12 @@ class SleepGUI(QWidget):
             filter = "Pickle files (*.pkl)"
         )
         if file_name:
-            self.states = load_pickled_states(file_name)
+            loaded = load_pickled_states(file_name)
+            self.states = np.array(loaded, dtype=int)
+            
+            if self._len_dataset and len(self.states) != self._len_dataset:
+                self.status_label.setText("Loaded states length does not match dataset!")
+                print("Loaded states length does not match dataset!")
             self.update_screen()
             
     def load_passive_scorer(self) -> None:
@@ -632,7 +824,7 @@ class SleepGUI(QWidget):
         self.yscale = 1.0
         self.ylims = [(center, spread * self.yscale) for center, spread in self.ylim_defaults]    #explicit copy
         
-        self.label_whole_screen = False
+        # self.label_whole_screen = False
         self._plot_cache = {"idx": None, "scale": None, "sample": None, "label": None}
         self.passive_scorers.clear()
         self.reset_scorers()
@@ -668,6 +860,12 @@ class SleepGUI(QWidget):
         self.spect_ax = None
         self.spect_img = None
         
+        #clear mouse canvas and params
+        self._mouse_canvas = None
+        self._mouse_cids = []
+        self._dragging = False
+        self._drag_x0 = None
+        self._drag_preview = None
         
 def _parse_iso(ts: str) -> datetime:
     """
