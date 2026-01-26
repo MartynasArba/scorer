@@ -1,5 +1,6 @@
 #custom funcs for reading onebox files 
-# a lot comes from https://github.com/jenniferColonell/SpikeGLX_Datafile_Tools/
+# the majority of logic comes from https://github.com/jenniferColonell/SpikeGLX_Datafile_Tools/
+
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -11,15 +12,16 @@ import os
 from itertools import islice
 import matplotlib.pyplot as plt
 
-# Parse ini file returning a dictionary whose keys are the metadata
-# left-hand-side-tags, and values are string versions of the right-hand-side
-# metadata values. We remove any leading '~' characters in the tags to match
-# the MATLAB version of readMeta.
-#
-# The string values are converted to numbers using the "int" and "float"
-# functions. Note that python 3 has no size limit for integers.
-#
-def readMeta(binFullPath):
+def readMeta(binFullPath: str) -> dict:
+    """
+    Parse ini file returning a dictionary whose keys are the metadata
+    left-hand-side-tags, and values are string versions of the right-hand-side
+    metadata values. We remove any leading '~' characters in the tags to match
+    the MATLAB version of readMeta.
+
+    The string values are converted to numbers using the "int" and "float"
+    functions. Note that python 3 has no size limit for integers.
+    """
     metaName = binFullPath.stem + ".meta"
     metaPath = Path(binFullPath.parent / metaName)
     metaDict = {}
@@ -40,11 +42,13 @@ def readMeta(binFullPath):
     return(metaDict)
 
 
-# Return sample rate as python float.
-# On most systems, this will be implemented as C++ double.
-# Use python command sys.float_info to get properties of float on your system.
 #
-def SampRate(meta):
+def SampRate(meta: dict) -> float:
+    """
+    Return sample rate as python float.
+    On most systems, this will be implemented as C++ double.
+    Use python command sys.float_info to get properties of float on your system.
+    """
     if meta['typeThis'] == 'obx':
         srate = float(meta['obSampRate'])
     elif meta['typeThis'] == 'imec':
@@ -54,17 +58,16 @@ def SampRate(meta):
     else:
         print('Error: unknown stream type')
         srate = 1
-        
     return(srate)
 
-
-# Return a multiplicative factor for converting 16-bit file data
-# to voltage. This does not take gain into account. The full
-# conversion with gain is:
-#         dataVolts = dataInt * fI2V / gain
-# Note that each channel may have its own gain.
-#
-def Int2Volts(meta):
+def Int2Volts(meta: dict) -> float:
+    """
+    Return a multiplicative factor for converting 16-bit file data
+    to voltage. This does not take gain into account. The full
+    conversion with gain is:
+            dataVolts = dataInt * fI2V / gain
+    Note that each channel may have its own gain.   
+    """
     if meta['typeThis'] == 'imec':
         if 'imMaxInt' in meta:
             maxInt = int(meta['imMaxInt'])
@@ -80,19 +83,18 @@ def Int2Volts(meta):
     else:
         print('Error: unknown stream type')
         fI2V = 1
-        
     return(fI2V)
 
-
-# Return array of original channel IDs. As an example, suppose we want the
-# imec gain for the ith channel stored in the binary data. A gain array
-# can be obtained using ChanGainsIM(), but we need an original channel
-# index to do the lookup. Because you can selectively save channels, the
-# ith channel in the file isn't necessarily the ith acquired channel.
-# Use this function to convert from ith stored to original index.
-# Note that the SpikeGLX channels are 0 based.
-#
-def OriginalChans(meta):
+def OriginalChans(meta: dict) -> np.ndarray:
+    """
+    Return array of original channel IDs. As an example, suppose we want the
+    imec gain for the ith channel stored in the binary data. A gain array
+    can be obtained using ChanGainsIM(), but we need an original channel
+    index to do the lookup. Because you can selectively save channels, the
+    ith channel in the file isn't necessarily the ith acquired channel.
+    Use this function to convert from ith stored to original index.
+    Note that the SpikeGLX channels are 0 based.
+    """
     if meta['snsSaveChanSubset'] == 'all':
         # output = int32, 0 to nSavedChans - 1
         chans = np.arange(0, int(meta['nSavedChans']))
@@ -112,21 +114,21 @@ def OriginalChans(meta):
             chans = np.append(chans, newChans)
     return(chans)
 
-# Return counts of each obx channel type that composes the timepoints
-# stored in the binary files.
-#
-def ChannelCountsOBX(meta):
+def ChannelCountsOBX(meta: dict) -> tuple[int, int, int]:
+    """
+    Return counts of each obx channel type that composes the timepoints stored in the binary files.
+    """
     chanCountList = meta['snsXaDwSy'].split(sep=',')
     XA = int(chanCountList[0])
     DW = int(chanCountList[1])
     SY = int(chanCountList[2])
     return(XA, DW, SY)
 
-
-def GainCorrectOBX(dataArray, chanList, meta):
-
+def GainCorrectOBX(dataArray: np.ndarray, chanList: np.ndarray, meta: dict) -> np.ndarray:
+    """
+    Converts data from 16-bit encoded values to voltage
+    """
     fI2V = Int2Volts(meta)
-
     # make array of floats to return. dataArray contains only the channels
     # in chanList, so output matches that shape
     convArray = np.zeros(dataArray.shape, dtype=float)
@@ -135,11 +137,11 @@ def GainCorrectOBX(dataArray, chanList, meta):
         convArray[i, :] = dataArray[i, :] * fI2V
     return(convArray)
 
-# Return memmap for the raw data
-# Fortran ordering is used to match the MATLAB version
-# of these tools.
-#
-def makeMemMapRaw(binFullPath, meta):
+def makeMemMapRaw(binFullPath: str, meta: dict) -> np.memmap:
+    """
+    Return memmap for the raw data (memmap stands for memory map, allows loading data line-by-line, preserving memory)
+    Fortran ordering is used to match the MATLAB version of these tools.
+    """
     nChan = int(meta['nSavedChans'])
     nFileSamp = int(int(meta['fileSizeBytes'])/(2*nChan))
     print("nChan: %d, nFileSamp: %d" % (nChan, nFileSamp))
@@ -147,36 +149,19 @@ def makeMemMapRaw(binFullPath, meta):
                         shape=(nChan, nFileSamp), offset=0, order='F')
     return(rawData)
 
-
-# Return an array [lines X timepoints] of uint8 values for a
-# specified set of digital lines.
-#
-# - dwReq is the zero-based index into the saved file of the
-#    16-bit word that contains the digital lines of interest.
-# - dLineList is a zero-based list of one or more lines/bits
-#    to scan from word dwReq.
-#
-def ExtractDigital(rawData, firstSamp, lastSamp, dwReq, dLineList, meta):
+def ExtractDigital(rawData: np.memmap, firstSamp: int, lastSamp: int, dwReq: float, dLineList: list, meta: dict) -> np.ndarray:
+    """
+    Return an array [lines X timepoints] of uint8 values for a specified set of digital lines.
+    - dwReq is the zero-based index into the saved file of the 16-bit word that contains the digital lines of interest.
+    - dLineList is a zero-based list of one or more lines/bits to scan from word dwReq.
+    """
     # Get channel index of requested digital word dwReq
-    if not meta['typeThis'] == 'obx':
-        print('non-obx files not currenly supported in onebox_utils.py')
-    # if meta['typeThis'] == 'imec':
-    #     AP, LF, SY = ChannelCountsIM(meta)
-    #     if SY == 0:
-    #         print("No imec sync channel saved.")
-    #         digArray = np.zeros((0), 'uint8')
-    #         return(digArray)
-    #     else:
-    #         digCh = AP + LF + dwReq
-    # elif meta['typeThis'] == 'nidq':
-    #     MN, MA, XA, DW = ChannelCountsNI(meta)
-    #     if dwReq > DW-1:
-    #         print("Maximum digital word in file = %d" % (DW-1))
-    #         digArray = np.zeros((0), 'uint8')
-    #         return(digArray)
-    #     else:
-    #         digCh = MN + MA + XA + dwReq
-    elif meta['typeThis'] == 'obx':
+    if meta['typeThis'] != 'obx':
+        print("""non-obx files not supported in onebox_utils.py\n 
+              the metadata must contain typeThis == 'obx'\n
+              Check source code and the SpikeGLX_Datafile_Tools repo for possible fixes""")
+        return
+    else:
         XA, DW, SY = ChannelCountsOBX(meta)
         if dwReq > DW-1:
             print("Maximum digital word in file = %d" % (DW-1))
@@ -184,9 +169,7 @@ def ExtractDigital(rawData, firstSamp, lastSamp, dwReq, dLineList, meta):
             return(digArray)
         else:
             digCh = XA + dwReq
-    else:
-        print('unknown data stream')
-
+            
     selectData = np.ascontiguousarray(rawData[digCh, firstSamp:lastSamp+1], 'int16')
     nSamp = lastSamp-firstSamp + 1
 
@@ -204,7 +187,7 @@ def ExtractDigital(rawData, firstSamp, lastSamp, dwReq, dLineList, meta):
         digArray[i, :] = bitWiseData[targI, :]
     return(digArray)
 
-def compute_rational_ratio(sr_in, sr_out, max_den=10_000):
+def compute_rational_ratio(sr_in: int, sr_out: int, max_den=10_000) -> Fraction:
     """
     Compute rational approximation U/D ≈ sr_out / sr_in.
     max_den controls accuracy & speed.
@@ -219,13 +202,13 @@ def compute_rational_ratio(sr_in, sr_out, max_den=10_000):
     return frac.numerator, frac.denominator   # up, down
 
 def downsample_memmap_multichannel(
-        data,
-        sr_in=30303,
-        sr_out=1000,
-        chunk_size=5_000_000,
-        max_den=10_000,
-        verbose=True
-    ):
+        data: np.ndarray,
+        sr_in=30303,    #original sample rate
+        sr_out=1000,    #new sample rate
+        chunk_size=5_000_000,   #chunk size to load data in
+        max_den=10_000,     #max denominator in fraction, higher = slower speed/better accuracy
+        verbose=True    #print things?
+        ) -> np.ndarray:
     """
     Downsample multi-channel onebox recordings (np.arrays of channel x time) 
     using polyphase FIR filtering (scipy.signal.resample_poly)
@@ -236,7 +219,7 @@ def downsample_memmap_multichannel(
     # Compute rational approximation up/down
     up, down = compute_rational_ratio(sr_in, sr_out, max_den=max_den)
     if verbose:
-        print(f"Resampling ratio: sr_out/sr_in ≈ {sr_out/sr_in:.8f}")
+        print(f"Resampling ratio: sr_out/sr_in ~ {sr_out/sr_in:.8f}")
         print(f"Using rational up={up}, down={down}  (error={abs((up/down) - (sr_out/sr_in)):.3e})")
 
     # Output length
@@ -259,7 +242,7 @@ def downsample_memmap_multichannel(
         e = min(T, stop + overlap)
 
         if verbose:
-            print(f"Processing time samples {s:,} → {e:,}")
+            print(f"Processing time samples {s:,} to {e:,}")
 
         # Extract chunk
         chunk = data[:, s:e]   # shape: [C, time]
@@ -290,10 +273,10 @@ def downsample_memmap_multichannel(
     return y
 
 def run_conversion(bin_path: str, project_meta: dict,  
-                   save_folder = None, 
+                   save_folder: str = None, 
                    sr_new: int = 1000, 
-                   chanlist = [x for x in range(12)],
-                   channel_to_box = {0:1, 1:3, 2:4, 3:2}):
+                   chanlist: list = [x for x in range(12)],
+                   channel_to_box: dict = {0:1, 1:3, 2:4, 3:2}) -> None:
     """
     converts obx bin file to 4 csv files
     some params can be changed if the setup is different
@@ -307,7 +290,7 @@ def run_conversion(bin_path: str, project_meta: dict,
     raw_data = makeMemMapRaw(Path(bin_path), meta)
     print('data loaded, downsampling...')
     downsampled = downsample_memmap_multichannel(data = raw_data, sr_in = sr_obx, sr_out = sr_new)
-    #gain correct
+    #get voltages
     conv_obx = GainCorrectOBX(downsampled, chanlist, meta)
 
     n_samples = conv_obx.shape[1]
@@ -337,10 +320,12 @@ def run_conversion(bin_path: str, project_meta: dict,
     print('saved!')
     return
 
-def file_converted(file, save_folder = "C:/Users/marty/Projects/scorer/proj_data/raw", channel_to_box = {0:1, 1:3, 2:4, 3:2}):
+def file_converted(file: str, 
+                   save_folder: str = "C:/Users/marty/Projects/scorer/proj_data/raw", 
+                   channel_to_box: dict = {0:1, 1:3, 2:4, 3:2}) -> bool:
     """
     checks if obx file is already converted
-    converted if there are corresponding .csv files
+    converted = True if there are corresponding .csv files
     """
     bin_path = Path(file)
     
@@ -351,7 +336,11 @@ def file_converted(file, save_folder = "C:/Users/marty/Projects/scorer/proj_data
             return True
     return False   
     
-def convert_multiple_recs(folder, project_meta, save_folder = None, sr_new = 1000, overwrite = False):
+def convert_multiple_recs(folder: str, 
+                          project_meta: dict, 
+                          save_folder: str = None, 
+                          sr_new: int = 1000, 
+                          overwrite: bool = False) -> None:
     """
     runs conversion obx.bin -> 4 recs .csv for all files in folder
     """
@@ -378,7 +367,10 @@ def convert_multiple_recs(folder, project_meta, save_folder = None, sr_new = 100
     print(f'all files in {folder} converted!!!')
     return
 
-def get_folder_quality_report(folder_path, savepath = None, save_fig = True, overwrite = False):
+def get_folder_quality_report(folder_path: str, 
+                              savepath: str = None, 
+                              save_fig: str = True, 
+                              overwrite: str = False) -> None:
     """
     generates a quality report for all .csv files in path
     """
@@ -407,7 +399,11 @@ def get_folder_quality_report(folder_path, savepath = None, save_fig = True, ove
     pd.concat(res_list).reset_index(drop = True).to_csv(savepath + '/quality_report.csv')
     print(f'full report saved in {savepath + '/quality_report.csv'}')
 
-def generate_obx_quality_report(path, sample_size = 20, report_interval = 100, sr = 1000, return_figure = True):
+def generate_obx_quality_report(path: str, 
+                                sample_size: int = 20, 
+                                report_interval: int = 100, 
+                                sr: int = 1000, 
+                                return_figure = True) -> tuple[dict, plt.Figure | None]:
     """
     generates a quality report for a raw .csv recording file obtained from obx in earlier steps+
     file has to contain f_ecog, p_ecog, emg channels
@@ -457,7 +453,7 @@ def generate_obx_quality_report(path, sample_size = 20, report_interval = 100, s
         figure = quality_plot(metrics, name = path)
     return metrics, figure
 
-def quality_plot(metrics, name):
+def quality_plot(metrics: dict, name: str) -> plt.Figure:
     """
     returns figure of quality metrics
     """
@@ -475,7 +471,7 @@ def quality_plot(metrics, name):
     fig.tight_layout()
     return fig
 
-def _linenoise_ratio(arr, sr = 1000, line_f = 50, bw = 1):
+def _linenoise_ratio(arr: np.ndarray, sr: int = 1000, line_f: float = 50, bw: float = 1) -> float:
     """
     gets ratio of powerline noise vs everything else
     assuming noise is constant, should be a good indicator of signal quality
@@ -490,7 +486,7 @@ def _linenoise_ratio(arr, sr = 1000, line_f = 50, bw = 1):
     
 
 if __name__ == "__main__":
-    print('script ran directly')
+    print('this currently does nothing, launch in GUI or modify source code')
     project_meta = {'project_path' : 'C:/Users/marty/Projects/scorer/proj_data', 'sample_rate' : 1000}
     # convert_multiple_recs(folder = 'G:/SLEEP-ECOG', project_meta = project_meta, overwrite = True)
     # get_folder_quality_report("C:/Users/marty/Projects/scorer/proj_data/raw")

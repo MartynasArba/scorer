@@ -3,7 +3,12 @@ from pathlib import Path
 import glob
 import os
 
-def parse_sensors(path = 'G:/SLEEP-ECOG/'):
+def parse_sensors(path: str = 'G:/SLEEP-ECOG/'):
+    """
+    takes each file in selected folder, 
+    converts sensor files from 1 file/rec into 4 csvs (1/cage), 
+    and saves result
+    """
     cages = {}
     if not os.path.isdir(path):
         folder = Path(path).parent
@@ -13,7 +18,10 @@ def parse_sensors(path = 'G:/SLEEP-ECOG/'):
     cages, suffix = convert_all_files(folder = folder, cages = cages)
     save_sensors(folder, cages = cages, suffix = suffix)
     
-def convert_all_files(folder, cages = {}, return_suffix = True):
+def convert_all_files(folder: str, cages: dict = {}, return_suffix: bool = True) -> tuple[dict, str]:
+    """
+    converts all sensor files in selected folder
+    """
     suffix = []
     files = glob.glob(folder + '/MOTIONrecSLEEPECOG*.csv')
     for file in files:
@@ -24,7 +32,11 @@ def convert_all_files(folder, cages = {}, return_suffix = True):
         suffix = None            
     return cages, suffix
     
-def load_sensor_file(path, cages = {}):
+def load_sensor_file(path: str, cages: dict = {}) -> dict:
+    """
+    loads a single motion sensor file, splits into separate files
+    returns a dict where key is cage ID, value is the data
+    """
     pin_to_cage = {i: i - 1 for i in range(2, 6)}
     try:
         data = pd.read_csv(path, header = None)
@@ -42,7 +54,10 @@ def load_sensor_file(path, cages = {}):
             cages[cage].append(df)
     return cages
 
-def save_sensors(folder, cages, suffix = None):
+def save_sensors(folder: str, cages: dict, suffix: str = None):
+    """
+    saves motion sensor files
+    """
     folder = Path(folder)
     for id, data_list in cages.items():
         for i, data in enumerate(data_list):
@@ -55,4 +70,5 @@ def save_sensors(folder, cages, suffix = None):
             data.to_csv(savepath)
 
 if __name__ == "__main__":
+    #runs everything
     parse_sensors()

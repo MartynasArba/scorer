@@ -60,7 +60,7 @@ def plot_signals_init(
     
     if time_formatter is not None:
         label_ax.xaxis.set_major_formatter(time_formatter)
-        label_ax.xaxis.set_major_locator(mticker.MaxNLocator(nbins = 8, integer = True))
+        # label_ax.xaxis.set_major_locator(mticker.MaxNLocator(nbins = 8))    #, integer = True
     
     #one line per scorer
     if scorer_names is None:

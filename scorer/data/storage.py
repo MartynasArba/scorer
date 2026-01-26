@@ -2,15 +2,13 @@ import pickle
 import os
 import json
 from pathlib import Path
-from typing import Tuple
-from numpy import array
 import torch
 import numpy as np
 import pandas as pd
 
-def construct_paths(data_path: str, format: str = '.pkl', **metadata) ->Tuple[str, str]:    
+def construct_paths(data_path: str, format: str = '.pkl', **metadata) ->tuple[str, str]:    
     """
-    Gets data path from QFileDialog, returns save paths for pickle and state annotation arrays   
+    returns save paths for .pt data file and state annotation file   
     """
     
     data_path = Path(data_path)
@@ -50,7 +48,7 @@ def save_pickled_states(states: list, path: str) -> None:
     with open(path, 'wb') as f:
         pickle.dump(states, f)
 
-def load_pickled_states(path: str) -> array:
+def load_pickled_states(path: str) -> np.ndarray:
     """
     loads scores from pickle
     """
@@ -83,9 +81,9 @@ def load_metadata(path: str) -> dict:
 
 def save_tensor(tensor_seq: tuple = (), 
                 metadata: dict = {},
-                overwrite = False, 
-                chunk = None, 
-                raw = False):
+                overwrite: bool = False, 
+                chunk: int = None, 
+                raw: bool = False):
     """
     saves tensors that were passed in a sequence
     path is set according to metadata
@@ -151,7 +149,7 @@ def save_windowed(tensors: tuple,
                   chunked: bool = True, 
                   chunk_id: int = None,
                   overwrite: bool = False,
-                  testing: bool = False):
+                  testing: bool = False) -> None:
     """chops and saves tensor data to be used by the SleepDataset class"""
     
     #get path
@@ -231,7 +229,7 @@ def save_windowed_for_testing(tensors: tuple,
                                 win_len: int = 1000,
                                 chunked: bool = True, 
                                 chunk_id: int = None,
-                                overwrite: bool = False):
+                                overwrite: bool = False) -> None:
     """chops and saves data for ML testing"""
     #get path
     file_name = f'{file_name}' 
@@ -308,7 +306,7 @@ def _chop(values: torch.Tensor, win_len: int):
 
 def _chop_by_state(states: torch.Tensor, 
                   values: torch.Tensor, 
-                  win_len: int) -> Tuple[torch.Tensor, torch.Tensor]:
+                  win_len: int) -> tuple[torch.Tensor, torch.Tensor]:
     """
     split values by state
     Input (same format as _chop):
@@ -381,7 +379,7 @@ def _chop_by_state(states: torch.Tensor,
     states_out = torch.cat(S_parts, dim=1)     # [S, N, W]
     return values_out, states_out
 
-def __get_start_time(path, time_channel):
+def __get_start_time(path, time_channel) -> str:
     """
     helper to return start of rec
     """
@@ -400,15 +398,16 @@ def __get_start_time(path, time_channel):
         print(f'no time column specified, time set to default: {start_time}')
     return start_time
 
-def __seconds_since_midnight(t) -> float:
+def __seconds_since_midnight(t: np.datetime64) -> float:
     """
     helper which converts time (t) to seconds since midnight
     """
     return t.hour * 3600 + t.minute * 60 + t.second + t.microsecond / 1e6
 
-def __get_num_lines(start_time, times, sr):
+def __get_num_lines(start_time: str, times: str, sr: int) -> tuple[int, int]:
     """
     helper to get number of lines to read // cut to time
+    returns the 1st line to read and the number of lines to read
     """
     seconds_in_day = 24 * 60 * 60
 
@@ -438,7 +437,11 @@ def __get_num_lines(start_time, times, sr):
     line_end = int(diff * sr) + line_start  #duration + start    
     return line_start, line_end
   
-def load_from_csv(path: str, metadata: dict = None, states: int = None, times = (None, None)):
+def load_from_csv(path: str, 
+                  metadata: dict = None, 
+                  states: int = None, 
+                  times: tuple[str, str] = (None, None)
+                  ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     loads data from csv into a torch tensor
     """
@@ -488,7 +491,12 @@ def load_from_csv(path: str, metadata: dict = None, states: int = None, times = 
     return ecog, emg, states
             
             
-def load_from_csv_in_chunks(path: str, metadata: dict = None, states: int = None, chunk_size: int = None, times = (None, None)):
+def load_from_csv_in_chunks(path: str, 
+                            metadata: dict = None, 
+                            states: int = None, 
+                            chunk_size: int = None, 
+                            times: tuple[str, str] = (None, None)
+                            ):
     """
     loads data from csv into a torch tensor in chunks, returns a generator
     """

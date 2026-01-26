@@ -8,7 +8,7 @@ class AutoScoringWidget(QWidget):
     """
     class for automatic scoring, holds buttons
     """
-    def __init__(self, meta):
+    def __init__(self, meta: dict):
         super().__init__()
         
         self.params = meta
@@ -56,6 +56,9 @@ class AutoScoringWidget(QWidget):
         self.label.setText(f'states will be saved in {self.state_folder}')
             
     def run_scoring(self):
+        """
+        runs imported score_signal func
+        """
         score_signal(self.file_folder, 
                      self.state_folder, 
                      meta = self.params, 

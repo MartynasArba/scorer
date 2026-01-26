@@ -3,11 +3,11 @@ import torch
 import torch.nn.functional as F
 
 #for filters widmann  et al. 2015 was consulted, settled on FIR filter, Hamming window, FFT implementation for efficiency
-def design_bandpass_hamming(fs, lowcut, highcut, 
+def design_bandpass_hamming(fs: int, lowcut: float, highcut: float, 
                             transition_width = 1.0, 
                             numtaps = None, 
                             dtype = torch.float32, 
-                            device = 'cuda'):
+                            device = 'cuda') -> torch.Tensor:
     """
     Design a linear-phase bandpass FIR using windowed sinc (Hamming).
     Returns a 1D tensor of taps (odd length).
@@ -19,9 +19,9 @@ def design_bandpass_hamming(fs, lowcut, highcut,
     if highcut >= nyq:
         raise ValueError("highcut must be < Nyquist (fs/2)")
     #numtaps = filter length/num of coefficients
-    # If numtaps not given, estimate from transition_width using Hamming approx
+    # if no numtaps given, estimate from transition_width using Hamming approx
     # Hamming window approx transition width Δf ≈ 3.3 / N (normalized to Nyquist units),
-    # so N ≈ 3.3 / (Δf/nyq) = 3.3 * nyq / Δf
+    # so N ~ 3.3 / (Δf/nyq) = 3.3 * nyq / Δf
     if numtaps is None: 
         numtaps = int(math.ceil(3.3 * nyq / transition_width))
     # ensure odd
@@ -63,25 +63,25 @@ def design_bandpass_hamming(fs, lowcut, highcut,
         max_mag = float(mag.max())
         if max_mag > 0:
             taps = taps / max_mag
-            
     return taps  # on device
 
-def design_notch_hamming(fs, notch_center, notch_width=2.0, transition_width=1.0,
-                         numtaps=None, dtype=torch.float32, device='cuda'):
+def design_notch_hamming(fs: int, notch_center: float, 
+                         notch_width: float = 2.0, 
+                         transition_width: float = 1.0,
+                         numtaps: int = None, 
+                         dtype = torch.float32, 
+                         device: str = 'cuda'):
     """
     designs a linear-phase FIR notch (band-stop) filter using Hamming window 
+    something seems broken in the implementation, should be tested
     """
-
     nyq = fs / 2
-    f1 = notch_center - notch_width/2
-    f2 = notch_center + notch_width/2
-
+    f1 = notch_center - notch_width / 2
+    f2 = notch_center + notch_width / 2
     if f1 <= 0 or f2 >= nyq:
         raise ValueError("Notch band must be inside Nyquist range")
-
-    # Estimate numtaps if not given
+    # estimate numtaps if not given
     if numtaps is None:
-        # Hamming window rule: N ≈ 3.3 * Nyquist / transition_width
         numtaps = int(math.ceil(3.3 * nyq / transition_width))
     if numtaps % 2 == 0:
         numtaps += 1
@@ -89,29 +89,29 @@ def design_notch_hamming(fs, notch_center, notch_width=2.0, transition_width=1.0
     M = numtaps
     m = torch.arange(M, dtype=dtype, device=device) - (M - 1) / 2
 
-    # Convert to radians/sample
+    # convert to radians/sample
     w1 = 2 * math.pi * f1 / fs
     w2 = 2 * math.pi * f2 / fs
 
-    # Ideal bandstop = LP(w1) + HP(w2)
-    eps = 1e-20
+    # ideal bandstop = LP(w1) + HP(w2)
+    eps = 1e-12
     m_nz = m.clone()
-    m_nz[torch.abs(m_nz) < 1e-12] = 1.0
+    m_nz[torch.abs(m_nz) < eps] = 1.0
 
     h_lp_w1 = torch.sin(w1 * m_nz) / (math.pi * m_nz)
     h_lp_w2 = torch.sin(w2 * m_nz) / (math.pi * m_nz)
     h_bs = h_lp_w1 + (torch.zeros_like(h_lp_w1) - h_lp_w2)
 
-    # Correct center sample
+    # correct center sample
     c = (M - 1)//2
-    h_bs[c] = (w1 - 0) / math.pi + (math.pi - w2)/math.pi
+    h_bs[c] = (w1 - 0) / math.pi + (math.pi - w2) / math.pi
 
     # Hamming window
     n = torch.arange(M, device=device, dtype=dtype)
     hamming = 0.54 - 0.46 * torch.cos(2 * math.pi * n / (M - 1))
     h_bs = h_bs * hamming
 
-    # Normalize passband gain
+    # normalize passband gain
     with torch.no_grad():
         fftlen = 4096
         H = torch.fft.rfft(h_bs, n=fftlen)
@@ -120,7 +120,7 @@ def design_notch_hamming(fs, notch_center, notch_width=2.0, transition_width=1.0
 
     return h_bs
 
-def fft_convolve_1d(x, h):
+def fft_convolve_1d(x: torch.Tensor, h: torch.Tensor) -> torch.Tensor:
     """
     Linear convolution via FFT on GPU.
     x: (..., time) - 1 channel data
@@ -137,12 +137,13 @@ def fft_convolve_1d(x, h):
     y = torch.fft.irfft(Y, n=n_fft)[..., :L]    #inverse fft, but slice to L to remove padding
     return y
 
-def fft_filtfilt(x, taps, padlen_factor=3):
+def fft_filtfilt(x: torch.Tensor, taps: torch.Tensor, padlen_factor: int = 3) -> torch.Tensor:
     """
     Zero-phase (forward-reverse) filtering using FFT-based convolution (uses fft_convolve_1d)
     x: (batch, channels, time) or (channels, time) or (time,)
     taps: (numtaps,) symmetric FIR filter
     padlen same as SciPy default
+    returns filtered x
     """
     orig_shape = x.shape
     single_channel = False
@@ -204,17 +205,19 @@ def bandpass_filter(signal: torch.Tensor,
                         freqs: tuple = (0.1, 49.0),
                         device: str = 'cuda') -> torch.Tensor:
     """
-    integrates previous funcs
-    FIR bandpass filter via FFT convolution on GPU. signal: [T], [C, T], [batch, channel, time]
+    joins previous filter design and application funcs
+    FIR bandpass filter via FFT convolution on GPU
+    signal: [T], [C, T], [batch, channel, time] (should work on all formats)
     hopefully fast!
     """   
     taps = design_bandpass_hamming(sr, freqs[0], freqs[1], transition_width = 1.0, device = device)
     y = fft_filtfilt(signal, taps)
     return y
 
-def hilbert_transform(x: torch.Tensor):
+def hilbert_transform(x: torch.Tensor) -> torch.Tensor:
     """
     compute the Hilbert transform
+    returns the analytical signal
     """
     fourier = torch.fft.fft(x)  #get fft
     h = torch.zeros_like(fourier)
@@ -239,13 +242,17 @@ def gaussian_kernel(sigma: float = 0.2, sr: int = 250, device: str = 'cuda'):
     kernel /= kernel.sum()  #normalize
     return kernel.view(1, 1, -1)
 
-def band_powers(signal: torch.Tensor, bands: dict = {'delta': (0.5, 4)}, sr: int = 250, device: str = 'cuda', smoothen = 0.2):
+def band_powers(signal: torch.Tensor, 
+                bands: dict = {'delta': (0.5, 4)}, 
+                sr: int = 250, 
+                device: str = 'cuda', 
+                smoothen: float = 0.2) -> dict[torch.Tensor]:
     """
     apply a simple bandpass filter, 
     hilbert transform to return analytical signal, 
-    take amplitude and add Gaussian smoothing,
-    normalize to 0-1,
-    return. 
+    take amplitude and add Gaussian smoothing (optional),
+    scale,
+    return band powers
     """
     signal = signal.to(device) #make sure just in case
     signal = signal.to(dtype = torch.float32)
@@ -291,7 +298,12 @@ def band_powers(signal: torch.Tensor, bands: dict = {'delta': (0.5, 4)}, sr: int
         
     return band_envelopes   
 
-def sum_power(signal: torch.Tensor, smoothing: float = 0.2, sr: int = 250, device: str = 'cuda', normalize = True, gaussian_smoothen = 0.2):
+def sum_power(signal: torch.Tensor, 
+              smoothing: float = 0.2, 
+              sr: int = 250, 
+              device: str = 'cuda', 
+              normalize: bool = True, 
+              gaussian_smoothen:float = 0.2) -> torch.Tensor:
     """
     calculates sum power by rms with moving average smoothing kernel
     """    
@@ -352,7 +364,7 @@ def sum_power(signal: torch.Tensor, smoothing: float = 0.2, sr: int = 250, devic
 def notch_filter(signal,
                  sr:int = 250,
                  freq:int = 50,
-                 device:str = 'cuda'):
+                 device:str = 'cuda') -> torch.Tensor:
     """
     designs and applies Notch filter
     creates a Hamming window band-stop filter

@@ -4,11 +4,15 @@ from scorer.data.preprocessing import bandpass_filter, sum_power, band_powers
 from scorer.data.storage import load_from_csv_in_chunks, save_windowed_for_testing, load_from_csv
 from pathlib import Path
 
+import torch
+
 from pyedflib import highlevel
 
-def run_default_preprocessing(csv_path) -> None:
+def run_default_preprocessing(csv_path: str) -> None:
         """
         runs default preprocessing from raw to X, y
+        filters ecog 0.5-49 Hz, emg 10-100 Hz, calculates sum powers and band powers
+        saves windowed data for use with SleepTraining dataset
         """
         if csv_path is not None:
             
@@ -45,7 +49,7 @@ def run_default_preprocessing(csv_path) -> None:
                     print('not implemented')      
                     
         
-def _bandpass(signal, freqs, metadata):
+def _bandpass(signal: torch.Tensor, freqs: tuple, metadata: dict) -> torch.Tensor:
         """
         applies bandpass filtering func
         """
@@ -56,9 +60,9 @@ def _bandpass(signal, freqs, metadata):
                         device = metadata.get('device'))
         return signal        
 
-def _preprocess(ecog, emg, metadata):
+def _preprocess(ecog: torch.Tensor, emg: torch.Tensor, metadata: dict) -> tuple:
         """
-        check what's checked, run corresponding funcs
+        leftover from GUI, runs preprocessing helpers
         """
         ecog, emg = ecog.T, emg.T       #torch usually requires channels x time
         
@@ -85,8 +89,10 @@ def _preprocess(ecog, emg, metadata):
         print('preprocessing done')
         return (ecog, emg, ecog_power, emg_power) + tuple(bands.values())
     
-def raw_to_edf(csv_path):
-    """ go from raw csv with default preprocessing to edf, to test intelliscorer """
+def raw_to_edf(csv_path: str) -> None:
+    """ 
+    goes from raw csv with default preprocessing to edf, first written to test intelliscorer 
+    """
     if csv_path is not None:
         out_path = Path(csv_path).with_suffix('.edf')
         
@@ -106,9 +112,10 @@ def raw_to_edf(csv_path):
         highlevel.write_edf(str(out_path), [ecog, emg], signal_headers, header)
         
 if __name__ == "__main__":
+    print('everything is commented out, edit script to do something')
     # import torch
     
-    raw_to_edf(r'g:\sleep-ecog-DOWNSAMPLED\20251124-1_g0_t0.obx0.obx_box1.csv')
+    # raw_to_edf(r'g:\sleep-ecog-DOWNSAMPLED\20251124-1_g0_t0.obx0.obx_box1.csv')
     
 # converts whole folder to windows for ml
     # import glob

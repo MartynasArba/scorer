@@ -6,6 +6,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5 import QtCore
 from PyQt5.QtCore import QFileInfo
+import matplotlib.ticker as mticker
 
 import torch
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -29,6 +30,9 @@ class SleepGUI(QWidget):
     """
 
     def __init__(self, dataset: SleepSignals = None, metadata: dict = None) -> None:
+        """
+        initializes manual labeling tab in GUI
+        """
         super().__init__()
 
         # paths / metadata
@@ -79,6 +83,7 @@ class SleepGUI(QWidget):
 
         # small cache for last requested window (idx, scale)
         self._plot_cache = {"idx": None, "scale": None, "sample": None, "label": None}
+        self._sep_cache_key = None  #cache of grid lines
 
         # update guard
         self._updating = False
@@ -210,6 +215,9 @@ class SleepGUI(QWidget):
 
     # DATA LOADING
     def select_dataset(self) -> None:
+        """
+        selects and loads dataset in GUI, precomputes a few things, creates matplotlib canvas
+        """
         if self.load_folder:
             file_name = QFileDialog.getExistingDirectory(self,
                                                       caption="Or select a folder with partial chunk files",
@@ -296,6 +304,8 @@ class SleepGUI(QWidget):
         self._dragging = False
         self._drag_x0 = None
         self._drag_preview = None
+        
+        self._sep_cache_key = None
 
         self._plot_cache = {"idx": None, "scale": None, "sample": None, "label": None}
 
@@ -304,8 +314,8 @@ class SleepGUI(QWidget):
         self.status_label.setText(f"Loaded: {file_name}")
 
     # DATA RETRIEVAL
-    def _to_numpy_sample(self, sample):
-        """Convert a sample (tensor or tuple) to numpy arrays (cpu)."""
+    def _to_numpy_sample(self, sample: torch.Tensor | tuple[torch.Tensor, torch.Tensor]) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
+        """converts a sample (tensor or tuple) to numpy array (cpu)"""
         if isinstance(sample, tuple):
             s0 = sample[0].cpu().numpy()
             s1 = sample[1].cpu().numpy() if sample[1] is not None else None
@@ -315,8 +325,8 @@ class SleepGUI(QWidget):
 
     def get_data(self):
         """
-        Return (sample_numpy, labels) for the current window (idx..idx+scale).
-        Caches results for identical (idx, scale).
+        returns (sample_numpy, labels) for current window (idx : idx + scale).
+        caches results for identical (idx, scale).
         sample_numpy is either array (channels, time) or tuple (signals_np, spect_np).
         """
         idx, scale = self.current_idx, self.scale
@@ -360,11 +370,11 @@ class SleepGUI(QWidget):
             return sample_cpu, labels
 
     # LABELING
-    def label_data(self, value) -> None:
+    def label_data(self, value: float) -> None:
         
         self.active_label_value = value # update mouse val
-        #this is commented out as controlls clash with mouse. Mouse is more convenient, so keeping it
-                
+        
+        #this is commented out as keyboard controlls clash with mouse. Mouse is more convenient, so keeping it
         # if self.label_whole_screen:
         #     end = min(self.current_idx + self.scale, self._len_dataset)
         #     self.states[self.current_idx:end] = value
@@ -383,9 +393,8 @@ class SleepGUI(QWidget):
         self.update_screen()
         
     #MOUSE CONTROLLS
-        
     def _install_mouse_labeling(self):
-        """connect mouse controls to the current signal_canvas"""
+        """connects mouse controls to current signal_canvas"""
         if self.signal_canvas is None:
             return
 
@@ -429,7 +438,7 @@ class SleepGUI(QWidget):
     
     def _frames_to_x_span(self, i0: int, i1: int) -> tuple[float, float]:
         """        
-        converts frame indices to x-span in seconds within current window
+        converts frame idx to x in seconds in current window
         returns (x_start, x_end) in seconds for preview shading
         """
         # clamp to current window
@@ -623,7 +632,8 @@ class SleepGUI(QWidget):
                 self.signal_axs,
                 self.signal_lines,
                 self.label_lines,
-                self.label_text) = plot_signals_init(
+                self.label_text
+                ) = plot_signals_init(
                     signals,
                     self.ylims,
                     sample_rate,
@@ -652,6 +662,41 @@ class SleepGUI(QWidget):
                 (int(x) if x is not None else None)
                 for x in window_vals
             ]
+        
+        #GRID LINES
+        # infer how many windows are displayed from any scorer's visible labels
+        if scorer_window_labels:
+            n_windows = len(next(iter(scorer_window_labels.values())))
+        else:
+            n_windows = 0
+
+        sep_key = (n_windows, n_samples, sample_rate)
+        if self._sep_cache_key != sep_key:
+            self._sep_cache_key = sep_key
+
+            # shared x axis: set locators once on any shared axis (use first signal axis)
+            xax = self.signal_axs[0].xaxis
+
+            if n_windows > 1:
+                win_s = (n_samples / sample_rate) / n_windows  # seconds per frame
+                # minor ticks exactly at frame boundaries
+                minor = mticker.MultipleLocator(win_s)
+                # major ticks every k frames (k*win_s)
+                target_major_lines = 8
+                k = max(1, int(round(n_windows / target_major_lines)))
+                major = mticker.MultipleLocator(k * win_s)
+                xax.set_minor_locator(minor)
+                xax.set_major_locator(major)
+                # apply grids to ALL axes (signals + label)
+                for ax in self.signal_axs:
+                    ax.grid(True, which="minor", axis="x", alpha=0.12)
+                    ax.grid(True, which="major", axis="x", alpha=0.30)
+
+            else:
+                # disable minor grid when scale==1
+                xax.set_minor_locator(mticker.NullLocator())
+                for ax in self.signal_axs:
+                    ax.grid(False, which="minor", axis="x")
 
         #update window offset
         window_offset_s = self.current_idx * self.frame_duration_s
@@ -866,6 +911,8 @@ class SleepGUI(QWidget):
         self._dragging = False
         self._drag_x0 = None
         self._drag_preview = None
+        
+        self._sep_cache_key = None
         
 def _parse_iso(ts: str) -> datetime:
     """

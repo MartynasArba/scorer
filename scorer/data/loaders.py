@@ -6,11 +6,12 @@ from torch.utils.data import Dataset
 from torchaudio.transforms import Spectrogram
 from torch.fft import rfft, rfftfreq
 from pathlib import Path
-from typing import Tuple
 
 class SleepSignals(Dataset):
-    """Dataset structure for chopped signals and labels, developed using 1000-datapoint windows
-    Generally, there are 2 channels (ECoG, EMG)
+    """
+    Dataset structure for chopped signals and labels, developed using 1000-datapoint windows
+    Generally, there are 2 channels (ECoG, EMG), and 6 extracted features: ECoG & EMG power, Delta, Theta, Alpha and Sigma powers
+    This dataset is designed and used mostly in the GUI. For training and evaluating models, see SleepTraining class.
     Sleep is labeled as: 
           0:'Unlabeled',
           1:'Wake',
@@ -18,7 +19,14 @@ class SleepSignals(Dataset):
           3:'IS',
           4:'REM'
     """
-    def __init__(self, data_path, score_path, device = 'cuda', transform = None, augment = False, spectral_features = None, metadata: dict = {}) -> None:
+    def __init__(self, 
+                 data_path: str, 
+                 score_path: str, 
+                 device:str = 'cuda', 
+                 transform:bool = None, 
+                 augment:bool = False, 
+                 spectral_features:bool = None, 
+                 metadata: dict = {}) -> None:
         """        
             Args:
             file_path: path to the folder where chopped data is stored. Can handle one or multiple animals, but the recordings need to be in one file. 
@@ -63,7 +71,7 @@ class SleepSignals(Dataset):
     def __len__(self) -> int:
         return len(self.all_labels)
     
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int]:
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, int]:
         
         if torch.is_tensor(idx):
             idx = idx.tolist()
@@ -83,7 +91,7 @@ class SleepSignals(Dataset):
         
         return sample, label
     
-    def _load(self, data_path, score_path):
+    def _load(self, data_path: str, score_path: str) -> None:
         """
         loads data that was saved in preprocessing and makes the shape sample x channel x window_len
         supported inputs: 
@@ -120,7 +128,7 @@ class SleepSignals(Dataset):
             Y = Y.to(dtype = torch.long)
             Y = Y.permute(1, 0, 2)
             if Y.ndim == 3 and Y.size(1) == 1:
-                Y = Y[..., 0].squeeze(1)    #keep only the 1st state and collapse channel 
+                Y = Y[..., 0].squeeze(1)    #keep only 1st state
             else:
                 print(f'error when loading states, ndim = {Y.ndim}, shape: {Y.size()}')
                 return        
@@ -194,7 +202,7 @@ class SleepSignals(Dataset):
         
         return output.to(self.device)
     
-    def compute_ylims(self):
+    def compute_ylims(self) -> list[tuple[float, float]]:
         """
         compute ylims of set mode
         """
@@ -230,13 +238,13 @@ class SleepSignals(Dataset):
                     q_high = float(np.quantile(vals, 0.99))
                     spread = (q_high - q_low)
 
-                    # avoid degenerate 
+                    # avoid division by close to 0
                     if spread < 1e-9:
                         spread = 1e-9
                     ylims.append((median, spread))
                     
                 else:
-                    # non-ephys channels in infer_ephys mode → (0,1)
+                    # non-ephys channels in infer_ephys mode set to 0.5, 1
                     center = 0.5
                     spread = 1.0
                     ylims.append((center, spread))
@@ -259,10 +267,14 @@ class SleepSignals(Dataset):
 class SleepTraining(Dataset):
     """
     This is a dataset made to load training data with labels, not to score data.
-    It follows the main SleepDataset class.
+    It mirrors the main SleepDataset class. 
+    
+    USE ONLY FOR TRAINING AND ONLY WITH RANDOM SHUFFLE!
+    Ensure y contains actual pre-scored labels
+    If balance or exclude_labels is passed, the order of frames will not be as recorded. This is also the case as multiple recordings are loaded at random.
     
     Dataset structure for chopped signals and labels, developed using 1000-datapoint windows
-    Generally, there are 2 channels (ECoG, EMG)
+    Generally, there are at least 2 channels (ECoG, EMG), and 6 extracted features: ECoG & EMG power, Delta, Theta, Alpha and Sigma power
     Sleep is labeled as: 
           0:'Unlabeled',
           1:'Wake',
@@ -273,10 +285,14 @@ class SleepTraining(Dataset):
     def __init__(self, data_path, random_state = 0,
                  n_files_to_pick = 100, device = 'cuda', 
                  transform = None, augment = False,
-                 metadata: dict = {}, balance: str = "none", # "none" | "undersample" | "oversample") -> None:
+                 metadata: dict = {}, 
+                 balance: str = "none", # "none" | "undersample" | "oversample") -> None:
                  exclude_labels: tuple = (), 
                  merge_nrem: bool = False):  
-        
+        """
+        Initializes the dataset
+        """
+                
         torch.manual_seed(random_state)
 
         self.params = metadata
@@ -306,7 +322,7 @@ class SleepTraining(Dataset):
     def __len__(self) -> int:
         return len(self.all_labels)
     
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int]:
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, int]:
         
         if torch.is_tensor(idx):
             idx = idx.tolist()
@@ -321,9 +337,9 @@ class SleepTraining(Dataset):
         
         return sample, label
     
-    def _load(self, data_path, n_files_to_pick):
+    def _load(self, data_path: str, n_files_to_pick: int = 100) -> None:
         """
-        important change from the other dataset:
+        important change from the "normal" dataset:
         1. scans all files from passed data path, selects subset of n_files_to_pick
         2. loads as usual, joins into one output
         """
@@ -383,7 +399,7 @@ class SleepTraining(Dataset):
             
         return x
     
-    def _compute_mean_std(self):
+    def _compute_mean_std(self) -> tuple[float, float]:
             """
             compute mean and std of dataset per-channel (8 vals each)
             """
@@ -395,8 +411,9 @@ class SleepTraining(Dataset):
             
             return mean, std
         
-    def _balance_labels(self, balance="undersample", exclude_labels=(0,), seed=0):
+    def _balance_labels(self, balance:str = "undersample", exclude_labels:tuple = (0,), seed:int = 0) -> None:
         """
+        rebalances labels, important in sleep as there are usually way less REM samples than NREM or W
         balance: "undersample" (downsample to min class) or "oversample" (upsample to max class)
         exclude_labels: labels to remove before balancing  (0 for unlabeled)
         """
@@ -464,8 +481,10 @@ class SleepTraining(Dataset):
         new_counts = {int(c): int((labels2 == c).sum()) for c in torch.unique(labels2)}
         print("class counts after balance :", new_counts)
         
-    def _remap_labels_to_contiguous(self):
-        # make labels 0..K-1
+    def _remap_labels_to_contiguous(self) -> None:
+        """
+        if excluding labels, remaps them to start at 0 again
+        """
         labels_cpu = self.all_labels.detach().cpu()
         uniq = torch.unique(labels_cpu)
         mapping = {int(old): i for i, old in enumerate(uniq.tolist())}
@@ -475,12 +494,13 @@ class SleepTraining(Dataset):
         for old, new_id in mapping.items():
             new[labels_cpu == old] = new_id
 
-        self.label_mapping = mapping          # e.g. {1:0, 2:1, 4:2}
+        self.label_mapping = mapping
         self.inv_label_mapping = {v:k for k,v in mapping.items()}
         self.all_labels = new.to(self.all_labels.device)
 
         print("label remap:", self.label_mapping)
     
+#for testing
 if __name__ == "__main__":
     dataset = SleepTraining(
         data_path = 'G:/oslo_data',
