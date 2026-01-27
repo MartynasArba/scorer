@@ -8,14 +8,12 @@ A custom semi-automated sleep scorer in development
 - one heuristic-based scorer is added, which not accurate (~40%), but might provide a starting point
 
 ## TODO:
-### Priority:
-- bug: preprocessing overwrite returned an empty folder (?) more testing is needed
+### Bugs or testing needed:
 - bug: (in preprocessing) recording duration is calculated by provided hours, so if the recording starts later than the 1st number, the end will also shift
-
-### Test:
 - if calling preprocessing multiple times, metadata might be messed up
 - notch is still weird, should test it more (or depreciate it)
 - spectral plots are not very informative, should be depreciated (or can be left blank in settings)
+- test multiple scorer plotting
 
 ### Missing features and ideas:
 
@@ -29,24 +27,21 @@ A custom semi-automated sleep scorer in development
 - future development: prevent freezing when it runs? 
 
 `automatic scoring`:
-- not yet started
 - aiming for these models:
-  - heuristic-based
-  - CNN
-  - TimesFM/Moirai pretrained embeddings + classifier head
-- add selection of which channels to use!
+  - heuristic-based (implemented, low accuracy)
+  - CNN (implemented, generalization is not great)
+  - Pretrained embeddings
 
-*Use pre-trained models only. Pytorch grad is off in this project, and model training is out of scope. If for some reason grad is needed, do `torch.set_grad_enabled(True)`*
+*Use pre-trained models only. Pytorch grad is off in this project, and model training is out of scope, except for the **`training_testing.py`** script, which is not accessible via the GUI. If for some reason grad is needed, do `torch.set_grad_enabled(True)`*
 
 `manual labeling`:
-- move less common funcs to a separate menu in manual labeling, add screenshot (fig.savefig)
+- move less common funcs to a separate menu in manual labeling
 - add channel toggles(?)
 - add autoscale click for y
 - add scorer name to metadata and state save files correctly
 - save progress automatically every N scores? maybe add checkmark, overwrite option?
 - jump to next unscored sample
 - decide how single label, multi scorer should be handled
-- could add mouse click to change state (or better keyboard controlls)
 
 `report`:
 - not yet started
