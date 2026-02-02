@@ -5,6 +5,7 @@ __pycache__/
 
 #large files
 proj_data/
+quality_plots/
 *.pt
 *.pth
 *.npz
