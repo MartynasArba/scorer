@@ -89,6 +89,15 @@ class PreprocessWidget(QWidget):
         #no param options        
         self.calculate_sum_power_check = QCheckBox("calculate sum power?") 
         self.calculate_band_power_check = QCheckBox("calculate band power?") 
+        #smoothing in feat extraction
+        self.feat_smoothen_check = QCheckBox("apply Gaussian smoothing to extracted features? filter sigma (s):")
+        self.smoothen_text = QLineEdit(self)
+        self.smoothen_text.setText("0.25")
+    
+        smoothing_layout = QHBoxLayout()
+        smoothing_layout.addWidget(self.feat_smoothen_check)
+        smoothing_layout.addWidget(self.smoothen_text)
+ 
         
         #checkmarks for saving options
         saving_layout = QHBoxLayout()
@@ -111,6 +120,8 @@ class PreprocessWidget(QWidget):
         
         for box in [self.calculate_sum_power_check, self.calculate_band_power_check]:
             layout.addWidget(box)
+        layout.addLayout(smoothing_layout)
+
         
         #button that runs everything
         main_btn = QPushButton("run preprocessing")
@@ -280,8 +291,9 @@ class PreprocessWidget(QWidget):
             if warn == QMessageBox.StandardButton.Cancel:
                 print('sum pow calculation cancelled')
             else:
-                ecog_power = sum_power(ecog, smoothing = 0.2, sr = int(self.params.get('sample_rate', 250)), device = self.params.get('device', 'cuda'), normalize = True, gaussian_smoothen=0.2)
-                emg_power = sum_power(emg, smoothing = 0.2, sr = int(self.params.get('sample_rate', 250)), device = self.params.get('device', 'cuda'), normalize = True, gaussian_smoothen=0.2)
+                smoothing_coef = float(self.smoothen_text.text()) if self.feat_smoothen_check.isChecked() else None
+                ecog_power = sum_power(ecog, smoothing = 0.2, sr = int(self.params.get('sample_rate', 250)), device = self.params.get('device', 'cuda'), normalize = True, gaussian_smoothen=smoothing_coef)
+                emg_power = sum_power(emg, smoothing = 0.2, sr = int(self.params.get('sample_rate', 250)), device = self.params.get('device', 'cuda'), normalize = True, gaussian_smoothen=smoothing_coef)
                 self.params['preprocessing']+= ['sum_pows_calculated']
                 self.params['channels_after_preprocessing'] += ['ecog_sum_power'] * len(self.params['ecog_channels'].split(',')) + ['emg_sum_power'] * len(self.params['emg_channels'].split(','))
                 print('sum pows calculated')
@@ -292,12 +304,13 @@ class PreprocessWidget(QWidget):
             if warn == QMessageBox.StandardButton.Cancel:
                 print('band pow calculation cancelled')
             else:
+                smoothing_coef = float(self.smoothen_text.text()) if self.feat_smoothen_check.isChecked() else None
                 bands = band_powers(signal = ecog, bands = {'delta': (0.5, 4),
                                                             'theta': (5, 9),
                                                             'alpha': (8, 13),
                                                             'sigma': (12, 15)}, 
                                     sr = int(self.params.get('sample_rate', 250)), 
-                                    device= self.params['device'], smoothen = 0.2)
+                                    device= self.params['device'], smoothen = smoothing_coef)
                 self.params['preprocessing']+= ['band_pows_calculated']
                 self.params['channels_after_preprocessing'] += list(bands.keys())
                 print('band pows calculated')

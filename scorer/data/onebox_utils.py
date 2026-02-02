@@ -379,7 +379,11 @@ def get_folder_quality_report(folder_path: str,
     res_list = []
     files = glob.glob(folder_path + '/*box*.csv')
     for file in files:
-        metrics, figure = generate_obx_quality_report(file, sample_size = 20, report_interval = 100, sr = 1000)
+        try:
+            metrics, figure = generate_obx_quality_report(file, sample_size = 20, report_interval = 100, sr = 1000)
+        except Exception as e:
+            print(f'{e} when generating plots for {file}')
+            continue
         metrics['file'] = [file for f in range(len(list(metrics.values())[0]))]
         res_list.append(pd.DataFrame.from_dict(metrics))
         print(f'report generated for {file}')    

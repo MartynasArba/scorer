@@ -74,8 +74,8 @@ def _preprocess(ecog: torch.Tensor, emg: torch.Tensor, metadata: dict) -> tuple:
         emg = _bandpass(emg, freqs, metadata)
         print('emg data filtered')
     
-        ecog_power = sum_power(ecog, smoothing = 0.2, sr = int(metadata.get('sample_rate', 1000)), device = metadata.get('device'), normalize = True)
-        emg_power = sum_power(emg, smoothing = 0.2, sr = int(metadata.get('sample_rate', 1000)), device = metadata.get('device'), normalize = True)
+        ecog_power = sum_power(ecog, smoothing = 0.2, sr = int(metadata.get('sample_rate', 1000)), device = metadata.get('device'), normalize = True, gaussian_smoothen=0.25)
+        emg_power = sum_power(emg, smoothing = 0.2, sr = int(metadata.get('sample_rate', 1000)), device = metadata.get('device'), normalize = True, gaussian_smoothen=0.25)
         print('sum pows calculated')
     
         bands = band_powers(signal = ecog, bands = {'delta': (0.5, 4),
@@ -83,7 +83,7 @@ def _preprocess(ecog: torch.Tensor, emg: torch.Tensor, metadata: dict) -> tuple:
                                                     'alpha': (8, 13),
                                                     'sigma': (12, 15)}, 
                             sr = int(metadata.get('sample_rate', 1000)), 
-                            device= metadata.get('device'), smoothen = 0.2)
+                            device= metadata.get('device'), smoothen = 0.25)
 
         print('band pows calculated')
         print('preprocessing done')
@@ -112,18 +112,18 @@ def raw_to_edf(csv_path: str) -> None:
         highlevel.write_edf(str(out_path), [ecog, emg], signal_headers, header)
         
 if __name__ == "__main__":
-    print('everything is commented out, edit script to do something')
+    # print('everything is commented out, edit script to do something')
     # import torch
     
     # raw_to_edf(r'g:\sleep-ecog-DOWNSAMPLED\20251124-1_g0_t0.obx0.obx_box1.csv')
     
 # converts whole folder to windows for ml
-    # import glob
-    # import tqdm
-    # paths = glob.glob(r'G:\oslo_data\*.csv')
-    # for i, path in enumerate(tqdm.tqdm(paths)):
-    #     print(i, path)
-    #     run_default_preprocessing(path)
+    import glob
+    import tqdm
+    paths = glob.glob(r'G:\oslo_data\*.csv')
+    for i, path in enumerate(tqdm.tqdm(paths)):
+        print(i, path)
+        run_default_preprocessing(path)
 # let's try checking whether states were actually saved
 #open one file, check shapes, check unique values in states
     # val_path = r"G:\oslo_data\windowed_trial_1_mouse_b1aqm2\X_trial_1_mouse_b1aqm2_chunk0.pt"
