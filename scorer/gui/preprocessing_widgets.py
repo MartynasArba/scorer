@@ -5,7 +5,7 @@ from PyQt5.QtWidgets import (
 )
 
 from torchaudio.functional import resample
-from scorer.data.preprocessing import bandpass_filter, sum_power, band_powers, notch_filter, band_signals, prescore_watson
+from scorer.data.preprocessing import bandpass_filter, sum_power, band_powers, notch_filter, band_signals, ratio_signals, prescore_watson
 from scorer.data.storage import save_tensor, save_windowed, save_metadata, load_from_csv, load_from_csv_in_chunks
 from pathlib import Path
 
@@ -86,15 +86,25 @@ class PreprocessWidget(QWidget):
         notch_layout.addWidget(self.notch_check)
         notch_layout.addWidget(self.notch_value_field)   
         
-        #no param options        
+        #feature extraction options        
+        feat_extraction_layout = QHBoxLayout()
+        feat_extraction_layout.addWidget(QLabel("don't select more than 1 band-based option!"))
         self.calculate_sum_power_check = QCheckBox("calculate sum power?") 
         self.calculate_band_power_check = QCheckBox("calculate band power?") 
+        self.calculate_band_signals = QCheckBox("calculate band signals?") 
+        self.calculate_complex_features_check = QCheckBox("calculate ratio-based features?") 
+        
+        feat_extraction_layout.addWidget(self.calculate_sum_power_check)
+        feat_extraction_layout.addWidget(self.calculate_band_power_check)
+        feat_extraction_layout.addWidget(self.calculate_band_signals)
+        feat_extraction_layout.addWidget(self.calculate_complex_features_check)
+        
         #smoothing in feat extraction
         self.feat_smoothen_check = QCheckBox("apply Gaussian smoothing to extracted features? filter sigma (s):")
         
         self.smoothen_text = QLineEdit(self)
         self.smoothen_text.setText("0.25")
-        self.calculate_band_signals = QCheckBox("calculate band signals? won't work with band powers") 
+        
     
         smoothing_layout = QHBoxLayout()
         smoothing_layout.addWidget(self.feat_smoothen_check)
@@ -119,13 +129,8 @@ class PreprocessWidget(QWidget):
         saving_layout.addWidget(self.save_overwrite_check)
         saving_layout.addWidget(self.add_filename_check)
         
-        for l in [chunk_layout, timechop_layout, sr_layout, filter_layout, emg_filter_layout, notch_layout, saving_layout]:
+        for l in [chunk_layout, timechop_layout, sr_layout, filter_layout, emg_filter_layout, notch_layout, feat_extraction_layout, smoothing_layout, saving_layout]:
             layout.addLayout(l)
-        
-        for box in [self.calculate_sum_power_check, self.calculate_band_power_check, self.calculate_band_signals]:
-            layout.addWidget(box)
-        layout.addLayout(smoothing_layout)
-
         
         #button that runs everything
         main_btn = QPushButton("run preprocessing")
@@ -341,15 +346,27 @@ class PreprocessWidget(QWidget):
             if warn == QMessageBox.StandardButton.Cancel:
                 print('band signal calculation cancelled')
             else:
-                bands = band_signals(signal = ecog, bands = {'delta': (0.5, 4),
-                                                            'theta': (5, 9),
-                                                            'alpha': (8, 13),
-                                                            'sigma': (12, 15)}, 
+                bands = band_signals(signal = ecog, 
+                                     bands = {'delta': (0.5, 4),
+                                                'theta': (5, 9),
+                                                'alpha': (8, 13),
+                                                'sigma': (12, 15)}, 
                                     sr = int(self.params.get('sample_rate', 250)), 
                                     device= self.params['device'])
                 self.params['preprocessing']+= ['band_signals_calculated']
                 self.params['channels_after_preprocessing'] += list(bands.keys())
-                print('band pows calculated')
+                print('band signals calculated')
+                
+        elif self.calculate_complex_features_check.isChecked():
+            if warn == QMessageBox.StandardButton.Cancel:
+                print('complex feature extraction calculation cancelled')
+            else:
+                bands = ratio_signals(signal = ecog, emg = emg,
+                                    sr = int(self.params.get('sample_rate', 250)), 
+                                    device= self.params['device'])
+                self.params['preprocessing']+= ['ratio_signals_calculated']
+                self.params['channels_after_preprocessing'] += list(bands.keys())
+                print('ratio signals calculated')
             
         else:
             bands = {None : None}        

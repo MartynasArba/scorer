@@ -377,6 +377,100 @@ def band_powers(signal: torch.Tensor,
         
     return band_envelopes   
 
+def _median_center(x: torch.Tensor) -> torch.Tensor:
+    """
+    helper: median-center signals along time dimension
+    preserves shape
+    """
+    if x.ndim == 1:
+        med = x.median()
+        return x - med
+    elif x.ndim == 2:
+        med = x.median(dim=1, keepdim=True).values
+        return x - med
+    else:
+        raise ValueError(f"Unexpected shape {x.shape}")
+
+def ratio_signals(signal: torch.Tensor, 
+                  emg: torch.Tensor,
+                  sr: int = 250, 
+                  device: str = 'cuda', 
+                  smoothen: float = 0.2) -> dict[torch.Tensor]:
+    """
+    generates custom measures: 
+    theta/delta ratio (REM-NREM axis)
+    beta/delta ratio (wake-sleep axis)
+    sigma/delta ratio (light NREM axis)
+    delta fraction = delta/(delta + theta + beta) (NREM "depth")
+    emg
+    """
+    eps = 1e-12
+    bands = {'delta': (0.5, 4),
+            'theta': (5, 9),
+            'sigma': (12, 15),
+            'beta': (15, 30)}
+    signal = signal.to(device) #make sure just in case
+    signal = signal.to(dtype = torch.float32)
+    if signal.ndim == 1:        #just in case a single channel with [, time] is passed
+            signal = signal.unsqueeze(0)
+    if signal.size(dim = 0) > 1:    #if there are more channels, takes the first one
+        print('multiple channels passed for band powers, using channel 0')
+        signal = signal[0, :]   #should be 1, time
+    
+    band_envelopes = {}
+    amplitudes = {}
+    
+    if smoothen:
+        kernel = gaussian_kernel(sigma = smoothen, sr = sr, device = device)
+    else:
+        kernel = None
+
+    for name, (low, high) in bands.items():
+        filtered = bandpass_filter(signal, sr, freqs = (low, high), device=device)  #still 1, time
+        #enforce 1d for Hilbert transform
+        if filtered.ndim == 2:          # 1, T or C, T
+            filtered1d = filtered[0]    # take channel 0
+        elif filtered.ndim == 1:     
+            filtered1d = filtered
+        else:
+            raise ValueError(f"Unexpected filtered shape: {filtered.shape}")
+       
+        analytic = hilbert_transform(filtered1d)        
+        amplitude = torch.abs(analytic) 
+        
+        #expand for convolution to 1, 1, time
+        amplitude = amplitude.unsqueeze(0).unsqueeze(0)
+        
+        if kernel is not None:
+            amplitude = F.conv1d(amplitude, kernel, padding = 'same').squeeze(0)
+        
+        #force 1, time always - reduce to single dim, then expand
+        amplitude = amplitude.squeeze(0).squeeze(0).unsqueeze(0)
+        
+        sub = amplitude[0, ::10]
+        q = torch.quantile(sub, q=0.98) #every 10th value for speed
+        amplitude = torch.clamp(amplitude, max = q) #remove vals above 98th quantile   
+        amplitudes[name] = amplitude
+        
+    ld = torch.log(amplitudes['delta'] + eps)
+    lt = torch.log(amplitudes['theta'] + eps)
+    lb = torch.log(amplitudes['beta']  + eps)
+    ls = torch.log(amplitudes['sigma'] + eps)
+    
+    band_envelopes['t_d_logratio'] = lt - ld
+    band_envelopes['b_d_logratio'] = lb - ld
+    band_envelopes['s_d_logratio'] = ls - ld
+    band_envelopes['delta_logfraction'] = ld - torch.log(amplitudes['delta'] + amplitudes['theta'] + amplitudes['beta']+ eps)
+
+    #handle EMG
+    band_envelopes['emg_logpower'] = torch.log(sum_power(emg, smoothing = 0.5, sr = sr, device = emg.device, normalize = False, gaussian_smoothen = None) + eps)   
+    #median center everything
+    for key, val in band_envelopes.items():
+        band_envelopes[key] = _median_center(val)
+        
+    return band_envelopes   
+
+
 def sum_power(signal: torch.Tensor, 
               smoothing: float = 0.2, 
               sr: int = 250, 
@@ -560,7 +654,7 @@ def get_pc1(S: torch.Tensor) -> torch.Tensor:
         raise ValueError(f"Expected (freq, time) or (channel, freq, time), got {tuple(S.shape)}")
 
     X = S.transpose(0, 1) # samples = time frames, features = frequency bins
-    Xc = X - X.mean(dim=0, keepdim=True) # center features like sklearn PCA
+    Xc = X - X.mean(dim=0, keepdim = True) # center features like sklearn PCA
     # SVD: Xc = U @ diag(S) @ Vh
     # components_ are rows of Vh
     U, Svals, Vh = torch.linalg.svd(Xc, full_matrices=False)
