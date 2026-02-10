@@ -925,5 +925,9 @@ def _parse_iso(ts: str) -> datetime:
         head, frac = ts.split(".", 1)
         frac = frac[:6]          # keep microseconds
         ts = f"{head}.{frac}"
-
-    return datetime.fromisoformat(ts)
+    try:
+        dt = datetime.fromisoformat(ts)
+    except:
+        print('datetime conversion failed, setting to default time')
+        dt = datetime.now()
+    return dt

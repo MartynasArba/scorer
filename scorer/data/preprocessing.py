@@ -277,6 +277,40 @@ def gaussian_kernel(sigma: float = 0.2, sr: int = 250, device: str = 'cuda'):
     kernel /= kernel.sum()  #normalize
     return kernel.view(1, 1, -1)
 
+def band_signals(signal: torch.Tensor, 
+                bands: dict = {'delta': (0.5, 4)}, 
+                sr: int = 250, 
+                device: str = 'cuda') -> dict[torch.Tensor]:
+    """
+    apply a simple bandpass filter, 
+    return band signals ("decompose")
+    """
+    signal = signal.to(device) #make sure just in case
+    signal = signal.to(dtype = torch.float32)
+    if signal.ndim == 1:        #just in case a single channel with [, time] is passed
+            signal = signal.unsqueeze(0)
+    if signal.size(dim = 0) > 1:    #if there are more channels, takes the first one
+        print('multiple channels passed for band powers, using channel 0')
+        signal = signal[0, :]   #should be 1, time
+    
+    band_signals = {}
+
+    for name, (low, high) in bands.items():
+        filtered = bandpass_filter(signal, sr, freqs = (low, high), device=device)  #still 1, time
+        #enforce 1d for Hilbert transform
+        if filtered.ndim == 2:          # 1, T or C, T
+            filtered1d = filtered[0]    # take channel 0
+        elif filtered.ndim == 1:     
+            filtered1d = filtered
+        else:
+            raise ValueError(f"Unexpected filtered shape: {filtered.shape}")
+        
+        #force 1, time always - reduce to single dim, then expand
+        filtered1d = filtered1d.squeeze(0).squeeze(0).unsqueeze(0)     
+        band_signals[name] = filtered1d
+        
+    return band_signals   
+
 def band_powers(signal: torch.Tensor, 
                 bands: dict = {'delta': (0.5, 4)}, 
                 sr: int = 250, 
@@ -514,7 +548,144 @@ def preprocess_test(sr: int = 250,
 
     plt.tight_layout()
     plt.show()
+    
+def get_pc1(S: torch.Tensor) -> torch.Tensor:
+    """
+    returns 1st pc, does no scaling, so like scikit-learn
+    """
+    # handle dims, keep 1st channel
+    if S.ndim == 3:
+        S = S[0]    #freq bin, time
+    elif S.ndim != 2:
+        raise ValueError(f"Expected (freq, time) or (channel, freq, time), got {tuple(S.shape)}")
 
+    X = S.transpose(0, 1) # samples = time frames, features = frequency bins
+    Xc = X - X.mean(dim=0, keepdim=True) # center features like sklearn PCA
+    # SVD: Xc = U @ diag(S) @ Vh
+    # components_ are rows of Vh
+    U, Svals, Vh = torch.linalg.svd(Xc, full_matrices=False)
+    # transform = Xc @ components_.T
+    # For pc1, components_[0] == Vh[0]
+    pc1 = Xc @ Vh[0]
+    return pc1.unsqueeze(0) #1, time
+
+
+def prescore_watson(ecog: torch.Tensor, 
+                    emg: torch.Tensor, 
+                    win_len: int = 1000, 
+                    sample_rate: int = 250,
+                    device = 'cuda') -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    pre-scores the data before loading using the method described in Watson et al. 2016
+    """
+    from torchaudio.transforms import Spectrogram
+
+    def __find_peaks(
+        x: torch.Tensor,
+        height: float | None = None,
+        distance: int | None = None,
+    ):
+        """
+        finds peaks by local maxima
+        height is min height, probably none
+        distance is distance between peaks
+        """
+        if x.ndim != 1:
+            raise ValueError("x must be 1D")
+        #finds local maxima
+        left  = x[:-2]
+        mid   = x[1:-1]
+        right = x[2:]
+        is_peak = (mid > left) & (mid > right)
+        peak_idx = torch.nonzero(is_peak, as_tuple=False).squeeze(1) + 1
+        if peak_idx.numel() == 0:
+            print('no peaks found!')
+            return peak_idx #if no peaks found, print and return
+
+        #height check, but will not bother
+        if height is not None:
+            peak_idx = peak_idx[x[peak_idx] >= height]
+        if peak_idx.numel() == 0:
+            print('peaks too low!')
+            return peak_idx # again return if filtered out
+
+        #min distance check
+        if distance is not None and distance > 1:
+            # Greedy selection like SciPy:
+            # sort by peak height descending
+            order = torch.argsort(x[peak_idx], descending=True)
+            peak_idx = peak_idx[order]
+            keep = []
+            for idx in peak_idx:
+                if all(abs(idx - kept) >= distance for kept in keep):
+                    keep.append(idx)
+            peak_idx = torch.tensor(keep, device=x.device, dtype=torch.long)
+            peak_idx = torch.sort(peak_idx).values
+        return peak_idx
+    
+    def _get_trough_value(x, subset_size=1000, bins=20):
+        x1 = x.reshape(-1)  # always 1D
+        n = x1.numel()  
+        if n == 0:
+            raise ValueError("empty x in _get_trough_value")
+        k = min(subset_size, n)
+        idxs = torch.randint(0, n, (k,), device=x1.device, dtype=torch.long)
+        sample = x1[idxs].detach().float().cpu()  # histogram on CPU
+        counts, edges = torch.histogram(sample, bins=bins)
+        peak_idx = __find_peaks(counts)
+        if peak_idx.numel() < 2:
+            # fallback: q3
+            return sample.quantile(q = 0.75).to(device=x.device)
+        trough_rel = torch.argmin(counts[peak_idx[0]:peak_idx[1]])
+        trough_idx = trough_rel + peak_idx[0]
+        return edges[trough_idx].to(device=x.device, dtype=torch.float32)
+        
+    ecog = ecog.T.contiguous().to(torch.float32)
+    ecog = ecog.squeeze(-1).unsqueeze(0)
+    emg = emg.T.contiguous().to(torch.float32)
+    emg  = emg.squeeze(-1).unsqueeze(0)
+    
+    spect = Spectrogram(n_fft = win_len,    #win_len can't be more than n_fft
+                        win_length = win_len,
+                        hop_length = win_len, #no overlap so hop = window
+                        power = 2.0,
+                        center = False).to(device = device)   
+    spect_ecog = spect(ecog)
+    spect_emg = spect(emg)
+
+    freq_bins = torch.fft.rfftfreq(win_len, d=1/sample_rate).to(device)
+    theta_mask = ((freq_bins >= 5) & (freq_bins <= 10))
+    other_mask = ((freq_bins >= 2) & (freq_bins <= 16))
+    
+    pc1 = get_pc1(spect_ecog)    
+    sum_theta = torch.sum(spect_ecog[:, theta_mask, :], dim = 1)
+    sum_other = torch.sum(spect_ecog[:, other_mask, :], dim = 1)
+    theta_ratio = sum_theta / (sum_other + 1e-12)   #to avoid 0 division
+    sum_emg = torch.sum(spect_emg[:, 1:, :], dim = 1)
+    
+    pc1_threshold = _get_trough_value(pc1, bins = 15).to(device)
+    theta_threshold = _get_trough_value(theta_ratio, bins = 25).to(device)
+    emg_threshold = _get_trough_value(sum_emg, bins = 15).to(device)
+    #now generate a states tensor
+    # keep its shape like the original data, so 1 x time?
+    states = torch.zeros_like(pc1).to(dtype = torch.long)
+    #now rules as in Watson 2016
+    rem_mask = (sum_emg <  emg_threshold) & (theta_ratio >= theta_threshold)
+    wake_mask = (sum_emg >=  emg_threshold) & (theta_ratio >= theta_threshold)
+    nrem_mask = (pc1 > pc1_threshold)
+    states[wake_mask] = 1
+    states[rem_mask] = 4
+    states[nrem_mask] = 2 # let 0 be unknown, 1 wake, 2 NREM, 4 REM to match original labels. no IS here;
+    print(states.unique(return_counts=True))
+    
+    out = states.repeat_interleave(win_len, dim=1)
+    out = out[:, :ecog.shape[1]]
+    if out.size() < ecog.size():
+        print('size mismatch in autoscore!')
+        return
+    
+    print(out.unique(return_counts = True))
+    return out
 
 if __name__ == "__main__":
     print('testing...')

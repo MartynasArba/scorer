@@ -5,7 +5,7 @@ from PyQt5.QtWidgets import (
 )
 
 from torchaudio.functional import resample
-from scorer.data.preprocessing import bandpass_filter, sum_power, band_powers, notch_filter
+from scorer.data.preprocessing import bandpass_filter, sum_power, band_powers, notch_filter, band_signals, prescore_watson
 from scorer.data.storage import save_tensor, save_windowed, save_metadata, load_from_csv, load_from_csv_in_chunks
 from pathlib import Path
 
@@ -91,8 +91,10 @@ class PreprocessWidget(QWidget):
         self.calculate_band_power_check = QCheckBox("calculate band power?") 
         #smoothing in feat extraction
         self.feat_smoothen_check = QCheckBox("apply Gaussian smoothing to extracted features? filter sigma (s):")
+        
         self.smoothen_text = QLineEdit(self)
         self.smoothen_text.setText("0.25")
+        self.calculate_band_signals = QCheckBox("calculate band signals? won't work with band powers") 
     
         smoothing_layout = QHBoxLayout()
         smoothing_layout.addWidget(self.feat_smoothen_check)
@@ -101,6 +103,7 @@ class PreprocessWidget(QWidget):
         
         #checkmarks for saving options
         saving_layout = QHBoxLayout()
+        self.prescore_check = QCheckBox('prescore the data using Watson 2016 method?')
         self.save_raw_check = QCheckBox('save raw tensors?')
         self.save_preprocessed_check = QCheckBox('save preprocessed tensors?')
         self.save_windowed_check = QCheckBox('save windowed data for scoring? window size:')
@@ -108,6 +111,7 @@ class PreprocessWidget(QWidget):
         self.win_len_field.setText("1000")
         self.save_overwrite_check = QCheckBox("overwrite files")
         self.add_filename_check = QCheckBox('add original file name when saving?')
+        saving_layout.addWidget(self.prescore_check)
         saving_layout.addWidget(self.save_raw_check)
         saving_layout.addWidget(self.save_preprocessed_check)
         saving_layout.addWidget(self.save_windowed_check)
@@ -118,7 +122,7 @@ class PreprocessWidget(QWidget):
         for l in [chunk_layout, timechop_layout, sr_layout, filter_layout, emg_filter_layout, notch_layout, saving_layout]:
             layout.addLayout(l)
         
-        for box in [self.calculate_sum_power_check, self.calculate_band_power_check]:
+        for box in [self.calculate_sum_power_check, self.calculate_band_power_check, self.calculate_band_signals]:
             layout.addWidget(box)
         layout.addLayout(smoothing_layout)
 
@@ -158,6 +162,16 @@ class PreprocessWidget(QWidget):
                 tensor_seq = self._preprocess(raw_ecog, raw_emg) #this should handle which preprocessing steps should be done 
                 self.label.setText('preprocessing done')
                 
+                if self.prescore_check.isChecked():
+                    print('prescoring start')
+                    states = prescore_watson(tensor_seq[0], 
+                                            tensor_seq[1], 
+                                            int(self.win_len_field.text()),
+                                            sample_rate= int(self.params.get('sample_rate', 250)),
+                                            device= self.params.get('device', 'cuda'))
+                    print('prescoring done')
+                                    
+                
                 if self.save_preprocessed_check.isChecked():
                     save_tensor(tensor_seq = tensor_seq, 
                                 metadata = self.params,
@@ -187,6 +201,7 @@ class PreprocessWidget(QWidget):
                 for i, (ecog_chunk, emg_chunk, states_chunk) in enumerate(load_from_csv_in_chunks(self.selected_file, metadata = self.params, states = states, chunk_size = chunk_size, times = times)):
                     print(f'read chunk {i}')
                     tensor_seq = (ecog_chunk, emg_chunk)
+                    
                     if self.save_raw_check.isChecked():
                         save_tensor(tensor_seq = tensor_seq, 
                                 metadata = self.params,
@@ -195,6 +210,14 @@ class PreprocessWidget(QWidget):
                                 raw = True)
                     
                     tensor_seq = self._preprocess(ecog_chunk, emg_chunk)
+                    
+                    if self.prescore_check.isChecked():
+                        print('prescoring start')
+                        states_chunk = prescore_watson(tensor_seq[0], 
+                                                       tensor_seq[1], 
+                                                       int(self.win_len_field.text()),
+                                                       sample_rate= int(self.params.get('sample_rate', 250)),
+                                                       device= self.params.get('device', 'cuda'))
                                         
                     if self.save_preprocessed_check.isChecked():                        
                         save_tensor(tensor_seq = tensor_seq, 
@@ -211,7 +234,6 @@ class PreprocessWidget(QWidget):
                                                 QMessageBox.StandardButton.Yes)
                         
                         # append_file = True if i > 0  else False  
-                            
                         save_windowed(tensors = tensor_seq, 
                                     states = states_chunk, 
                                     metadata = self.params, 
@@ -314,6 +336,20 @@ class PreprocessWidget(QWidget):
                 self.params['preprocessing']+= ['band_pows_calculated']
                 self.params['channels_after_preprocessing'] += list(bands.keys())
                 print('band pows calculated')
+                
+        elif self.calculate_band_signals.isChecked():
+            if warn == QMessageBox.StandardButton.Cancel:
+                print('band signal calculation cancelled')
+            else:
+                bands = band_signals(signal = ecog, bands = {'delta': (0.5, 4),
+                                                            'theta': (5, 9),
+                                                            'alpha': (8, 13),
+                                                            'sigma': (12, 15)}, 
+                                    sr = int(self.params.get('sample_rate', 250)), 
+                                    device= self.params['device'])
+                self.params['preprocessing']+= ['band_signals_calculated']
+                self.params['channels_after_preprocessing'] += list(bands.keys())
+                print('band pows calculated')
             
         else:
             bands = {None : None}        
@@ -386,3 +422,21 @@ class PreprocessWidget(QWidget):
         if filename:
             self.label.setText(f'{filename} selected for preprocessing, press run to do') 
             self.selected_file = filename          
+            
+def test_prescore():
+    """testing for the prescoring functionality"""
+    chunk_size = '1000000'
+    win_len = '1000'
+    
+    selected_file = r"C:\Users\marty\Projects\scorer\proj_data\raw\trial_1_mouse_b1aqm2.csv"
+
+    meta = {'time_channel':'0', 'ecog_channels': '1','emg_channels':'2', 'device': 'cuda'}
+    
+    for i, (ecog_chunk, emg_chunk, states_chunk) in enumerate(load_from_csv_in_chunks(selected_file, metadata = dict(meta), states = None, chunk_size = int(chunk_size), times = (None, None))):
+        print(f'read chunk {i}')
+        prescore_watson(ecog_chunk, emg_chunk, win_len = int(win_len), sample_rate = 250)
+        break
+
+if __name__ == '__main__':
+    print('testing...')
+    test_prescore()
