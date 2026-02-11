@@ -98,9 +98,20 @@ def evaluate_model(model, testloader):
             if not i % 2000:
                 print(f'accuracy: {correct/total}')
                 
+    #correct for 3- and 4- state models where there are 5  label classes
+    if len(np.unique(all_preds)) != len(np.unique(all_labels)):
+        print('correcting label mismatch')
+        all_preds = np.array(all_preds) + 1  #should be good for 4state, 0 is not classified
+        if len(np.unique(all_preds)) == 3: #3state will need reordering
+            print('3state found')
+            all_preds[all_preds == 3] += 1
+        else:
+            print('4state found')
+
+        
     return all_labels, all_preds, maxprobs
         
-def eval_plots(all_labels, all_preds, maxprobs, save_path):
+def eval_plots(all_labels, all_preds, maxprobs, save_path, tag = '_'):
     statedict = {
         0 : "Unlabeled",
         1 : "Awake",
@@ -113,7 +124,7 @@ def eval_plots(all_labels, all_preds, maxprobs, save_path):
     cb = plt.colorbar(im)
     plt.xlabel('prediction')
     plt.ylabel('label')
-    plt.savefig(save_path / 'training_plots/conf_matrix.png')
+    plt.savefig(save_path / f'training_plots/{tag}conf_matrix.png')
     plt.close()
 
     #check "confidence" by state - plot maximum probability
@@ -127,297 +138,91 @@ def eval_plots(all_labels, all_preds, maxprobs, save_path):
         ax[state].set(xlabel = statedict[state])
     fig.supxlabel("Confidence when predicting state")
     plt.tight_layout()
-    plt.savefig(save_path / 'training_plots/state_confidence.png')
+    plt.savefig(save_path / f'training_plots/{tag}_state_confidence.png')
     plt.close()
 
     #[0-unlabeled, 1-AWAKE, 2-NREM, 3-IS, 4-REM]
-    print(classification_report(all_labels, all_preds, target_names = ["1-AWAKE", "2-NREM", "3-IS", "4-REM"]))        #"0-unlabeled",
+    print(classification_report(all_labels, all_preds))        #"0-unlabeled",, target_names = ["1-AWAKE", "2-NREM", "3-IS", "4-REM"]
 
 
 if __name__ == "__main__":
+    import glob
     
-    torch.set_grad_enabled(True)
+    torch.set_grad_enabled(False)
     
     save_path = Path(r"C:\Users\marty\Projects\scorer\scorer\models")
     
     metadata = {'ecog_channels' : '1', 'emg_channels' : '2', 'sample_rate' : '250', 'ylim' : 'standard', 'device':'cuda'}
     
-    #model to implement
-    #'3state_CNN'
-    #load dataset
+    model_names = ['heuristic', '3state_ephysCNN', '4state_ephysCNN', '3state_fftCNN', '4state_fftCNN','3state_CNN', '4state_CNN']
+    
+    model_paths = glob.glob(r'C:\Users\marty\Projects\scorer\scorer\models\weights\*.pt')
+    #testing all models
+    
     dataset = SleepTraining(
-        data_path = 'G:/oslo_data',
-        n_files_to_pick = 300,
-        random_state = 0,
-        device = 'cuda',
-        transform = None,
-        augment = True,
-        metadata = metadata, 
-        balance = 'oversample',
-        exclude_labels = (0,3),#add labels to exclude here
-        merge_nrem = False
-    )    
+                            data_path = 'G:/oslo_data',
+                            n_files_to_pick = 100,
+                            random_state = 0,
+                            device = 'cuda',
+                            transform = None,
+                            augment = False,
+                            metadata = metadata
+                        )
+    loader = DataLoader(dataset, batch_size = 64)
     
-    #create dataloaders
-    train_size = .8
-    test_size = .2
+    for path in model_paths:
+        print(f'starting eval of {path}...')
+        model = torch.load(path, weights_only= False)
+        all_labels, all_preds, maxprobs = evaluate_model(model, loader)
+        print(accuracy_score(all_labels, all_preds))
+        eval_plots(all_labels, all_preds, maxprobs, save_path, tag = path[-30:-4].replace('\\', '_'))                        
     
-    lengths = [int(len(dataset) * train_size), int(len(dataset) * test_size)]
-    while sum(lengths) != len(dataset):
-        if sum(lengths) > len(dataset):
-            lengths[0] -= 1
-        elif sum(lengths) < len(dataset):
-            lengths[0] += 1
+    # #model to implement
+    # torch.set_grad_enabled(True)
+    # #load dataset
+    # dataset = SleepTraining(
+    #     data_path = 'G:/oslo_data',
+    #     n_files_to_pick = 300,
+    #     random_state = 0,
+    #     device = 'cuda',
+    #     transform = None,
+    #     augment = True,
+    #     metadata = metadata, 
+    #     balance = 'oversample',
+    #     exclude_labels = (0,3),#add labels to exclude here
+    #     merge_nrem = False
+    # )    
+    
+    # #create dataloaders
+    # train_size = .8
+    # test_size = .2
+    
+    # lengths = [int(len(dataset) * train_size), int(len(dataset) * test_size)]
+    # while sum(lengths) != len(dataset):
+    #     if sum(lengths) > len(dataset):
+    #         lengths[0] -= 1
+    #     elif sum(lengths) < len(dataset):
+    #         lengths[0] += 1
             
-    train_set, val_set = torch.utils.data.random_split(dataset, lengths)
-    trainloader = DataLoader(train_set, batch_size = 64)
-    testloader = DataLoader(val_set, batch_size = 64)
-    num_classes = len(torch.unique(dataset.all_labels))
-    device = metadata.get('device', 'cuda')
+    # train_set, val_set = torch.utils.data.random_split(dataset, lengths)
+    # trainloader = DataLoader(train_set, batch_size = 64)
+    # testloader = DataLoader(val_set, batch_size = 64)
+    # num_classes = len(torch.unique(dataset.all_labels))
+    # device = metadata.get('device', 'cuda')
     
-    model_name = 'weights/3state_CNN_2026-01-27.pt'
-    #create model
-    model = SleepCNN(num_classes = num_classes).to(device= device)#SleepCNN / FreqSleepCNN / EphysSleepCNN to use all features, mean_std = (dataset.mean, dataset.std) to standardize inputs
-    #crossentropy loss
-    criterion = nn.CrossEntropyLoss() # crossentropy for classification
-    # optimizer adam
-    optimizer = optim.Adam(model.parameters(),lr = 1e-3)
-    #train 
-    losses = train_model(model, trainloader, optimizer, criterion, device = 'cuda', epochs = 200, save_n_epochs = 20, save_path = save_path)
-    #should add save model, then load later if needed
-    torch.save(model, save_path / model_name)
-    print('model saved!')
-    
-    #model to implement
-    #'4state_CNN'
-    #load dataset
-    dataset = SleepTraining(
-        data_path = 'G:/oslo_data',
-        n_files_to_pick = 300,
-        random_state = 0,
-        device = 'cuda',
-        transform = None,
-        augment = True,
-        metadata = metadata, 
-        balance = 'oversample',
-        exclude_labels = (0,),#add labels to exclude here
-        merge_nrem = False
-    )    
-    
-    #create dataloaders
-    train_size = .8
-    test_size = .2
-    
-    lengths = [int(len(dataset) * train_size), int(len(dataset) * test_size)]
-    while sum(lengths) != len(dataset):
-        if sum(lengths) > len(dataset):
-            lengths[0] -= 1
-        elif sum(lengths) < len(dataset):
-            lengths[0] += 1
-            
-    train_set, val_set = torch.utils.data.random_split(dataset, lengths)
-    trainloader = DataLoader(train_set, batch_size = 64)
-    testloader = DataLoader(val_set, batch_size = 64)
-    num_classes = len(torch.unique(dataset.all_labels))
-    device = metadata.get('device', 'cuda')
-    
-    model_name = 'weights/4state_CNN_2026-01-27.pt'
-    #create model
-    model = SleepCNN(num_classes = num_classes).to(device= device)#SleepCNN / FreqSleepCNN / EphysSleepCNN to use all features, mean_std = (dataset.mean, dataset.std) to standardize inputs
-    #crossentropy loss
-    criterion = nn.CrossEntropyLoss() # crossentropy for classification
-    # optimizer adam
-    optimizer = optim.Adam(model.parameters(),lr = 1e-3)
-    #train 
-    losses = train_model(model, trainloader, optimizer, criterion, device = 'cuda', epochs = 200, save_n_epochs = 20, save_path = save_path)
-    #should add save model, then load later if needed
-    torch.save(model, save_path / model_name)
-    print('model saved!')
-    
-    #model to implement
-    #'3state_CNN_ephys_only'
-    #load dataset
-    dataset = SleepTraining(
-        data_path = 'G:/oslo_data',
-        n_files_to_pick = 300,
-        random_state = 0,
-        device = 'cuda',
-        transform = None,
-        augment = True,
-        metadata = metadata, 
-        balance = 'oversample',
-        exclude_labels = (0,3),#add labels to exclude here
-        merge_nrem = False
-    )    
-    
-    #create dataloaders
-    train_size = .8
-    test_size = .2
-    
-    lengths = [int(len(dataset) * train_size), int(len(dataset) * test_size)]
-    while sum(lengths) != len(dataset):
-        if sum(lengths) > len(dataset):
-            lengths[0] -= 1
-        elif sum(lengths) < len(dataset):
-            lengths[0] += 1
-            
-    train_set, val_set = torch.utils.data.random_split(dataset, lengths)
-    trainloader = DataLoader(train_set, batch_size = 64)
-    testloader = DataLoader(val_set, batch_size = 64)
-    num_classes = len(torch.unique(dataset.all_labels))
-    device = metadata.get('device', 'cuda')
-    
-    model_name = 'weights/3state_ephysCNN_2026-01-27.pt'
-    #create model
-    model = EphysSleepCNN(num_classes = num_classes).to(device= device)#SleepCNN / FreqSleepCNN / EphysSleepCNN to use all features, mean_std = (dataset.mean, dataset.std) to standardize inputs
-    #crossentropy loss
-    criterion = nn.CrossEntropyLoss() # crossentropy for classification
-    # optimizer adam
-    optimizer = optim.Adam(model.parameters(),lr = 1e-3)
-    #train 
-    losses = train_model(model, trainloader, optimizer, criterion, device = 'cuda', epochs = 200, save_n_epochs = 20, save_path = save_path)
-    #should add save model, then load later if needed
-    torch.save(model, save_path / model_name)
-    print('model saved!')
-    
-    #model to implement
-    #'4state_CNN_ephys_only'
-    #load dataset
-    dataset = SleepTraining(
-        data_path = 'G:/oslo_data',
-        n_files_to_pick = 300,
-        random_state = 0,
-        device = 'cuda',
-        transform = None,
-        augment = True,
-        metadata = metadata, 
-        balance = 'oversample',
-        exclude_labels = (0,),#add labels to exclude here
-        merge_nrem = False
-    )    
-    
-    #create dataloaders
-    train_size = .8
-    test_size = .2
-    
-    lengths = [int(len(dataset) * train_size), int(len(dataset) * test_size)]
-    while sum(lengths) != len(dataset):
-        if sum(lengths) > len(dataset):
-            lengths[0] -= 1
-        elif sum(lengths) < len(dataset):
-            lengths[0] += 1
-            
-    train_set, val_set = torch.utils.data.random_split(dataset, lengths)
-    trainloader = DataLoader(train_set, batch_size = 64)
-    testloader = DataLoader(val_set, batch_size = 64)
-    num_classes = len(torch.unique(dataset.all_labels))
-    device = metadata.get('device', 'cuda')
-    
-    model_name = 'weights/4state_ephysCNN_2026-01-27.pt'
-    #create model
-    model = EphysSleepCNN(num_classes = num_classes).to(device= device)#SleepCNN / FreqSleepCNN / EphysSleepCNN to use all features, mean_std = (dataset.mean, dataset.std) to standardize inputs
-    #crossentropy loss
-    criterion = nn.CrossEntropyLoss() # crossentropy for classification
-    # optimizer adam
-    optimizer = optim.Adam(model.parameters(),lr = 1e-3)
-    #train 
-    losses = train_model(model, trainloader, optimizer, criterion, device = 'cuda', epochs = 200, save_n_epochs = 20, save_path = save_path)
-    #should add save model, then load later if needed
-    torch.save(model, save_path / model_name)
-    print('model saved!')
-    
-    #model to implement
-    #'4state_CNN_FFT'
-    #load dataset
-    dataset = SleepTraining(
-        data_path = 'G:/oslo_data',
-        n_files_to_pick = 300,
-        random_state = 0,
-        device = 'cuda',
-        transform = None,
-        augment = True,
-        metadata = metadata, 
-        balance = 'oversample',
-        exclude_labels = (0,),#add labels to exclude here
-        merge_nrem = False
-    )    
-    
-    #create dataloaders
-    train_size = .8
-    test_size = .2
-    
-    lengths = [int(len(dataset) * train_size), int(len(dataset) * test_size)]
-    while sum(lengths) != len(dataset):
-        if sum(lengths) > len(dataset):
-            lengths[0] -= 1
-        elif sum(lengths) < len(dataset):
-            lengths[0] += 1
-            
-    train_set, val_set = torch.utils.data.random_split(dataset, lengths)
-    trainloader = DataLoader(train_set, batch_size = 64)
-    testloader = DataLoader(val_set, batch_size = 64)
-    num_classes = len(torch.unique(dataset.all_labels))
-    device = metadata.get('device', 'cuda')
-    
-    model_name = 'weights/4state_fftCNN_2026-01-27.pt'
-    #create model
-    model = FreqSleepCNN(num_classes = num_classes).to(device= device)#SleepCNN / FreqSleepCNN / EphysSleepCNN to use all features, mean_std = (dataset.mean, dataset.std) to standardize inputs
-    #crossentropy loss
-    criterion = nn.CrossEntropyLoss() # crossentropy for classification
-    # optimizer adam
-    optimizer = optim.Adam(model.parameters(),lr = 1e-3)
-    #train 
-    losses = train_model(model, trainloader, optimizer, criterion, device = 'cuda', epochs = 200, save_n_epochs = 20, save_path = save_path)
-    #should add save model, then load later if needed
-    torch.save(model, save_path / model_name)
-    print('model saved!')
-    
-    #model to implement
-    #'3state_CNN_FFT'
-    #load dataset
-    dataset = SleepTraining(
-        data_path = 'G:/oslo_data',
-        n_files_to_pick = 300,
-        random_state = 0,
-        device = 'cuda',
-        transform = None,
-        augment = True,
-        metadata = metadata, 
-        balance = 'oversample',
-        exclude_labels = (0,3),#add labels to exclude here
-        merge_nrem = False
-    )    
-    
-    #create dataloaders
-    train_size = .8
-    test_size = .2
-    
-    lengths = [int(len(dataset) * train_size), int(len(dataset) * test_size)]
-    while sum(lengths) != len(dataset):
-        if sum(lengths) > len(dataset):
-            lengths[0] -= 1
-        elif sum(lengths) < len(dataset):
-            lengths[0] += 1
-            
-    train_set, val_set = torch.utils.data.random_split(dataset, lengths)
-    trainloader = DataLoader(train_set, batch_size = 64)
-    testloader = DataLoader(val_set, batch_size = 64)
-    num_classes = len(torch.unique(dataset.all_labels))
-    device = metadata.get('device', 'cuda')
-    
-    model_name = 'weights/3state_fftCNN_2026-01-27.pt'
-    #create model
-    model = FreqSleepCNN(num_classes = num_classes).to(device= device)#SleepCNN / FreqSleepCNN / EphysSleepCNN to use all features, mean_std = (dataset.mean, dataset.std) to standardize inputs
-    #crossentropy loss
-    criterion = nn.CrossEntropyLoss() # crossentropy for classification
-    # optimizer adam
-    optimizer = optim.Adam(model.parameters(),lr = 1e-3)
-    #train 
-    losses = train_model(model, trainloader, optimizer, criterion, device = 'cuda', epochs = 200, save_n_epochs = 20, save_path = save_path)
-    #should add save model, then load later if needed
-    torch.save(model, save_path / model_name)
-    print('model saved!')
-    
+    # model_name = 'weights/3state_ephysCNN_2026-01-27.pt'
+    # #create model
+    # model = EphysSleepCNN(num_classes = num_classes).to(device= device)#SleepCNN / FreqSleepCNN / EphysSleepCNN to use all features, mean_std = (dataset.mean, dataset.std) to standardize inputs
+    # #crossentropy loss
+    # criterion = nn.CrossEntropyLoss() # crossentropy for classification
+    # # optimizer adam
+    # optimizer = optim.Adam(model.parameters(),lr = 1e-3)
+    # #train 
+    # losses = train_model(model, trainloader, optimizer, criterion, device = 'cuda', epochs = 200, save_n_epochs = 20, save_path = save_path)
+    # #should add save model, then load later if needed
+    # torch.save(model, save_path / model_name)
+    # print('model saved!')
+    # torch.cuda.empty_cache()
     
     # #plot loss
     # plt.plot(losses)

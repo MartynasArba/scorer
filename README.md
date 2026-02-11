@@ -35,8 +35,6 @@ A custom semi-automated sleep scorer in development
 *Use pre-trained models only. Pytorch grad is off in this project, and model training is out of scope, except for the **`training_testing.py`** script, which is not accessible via the GUI. If for some reason grad is needed, do `torch.set_grad_enabled(True)`*
 
 `manual labeling`:
-- move less common funcs to a separate menu in manual labeling
-- add channel toggles(?)
 - add autoscale click for y
 - add scorer name to metadata and state save files correctly
 - save progress automatically every N scores? maybe add checkmark, overwrite option?
@@ -82,3 +80,79 @@ scorer/
   - scores/           | Annotations
     - scorer1.json    | Scoring report
     - states.np
+
+## model stats
+Often better than they appear, but won't generalize well to all data.
+The evaluation is not performed properly and should not be relied upon, but gives some indication. 
+
+**3state_CNN_2026-01-27.pt**
+
+              precision    recall  f1-score   support
+
+           0       0.00      0.00      0.00     22077
+           1       0.79      0.88      0.83     42067
+           2       0.49      0.92      0.64     21127
+           3       0.00      0.00      0.00      6483
+           4       0.27      0.89      0.41      2270
+
+    accuracy                           0.62     94024
+
+**3state_ephysCNN_2026-01-27.pt**
+
+              precision    recall  f1-score   support
+
+           0       0.00      0.00      0.00     22077
+           1       0.83      0.90      0.86     42067
+           2       0.49      0.95      0.64     21127
+           3       0.00      0.00      0.00      6483
+           4       0.29      0.92      0.44      2270
+
+    accuracy                           0.64     94024
+
+**3state_fftCNN_2026-01-27.pt**
+
+              precision    recall  f1-score   support
+
+           0       0.00      0.00      0.00     22077
+           1       0.83      0.88      0.86     42067
+           2       0.49      0.93      0.64     21127
+           3       0.00      0.00      0.00      6483
+           4       0.24      0.93      0.38      2270
+
+    accuracy                           0.63     94024
+
+**4state_CNN_2026-01-27.pt**
+
+              precision    recall  f1-score   support
+
+           0       0.00      0.00      0.00     22077
+           1       0.80      0.84      0.82     42067
+           2       0.57      0.76      0.65     21127
+           3       0.42      0.85      0.56      6483
+           4       0.23      0.92      0.37      2270
+
+    accuracy                           0.63     94024
+
+**4state_ephysCNN_2026-01-27.pt**
+
+              precision    recall  f1-score   support
+
+           0       0.00      0.00      0.00     22077
+           1       0.81      0.90      0.85     42067
+           2       0.56      0.78      0.65     21127
+           3       0.43      0.82      0.57      6483
+           4       0.32      0.83      0.46      2270
+
+    accuracy                           0.65     94024
+
+**4state_fftCNN_2026-01-27.pt**
+
+              precision    recall  f1-score   support
+
+           0       0.00      0.00      0.00     22077
+           1       0.82      0.91      0.86     42067
+           2       0.58      0.71      0.64     21127
+           3       0.38      0.84      0.52      6483
+           4       0.29      0.88      0.44      2270
+
+    accuracy                           0.65     94024
