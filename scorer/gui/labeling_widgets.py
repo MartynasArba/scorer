@@ -417,6 +417,7 @@ class SleepGUI(QWidget):
             self.signal_canvas.mpl_connect("button_press_event", self._on_mouse_press),
             self.signal_canvas.mpl_connect("motion_notify_event", self._on_mouse_move),
             self.signal_canvas.mpl_connect("button_release_event", self._on_mouse_release),
+            self.signal_canvas.mpl_connect("scroll_event", self._on_scroll), 
         ]
 
         # reset drag state
@@ -560,6 +561,26 @@ class SleepGUI(QWidget):
         self._plot_cache["label"] = None
         self._plot_cache["idx"] = None
         self.update_screen()
+        
+    def _on_scroll(self, event):
+        """
+        mouse wheel scroll:
+        - up is previous frame
+        - down is next frame
+        """
+        if self._len_dataset == 0:
+            return
+
+        if event.step > 0:
+            new_idx = self.current_idx - 1
+        else:
+            new_idx = self.current_idx + 1
+
+        new_idx = max(0, min(new_idx, self._len_dataset - 1))
+
+        if new_idx != self.current_idx:
+            self.current_idx = new_idx
+            self.update_screen()
 
         
     # UPDATE UI

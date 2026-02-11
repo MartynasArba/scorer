@@ -37,14 +37,17 @@ def score_signal(data_path, state_save_folder, meta, scorer_type = 'heuristic'):
                          '4state_fftCNN': FreqSleepCNN}
     
     selected_scorer = available_scorers.get(scorer_type)
-    
-    dataset = SleepSignals(data_path = data_path, 
+    try:
+        dataset = SleepSignals(data_path = data_path, 
                         score_path = data_path, 
                         device = meta.get('device', 'cpu'),
                         transform = None,
                         augment = False,
                         spectral_features = None,
                         metadata = meta)
+    except Exception as e:      #should be changed, but it's not filenotfounderror, but runtimeerror in loaders.py
+        print(f'whoops: {e}')
+        return
     
     if scorer_type == 'heuristic':
         scorer = selected_scorer(dataset)

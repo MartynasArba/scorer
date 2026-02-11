@@ -28,7 +28,8 @@ class SettingsWidget(QWidget):
                         'time_channel': '3',
                         'spectral_options': None,
                         'ylim': 'infer_ephys',
-                        'device': 'cuda'
+                        'device': 'cuda',
+                        'optional_tag': ''
                         }
         
         #main layout
