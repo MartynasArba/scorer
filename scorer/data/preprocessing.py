@@ -770,6 +770,7 @@ def prescore_watson(ecog: torch.Tensor,
     states[wake_mask] = 1
     states[rem_mask] = 4
     states[nrem_mask] = 2 # let 0 be unknown, 1 wake, 2 NREM, 4 REM to match original labels. no IS here;
+  
     print(states.unique(return_counts=True))
     
     out = states.repeat_interleave(win_len, dim=1)
