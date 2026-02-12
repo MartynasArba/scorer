@@ -6,7 +6,7 @@ import torch
 import numpy as np
 import pandas as pd
 
-def construct_paths(data_path: str, format: str = '.pkl', **metadata) ->tuple[str, str]:    
+def construct_paths(data_path: str, format: str = '.pkl', add = '', **metadata) ->tuple[str, str]:    
     """
     returns save paths for .pt data file and state annotation file   
     """
@@ -32,12 +32,12 @@ def construct_paths(data_path: str, format: str = '.pkl', **metadata) ->tuple[st
         if not os.path.exists(score_folder):
             os.makedirs(score_folder)
         
-        states_array_path = score_folder / f'{unique_id}{metadata.get('optional_tag', '')}_scores_{scorer}_{date}_{animal}_{trial}_{repetition_id}{format}'
+        states_array_path = score_folder / f'{unique_id}{metadata.get('optional_tag', '')}_scores_{scorer}_{date}_{animal}_{trial}_{repetition_id}_frame{add}{format}'
         
         #don't overwrite existing files
         while states_array_path.exists():
             repetition_id += 1
-            states_array_path = score_folder / f'{unique_id}{metadata.get('optional_tag', '')}_scores_{scorer}_{date}_{animal}_{trial}_{repetition_id}{format}'
+            states_array_path = score_folder / f'{unique_id}{metadata.get('optional_tag', '')}_scores_{scorer}_{date}_{animal}_{trial}_{repetition_id}_frame{add}{format}'
     
         return y_file_path, states_array_path
 

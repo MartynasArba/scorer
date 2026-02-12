@@ -128,21 +128,32 @@ class SleepGUI(QWidget):
         btn_load_other_scorers = QPushButton("load non-interactable annotations")
         btn_load_other_scorers.clicked.connect(self.load_passive_scorer)
         control_layout.addWidget(btn_load_other_scorers)
+        
+        btn_prev_state = QPushButton("<< prev state")
+        btn_prev_state.clicked.connect(self.prev_change)
+        btn_prev_state.setShortcut("Shift+Left")
+        control_layout.addWidget(btn_prev_state)
 
-        btn_prev = QPushButton("prev frame (<)")
+        btn_prev = QPushButton("< prev frame")
         btn_prev.clicked.connect(self.prev)
-        btn_prev.setShortcut("<")
+        btn_prev.setShortcut("Left")
         control_layout.addWidget(btn_prev)
 
-        btn_next = QPushButton("next frame (>)")
-        btn_next.clicked.connect(self.next)
-        btn_next.setShortcut(">")
-        control_layout.addWidget(btn_next)
 
         btn_jump = QPushButton("jump to frame")
         btn_jump.clicked.connect(self.jump)
         control_layout.addWidget(btn_jump)
+        
+        btn_next = QPushButton("next frame >")
+        btn_next.clicked.connect(self.next)
+        btn_next.setShortcut("Right")
+        control_layout.addWidget(btn_next)
 
+        btn_next_state = QPushButton("next state >>")
+        btn_next_state.clicked.connect(self.next_change)
+        btn_next_state.setShortcut("Shift+Right")
+        control_layout.addWidget(btn_next_state)
+        
         btn_plus = QPushButton("increase time scale (+)")
         btn_plus.clicked.connect(self.increase_scale)
         btn_plus.setShortcut("+")
@@ -769,7 +780,7 @@ class SleepGUI(QWidget):
 
     # SAVE/LOAD SCORES
     def save_states(self) -> None:
-        _, self.score_save_path = construct_paths(self.data_path)
+        _, self.score_save_path = construct_paths(self.data_path, add = str(self.current_idx))
         save_pickled_states(self.states, self.score_save_path)
         self.status_label.setText(f"Saved states to {self.score_save_path}")
 
@@ -840,7 +851,51 @@ class SleepGUI(QWidget):
     def frame_slider_func(self, value: int) -> None:
         if 0 <= value < max(1, self._len_dataset):
             self._set_idx_and_update(value)
-    
+            
+    def _segment_starts(self) -> np.ndarray:
+        """
+        get idx of state segment starts
+        """
+        if self._len_dataset == 0:
+            return np.array([0], dtype=int)
+
+        s = self.states
+        #start of a new segment is where state changes from previous, but 1st always starts from 0
+        starts = np.flatnonzero(s[1:] != s[:-1]) + 1
+        return np.concatenate(([0], starts)).astype(int)
+            
+    def next_change(self) -> None:
+        """jump to next state change of active scorer"""
+        if self._len_dataset == 0:
+            return
+
+        starts = self._segment_starts()
+        i = int(self.current_idx)
+
+        next_starts = starts[starts > i]    #filter out segment start idxs that are after current idx
+
+        if next_starts.size == 0:
+            self.status_label.setText("no next state available")
+            return
+
+        self._set_idx_and_update(int(next_starts[0]))
+
+    def prev_change(self) -> None:
+        """jump to previous state change"""
+        if self._len_dataset == 0:
+            return
+
+        starts = self._segment_starts() #same logic as before
+        i = int(self.current_idx)
+                
+        prev_starts = starts[starts < i]#filter out segment starts that are before current idx
+
+        if prev_starts.size == 0:
+            self.status_label.setText("no previous state available")
+            return
+
+        self._set_idx_and_update(int(prev_starts[-1]))
+
     # CHANGE Y SCALE
     def _slider_to_yscale(self, slider_val: int) -> float:
         """map slider 0 to 1000 > yscale in log"""
