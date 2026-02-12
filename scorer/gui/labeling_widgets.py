@@ -74,7 +74,7 @@ class SleepGUI(QWidget):
         self.yscale = 1.0
         self.yscale_log_min = math.log(0.1)   # for log slider
         self.yscale_log_max = math.log(10.0)  
-        
+        self.yscale_ephys_only = False
 
         # annotation array and settings
         self.states = np.array([], dtype=int)
@@ -171,6 +171,10 @@ class SleepGUI(QWidget):
         btn_y_minus = QPushButton("- y scale")
         btn_y_minus.clicked.connect(self.decrease_yscale)
         control_layout.addWidget(btn_y_minus)
+        
+        yscale_ephys_check = QCheckBox("change y scale of only 0-1 chs?")
+        yscale_ephys_check.stateChanged.connect(self._yscale_ephys_only)
+        control_layout.addWidget(yscale_ephys_check)
 
         btn_reset = QPushButton("reset")
         btn_reset.clicked.connect(self.reset_settings)
@@ -897,6 +901,9 @@ class SleepGUI(QWidget):
         self._set_idx_and_update(int(prev_starts[-1]))
 
     # CHANGE Y SCALE
+    def _yscale_ephys_only(self):
+        self.yscale_ephys_only = not self.yscale_ephys_only
+    
     def _slider_to_yscale(self, slider_val: int) -> float:
         """map slider 0 to 1000 > yscale in log"""
         frac = slider_val / 1000.0
@@ -914,7 +921,10 @@ class SleepGUI(QWidget):
         if abs(new_yscale - self.yscale) < 1e-9:
             return
         self.yscale = new_yscale
-        self.ylims = [(center, spread * self.yscale) for center, spread in self.ylim_defaults]
+        if not self.yscale_ephys_only:
+            self.ylims = [(center, spread * self.yscale) for center, spread in self.ylim_defaults]
+        else:
+            self.ylims = [(yparams[0], yparams[1] * self.yscale) if ch < 2 else (yparams[0], yparams[1]) for ch, yparams in enumerate(self.ylim_defaults)]
         self.update_screen()
 
     def change_yscale(self, value: int) -> None:

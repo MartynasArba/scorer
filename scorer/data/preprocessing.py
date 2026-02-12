@@ -229,6 +229,97 @@ def fft_filtfilt(x: torch.Tensor, taps: torch.Tensor, padlen_factor: int = 3) ->
     else:
         return y_final
 
+#updated filter functions to match scipy closer
+def _odd_pad_1d(x: torch.Tensor, padlen: int) -> torch.Tensor:
+    """
+    SciPy-style odd extension padding along the last dim
+    x: (..., T)
+    returns (..., T + 2*padlen)
+    """
+    if padlen <= 0:
+        return x
+    T = x.shape[-1]
+    if T <= padlen:
+        raise ValueError(f"Input too short for padlen={padlen} (T={T}).")
+
+    x0 = x[..., :1]          # (..., 1)
+    xN = x[..., -1:]         # (..., 1)
+
+    left_src  = x[..., 1:padlen+1].flip(-1)        # (..., padlen)
+    right_src = x[..., -padlen-1:-1].flip(-1)      # (..., padlen)
+
+    left  = 2.0 * x0 - left_src
+    right = 2.0 * xN - right_src
+    return torch.cat([left, x, right], dim=-1)
+
+def _fft_lfilter_fir(x: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    """
+    FIR causal filtering like scipy.signal.lfilter(b, [1], x),
+    implemented via FFT convolution.
+    
+    x: (..., T)
+    b: (K,)
+    returns (..., T)
+    """
+    y_full = fft_convolve_1d(x, b)      # (..., T+K-1)
+    T = x.shape[-1]
+    return y_full[..., :T]
+
+
+def fft_filtfilt_fir(
+    x: torch.Tensor,
+    taps: torch.Tensor,
+    padlen_factor: int = 3,
+    ) -> torch.Tensor:
+    """
+    SciPy-like filtfilt for FIR taps
+    odd extension padding (padtype='odd'), not same as it was before
+    forward/backward causal FIR filtering instead of flipping the signal and reapplying as before
+    x can be: (T,), (C,T), (B,C,T)
+    taps: (K,) odd recommended
+    """
+    orig_shape = x.shape
+    single_channel = False
+
+    if x.ndim == 1:
+        x = x.unsqueeze(0).unsqueeze(0)  # (1,1,T)
+        single_channel = True
+    elif x.ndim == 2:
+        x = x.unsqueeze(0)               # (1,C,T)
+    elif x.ndim != 3:
+        raise ValueError(f"Expected (T), (C,T) or (B,C,T), got {x.shape}")
+
+    B, C, T = x.shape
+    device = x.device
+    dtype = x.dtype
+
+    b = taps.to(device=device, dtype=dtype)
+    K = b.numel()
+    if K < 2:
+        return x.squeeze(0).squeeze(0) if single_channel else (x.squeeze(0) if len(orig_shape)==2 else x)
+
+    padlen = padlen_factor * (K - 1)
+    if T <= padlen:
+        raise ValueError(f"Input too short for padlen={padlen} (T={T}).")
+
+    x_pad = _odd_pad_1d(x, padlen)   # (B,C,T+2*padlen)
+    x2 = x_pad.reshape(B * C, -1)
+    y = _fft_lfilter_fir(x2, b)      # (B*C, Tpad)
+    # reverse, filter, reverse
+    y_rev = torch.flip(y, dims=[-1])
+    y2 = _fft_lfilter_fir(y_rev, b)
+    y_out = torch.flip(y2, dims=[-1])
+    # crop pad
+    y_out = y_out.reshape(B, C, -1)
+    y_final = y_out[..., padlen:padlen + T]  # (B,C,T)
+    # restore original shape
+    if single_channel:
+        return y_final.squeeze(0).squeeze(0)
+    elif len(orig_shape) == 2:
+        return y_final.squeeze(0)
+    else:
+        return y_final
+
 def bandpass_filter(signal: torch.Tensor,
                         sr: int = 250,
                         freqs: tuple = (0.1, 49.0),
@@ -240,7 +331,7 @@ def bandpass_filter(signal: torch.Tensor,
     hopefully fast!
     """   
     taps = design_bandpass_hamming(sr, freqs[0], freqs[1], transition_width = 1.0, device = device)
-    y = fft_filtfilt(signal, taps)
+    y = fft_filtfilt_fir(signal, taps)
     return y
 
 def hilbert_transform(x: torch.Tensor) -> torch.Tensor:
@@ -463,7 +554,7 @@ def ratio_signals(signal: torch.Tensor,
     band_envelopes['delta_logfraction'] = ld - torch.log(amplitudes['delta'] + amplitudes['theta'] + amplitudes['beta']+ eps)
 
     #handle EMG
-    band_envelopes['emg_logpower'] = torch.log(sum_power(emg, smoothing = 0.5, sr = sr, device = emg.device, normalize = False, gaussian_smoothen = None) + eps)   
+    band_envelopes['emg_logpower'] = torch.log(sum_power(emg, smoothing = 1, sr = sr, device = emg.device, normalize = False, gaussian_smoothen = None) + eps)   
     #median center everything
     for key, val in band_envelopes.items():
         band_envelopes[key] = _median_center(val)
@@ -717,7 +808,7 @@ def prescore_watson(ecog: torch.Tensor,
             peak_idx = torch.sort(peak_idx).values
         return peak_idx
     
-    def _get_trough_value(x, subset_size=1000, bins=20):
+    def _get_trough_value(x, subset_size=100000, bins=20, fallback = 0.9):
         x1 = x.reshape(-1)  # always 1D
         n = x1.numel()  
         if n == 0:
@@ -728,8 +819,8 @@ def prescore_watson(ecog: torch.Tensor,
         counts, edges = torch.histogram(sample, bins=bins)
         peak_idx = __find_peaks(counts)
         if peak_idx.numel() < 2:
-            # fallback: q3
-            return sample.quantile(q = 0.75).to(device=x.device)
+            # fallback: q90
+            return sample.quantile(q = fallback).to(device=x.device)
         trough_rel = torch.argmin(counts[peak_idx[0]:peak_idx[1]])
         trough_idx = trough_rel + peak_idx[0]
         return edges[trough_idx].to(device=x.device, dtype=torch.float32)
@@ -757,9 +848,9 @@ def prescore_watson(ecog: torch.Tensor,
     theta_ratio = sum_theta / (sum_other + 1e-12)   #to avoid 0 division
     sum_emg = torch.sum(spect_emg[:, 1:, :], dim = 1)
     
-    pc1_threshold = _get_trough_value(pc1, bins = 15).to(device)
-    theta_threshold = _get_trough_value(theta_ratio, bins = 25).to(device)
-    emg_threshold = _get_trough_value(sum_emg, bins = 15).to(device)
+    pc1_threshold = _get_trough_value(pc1, bins = 20, fallback = 0.5).to(device)
+    theta_threshold = _get_trough_value(theta_ratio, bins = 30, fallback = 0.9).to(device)
+    emg_threshold = _get_trough_value(sum_emg, bins = 20, fallback = 0.5).to(device)
     #now generate a states tensor
     # keep its shape like the original data, so 1 x time?
     states = torch.zeros_like(pc1).to(dtype = torch.long)
