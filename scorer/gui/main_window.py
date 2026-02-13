@@ -58,7 +58,7 @@ class SleepWindow(QMainWindow):
         self.preprocess_tab = PreprocessWidget(self.metadata)
         self.auto_scoring_tab = AutoScoringWidget(self.metadata)
         self.scoring_tab = SleepGUI(dataset = None, metadata = self.metadata)
-        self.report_tab = ReportWidget()
+        self.report_tab = ReportWidget(metadata = self.metadata)
 
         #add as tabs
         tabs.addTab(self.settings_tab, "settings and metadata")

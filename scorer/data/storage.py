@@ -552,6 +552,18 @@ def load_from_csv_in_chunks(path: str,
             states_chunk = torch.tensor(chunk.iloc[:, states].values, device=device) if states else None 
             yield ecog_chunk, emg_chunk, states_chunk
         
+def get_timearray_for_states(states: np.ndarray, win_len: int = 1000, metadata: dict = {}) -> pd.Series:
+    """generates a np.datetime64 array matching state data"""
+    #states is np array of win size
+    #window size s
+    win_len_s = win_len / int(metadata.get('sample_rate', 250))
+    rec_len_s = int(win_len_s * len(states))
+    start_time = np.datetime64(metadata.get('rec_start', np.datetime64('now')))
+    duration = np.timedelta64(rec_len_s, 's')
+    end_time = start_time + duration
+
+    full_time_array = np.arange(start_time, end_time, np.timedelta64(int(win_len_s), 's'))
+    return pd.to_datetime(full_time_array)
         
 if __name__ == "__main__":
     #testing

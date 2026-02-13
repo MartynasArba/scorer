@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from typing import Tuple
 import matplotlib.ticker as mticker
+import matplotlib.dates as mdates
 from datetime import datetime
 DAY = 24 * 60 * 60
 
@@ -297,3 +298,57 @@ class TimeOfDayFormatter(mticker.Formatter):
         # fallback: build a datetime for weird fmt
         dt = datetime(2000, 1, 1, h, m, s)
         return dt.strftime(self.fmt)
+    
+    
+def hypnogram(states: str, time_array: np.ndarray, 
+              state_mapping: dict = {0:'Unknown', 1:'Wake', 2:'NREM', 3:'IS', 4:'REM'}, 
+               metadata: dict = {}) -> plt.Figure:
+    """
+    reads a pickle states file and plots a hypnogram based on metadata
+    """
+    ticks = [k for k,v in state_mapping.items()]
+    ticklabels = [v for k, v in state_mapping.items()]
+    
+    title = f'hypnogram_{metadata.get('filename', '')}_{metadata.get('scorer', '')}_{metadata.get('animal_id', '')}'
+    fig, ax = plt.subplots(figsize = (15, 5))
+    
+    ax.plot(time_array, states)
+    ax.xaxis.set_major_locator(mdates.HourLocator(interval=1))
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%H'))
+    ax.set_xlim(time_array.min(), time_array.max())
+    ax.tick_params(axis = 'x', rotation = 90)
+    ax.set_yticks(ticks)
+    ax.set_yticklabels(ticklabels)
+    fig.suptitle(title)
+    plt.tight_layout()
+    return fig
+
+if __name__ == "__main__":
+    import pickle
+    from scorer.data.storage import get_timearray_for_states
+    path = r"C:\Users\marty\Desktop\SCORING202602\2025-11-27-1\scores\noID_scores_windowed_20260212180921 20251127-1_g0_t0.ob____1_frame10787.pkl"
+    meta = {"scoring_started": "20260212180921", 
+            "project_path": "C:/Users/marty/Desktop/SCORING202602/20251127-1", 
+            "scorer": "Martynas", 
+            "animal_id": "4F", 
+            "group": "HYDR", 
+            "trial": "1", 
+            "sample_rate": 250, 
+            "time_channel": "3", 
+            "ecog_channels": "0", 
+            "emg_channels": "2", 
+            "ylim": "infer", 
+            "spectral_view": None, 
+            "device": "cuda", 
+            "optional_tag": " ", 
+            "date": "2026_02_12", 
+            "metadata_path": "C:/Users/marty/Desktop/SCORING202602/20251127-1/20260212180921_meta.json", 
+            "filename": "20251127-1_g0_t0.obx0.obx_box1", 
+            "rec_start": "2025-11-27 19:16:00.301587302\n", 
+            "channels_after_preprocessing": ["ecog", "emg", "t_d_logratio", "b_d_logratio", "s_d_logratio", "delta_logfraction", "emg_logpower"], 
+            "preprocessing": ["bandpass", "bandpass", "ratio_signals_calculated", "resampling"], "filter_params": [[10.0, 100.0]], 
+            "old_sample_rate": "1000"}
+    with open(path, 'rb') as f:
+        states = pickle.load(f)
+    time_array = get_timearray_for_states(states, win_len = 1000, metadata = meta)
+    hypnogram(states, time_array= time_array, metadata = meta)
