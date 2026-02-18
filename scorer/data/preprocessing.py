@@ -115,8 +115,9 @@ def design_notch_hamming(fs: int, notch_center: float,
 
     # correct center sample
     c = (M - 1)//2
-    h_bs[c] = (w1 - 0) / math.pi + (math.pi - w2) / math.pi
-
+    h_bs[c] = 1.0 - (w2 - w1) / math.pi # corrected
+    # h_bs[c] = (w1 - 0) / math.pi + (math.pi - w2) / math.pi OLD
+    
     # Hamming window
     n = torch.arange(M, device=device, dtype=dtype)
     hamming = 0.54 - 0.46 * torch.cos(2 * math.pi * n / (M - 1))
@@ -137,10 +138,12 @@ def design_notch_hamming(fs: int, notch_center: float,
 def fft_convolve_1d(x: torch.Tensor, h: torch.Tensor) -> torch.Tensor:
     """
     Linear convolution via FFT on GPU.
-    x: (..., time) - 1 channel data
-    h: (K,) - filter kernel
+    x: (..., time) 
+    h: (K,) - 1d filter kernel
     Returns same dtype/device.
     """
+    assert h.ndim == 1, f'h must be 1D, got {tuple(h.shape)}'
+    
     T = x.shape[-1]
     K = h.shape[-1]
     L = T + K - 1   #length of convolution L = time + kernel_length -1 
@@ -239,7 +242,7 @@ def _odd_pad_1d(x: torch.Tensor, padlen: int) -> torch.Tensor:
     if padlen <= 0:
         return x
     T = x.shape[-1]
-    if T <= padlen:
+    if T < padlen + 2:
         raise ValueError(f"Input too short for padlen={padlen} (T={T}).")
 
     x0 = x[..., :1]          # (..., 1)
@@ -343,7 +346,10 @@ def hilbert_transform(x: torch.Tensor) -> torch.Tensor:
     if x.ndim == 0:
         raise ValueError("hilbert_transform expected a 1D time series, got a scalar (0D tensor).")
     if x.ndim > 1:
-        x = x.reshape(-1)  # flatten
+        raise ValueError(
+            f"hilbert_transform requires a 1D tensor, got shape {tuple(x.shape)}. "
+            "Slice a single channel before calling, e.g. hilbert_transform(x[0])."
+        )
     
     fourier = torch.fft.fft(x)  #get fft
     h = torch.zeros_like(fourier)
@@ -452,7 +458,7 @@ def band_powers(signal: torch.Tensor,
         amplitude = amplitude.squeeze(0).squeeze(0).unsqueeze(0)
         
         eps = 1e-20
-        sub = amplitude[0, ::10]
+        sub = amplitude[0, ::10] if amplitude.shape[-1] > 100 else amplitude[0] #ensure there is enough data
         q = torch.quantile(sub, q=0.98) #every 10th value for speed
         q25 = torch.quantile(sub, q=0.25)
         q75 = torch.quantile(sub, q=0.75)
@@ -866,10 +872,11 @@ def prescore_watson(ecog: torch.Tensor,
     
     out = states.repeat_interleave(win_len, dim=1)
     out = out[:, :ecog.shape[1]]
-    if out.size() < ecog.size():
-        print('size mismatch in autoscore!')
-        return
-    
+    T_ecog = ecog.shape[1]
+    if out.shape[1] < T_ecog:   #pads if needed
+        pad = out[:, -1:].expand(-1, T_ecog - out.shape[1])
+        out = torch.cat([out, pad], dim=1)
+        
     print(out.unique(return_counts = True))
     return out
 

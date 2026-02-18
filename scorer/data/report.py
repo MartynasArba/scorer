@@ -115,8 +115,7 @@ def generate_sleep_report(states: str, time_array: np.ndarray, get_by_hour = Tru
                 next_hour = 0
                 in_hour = (time_array.hour >= hour)
             subset = states[in_hour]
-            print(hour, next_hour, len(states), len(in_hour), in_hour.sum())
-            results[str(hour)] = _subset_report(subset, win_len_s = win_len_s, state_mapping= state_mapping)
+            results[f'{hour}-{next_hour}'] = _subset_report(subset, win_len_s = win_len_s, state_mapping= state_mapping)
     if save_csv is not None:
         try:
             pd.DataFrame(results).to_csv(save_csv)

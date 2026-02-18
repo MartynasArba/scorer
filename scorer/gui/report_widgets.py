@@ -1,10 +1,13 @@
 from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-    QPushButton, QFileDialog, QLineEdit, QCheckBox
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTextEdit,
+    QPushButton, QFileDialog, QLineEdit, QCheckBox, QDialog
 )
+from PyQt5.QtCore import Qt
 from scorer.gui.plots import hypnogram
 from scorer.data.storage import load_pickled_states, get_timearray_for_states
 from scorer.data.report import generate_sleep_report, label_microawakenings
+
+import json
 
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -58,10 +61,10 @@ class ReportWidget(QWidget):
         statereport_layout = QHBoxLayout()
         get_report_btn = QPushButton('generate a state report')
         get_report_btn.clicked.connect(self.get_state_report)
-        self.save_json_check = QCheckBox('save to .json file?')
+        self.save_csv_check = QCheckBox('save to .csv file?')
         self.by_hour_check = QCheckBox('generate results by hour?')
         statereport_layout.addWidget(get_report_btn)
-        statereport_layout.addWidget(self.save_json_check)
+        statereport_layout.addWidget(self.save_csv_check)
         statereport_layout.addWidget(self.by_hour_check)
         self.layout.addLayout(statereport_layout)
                 
@@ -82,18 +85,50 @@ class ReportWidget(QWidget):
         - total time in states
         - percentage of time in states
         - median, IQR state duration
-        - saves result to json (should also add meta)
+        - saves result to excel (should also add meta)
         - split by hour
         """
         path = self.states_path
         if path is None:
             self.mainlabel.setText('select a valid file')
             return
+        save_csv = path[:-4] + '.csv' if self.save_csv_check.isChecked() else None
+        
         states = load_pickled_states(self.states_path)
         states = label_microawakenings(states, w_label = 1, nrem_label = 2, max_windows = 3, ma_label=5)
         times = get_timearray_for_states(states, win_len = int(self.winlen_textbox.text()), metadata = self.params)
-        #ensure numpy states:
-        generate_sleep_report(states, times, metadata = self.params)
+        results = generate_sleep_report(states, times,
+                                        get_by_hour = self.by_hour_check.isChecked(), 
+                                        win_len = int(self.winlen_textbox.text()),
+                                        save_csv =  save_csv, 
+                                        state_mapping={0:'Unknown', 1:'Wake', 2:'NREM', 3:'IS', 4:'REM', 5: 'MA'},
+                                        metadata = self.params)
+        self.mainlabel.setText('results generated!')
+        self._report_popup(results)
+        
+    def _report_popup(self, results: dict, title = 'report summary'):
+        "popup box widget to show results"
+        box = QDialog(self)
+        box.setWindowTitle(title)
+        box.resize(800, 800)
+        
+        #format text to be a little more readable
+        text = json.dumps(results, indent = 2, default = str)
+        
+        layout = QVBoxLayout(box)
+        
+        label = QTextEdit(box)
+        label.setReadOnly(True)
+        label.setPlainText(text)
+        label.setLineWrapMode(QTextEdit.NoWrap)       
+        layout.addWidget(label)
+
+        close_btn = QPushButton("Close", box)
+        close_btn.clicked.connect(box.accept)
+        layout.addWidget(close_btn)
+
+        box.exec_()
+    
 
     def _save_plot(self, fig: Figure, path: str) -> None:
         """helper to save figure to file"""
