@@ -4,7 +4,7 @@ from PyQt5.QtWidgets import (
 )
 from scorer.gui.plots import hypnogram
 from scorer.data.storage import load_pickled_states, get_timearray_for_states
-from scorer.data.report import generate_sleep_report
+from scorer.data.report import generate_sleep_report, label_microawakenings
 
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -77,7 +77,7 @@ class ReportWidget(QWidget):
 
     def get_state_report(self) -> None:
         """
-        generates the following info:
+        runs helper to get the following info:
         - number of states
         - total time in states
         - percentage of time in states
@@ -90,9 +90,10 @@ class ReportWidget(QWidget):
             self.mainlabel.setText('select a valid file')
             return
         states = load_pickled_states(self.states_path)
+        states = label_microawakenings(states, w_label = 1, nrem_label = 2, max_windows = 3, ma_label=5)
         times = get_timearray_for_states(states, win_len = int(self.winlen_textbox.text()), metadata = self.params)
         #ensure numpy states:
-        states = np.array(states)
+        generate_sleep_report(states, times, metadata = self.params)
 
     def _save_plot(self, fig: Figure, path: str) -> None:
         """helper to save figure to file"""
@@ -104,6 +105,7 @@ class ReportWidget(QWidget):
         #load pickle
         if self.states_path is not None:
             states = load_pickled_states(self.states_path)
+            states = label_microawakenings(states, w_label = 1, nrem_label = 2, max_windows = 3, ma_label=5)
         else:
             self.mainlabel.setText('no states file selected')
             return
