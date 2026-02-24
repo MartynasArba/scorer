@@ -109,6 +109,33 @@ class EphysSleepCNN(nn.Module):
         
         return x
     
+    def get_features(self, x):
+        """return features only"""             
+        #ephys only
+        x = x[:, :2, :]
+        
+        if self.mean_std is not None:
+            mean, std = self.mean_std
+            mean = mean[:2]
+            std  = std[:2]
+            x = (x - mean[None, :, None]) / std[None, :, None]
+        
+        x = F.relu(self.conv1(x))
+        x = self.pool(x)
+        
+        x = F.relu(self.conv2(x))
+        x = self.pool(x)
+        
+        x = F.relu(self.conv3(x))
+        x = self.pool(x)
+        
+        x = F.relu(self.conv4(x))
+        x = self.pool(x)
+        
+        x = self.global_pool(x)  
+        x = x.view(x.size(0), -1)          
+        return x
+    
 class FreqSleepCNN(nn.Module):
     """
     Uses FFT of ephys channels (0 and 1)
@@ -170,5 +197,6 @@ class FreqSleepCNN(nn.Module):
         
         return x
     
+
 if __name__ == "__main__":
     print(torch.__version__)
