@@ -2,10 +2,12 @@ import random
 import numpy as np
 import torch
 import pickle
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, IterableDataset
 from torchaudio.transforms import Spectrogram
 from torch.fft import rfft, rfftfreq
 from pathlib import Path
+import bisect
+from collections import OrderedDict
 
 class SleepSignals(Dataset):
     """
@@ -346,6 +348,9 @@ class SleepTraining(Dataset):
         import glob
         data_paths = sorted(glob.glob(data_path + './*/X*.pt'))
         score_paths = sorted(glob.glob(data_path + './*/y*.pt'))
+        if n_files_to_pick == None:
+            n_files_to_pick = len(data_paths)
+        
         subset_idxs = np.random.choice(len(data_paths), size = n_files_to_pick, replace = False)
         
         x_paths = [data_paths[idx] for idx in subset_idxs]
@@ -388,14 +393,19 @@ class SleepTraining(Dataset):
         
         # Random scaling
         if random.random() < 0.5:
-            scale = 0.5 + random.random()   #should go from 0.5 to 1.5 now 
-            x = x * scale
+            if x.ndim == 3:
+                # [Batch, Channels, 1] allows broadcasting across the Length dimension
+                scales = 0.5 + torch.rand(x.shape[0], x.shape[1], 1, device=x.device)
+            else:
+                # [Channels, 1] for single samples
+                scales = 0.5 + torch.rand(x.shape[0], 1, device=x.device)
+            x = x * scales
         
         # Random time shift
         if random.random() < 0.5:
             max_shift = int(x.shape[1] * 0.02)  # 2% of sequence length
             shift = random.randint(-max_shift, max_shift)
-            x = torch.roll(x, shifts=shift, dims=1)
+            x = torch.roll(x, shifts=shift, dims=2 if x.ndim == 3 else 1)
             
         return x
     
@@ -499,15 +509,452 @@ class SleepTraining(Dataset):
         self.all_labels = new.to(self.all_labels.device)
 
         print("label remap:", self.label_mapping)
-    
+        
+class SleepTrainingLazy(Dataset):
+    """
+    Lazy-loading version of SleepTraining.
+    Loads labels into RAM, keeps X on disk.
+    Supports balancing, label remapping, augment, transform.
+    """
+
+    def __init__(self,
+                 data_path,
+                 random_state=0,
+                 n_files_to_pick=100,
+                 device='cuda',
+                 transform=None,
+                 augment=False,
+                 metadata=None,
+                 balance="none",
+                 exclude_labels=(),
+                 merge_nrem=False,
+                 cache_size=20):
+
+        torch.manual_seed(random_state)
+        self.device = device
+        self.transform = transform
+        self.augment = augment
+        self.params = metadata or {}
+        self.cache_size = cache_size
+        self.file_cache = OrderedDict()
+
+        self.file_map = []              # (start_idx, end_idx, path)
+        self.file_start_indices = []
+        self.master_labels = None
+        self.active_indices = None
+
+        self._load(data_path, n_files_to_pick)
+
+        if merge_nrem:
+            self.master_labels[self.master_labels == 3] = 2
+
+        if balance != "none" or exclude_labels:
+            self._balance_labels(balance, exclude_labels, random_state)
+            self._remap_labels_to_contiguous()
+        else:
+            self.active_indices = torch.arange(len(self.master_labels))
+
+        self.master_labels = self.master_labels.to(self.device)
+
+    def __len__(self):
+        return len(self.active_indices)
+
+    def __getitem__(self, idx):
+
+        real_idx = int(self.active_indices[idx])
+        sample = self._fetch_sample(real_idx)
+        label = self.master_labels[real_idx]
+
+        if self.augment:
+            sample = self._augment(sample)
+
+        if self.transform:
+            sample = self.transform(sample)
+
+        return sample, label #.to(self.device)
+
+    def _load(self, data_path, n_files_to_pick):
+
+        import glob
+
+        x_paths = sorted(glob.glob(data_path + './*/X*.pt'))
+        y_paths = sorted(glob.glob(data_path + './*/y*.pt'))
+
+        if not x_paths or not y_paths:
+            raise RuntimeError(f"No X/y files found in {data_path}")
+
+        if n_files_to_pick is None:
+            n_files_to_pick = len(x_paths)
+
+        subset = np.random.choice(len(x_paths),
+                                  size=min(n_files_to_pick, len(x_paths)),
+                                  replace=False)
+
+        x_paths = [x_paths[i] for i in subset]
+        y_paths = [y_paths[i] for i in subset]
+
+        labels_list = []
+        offset = 0
+
+        for x_path, y_path in zip(x_paths, y_paths):
+            y = torch.load(y_path).long()
+            # original shape: [1, samples, win_len]
+            if y.ndim == 3:
+                y = y.permute(1, 0, 2)  # -> [samples, 1, win_len]
+            if y.ndim == 3 and y.size(1) == 1:
+                y = y[..., 0].squeeze(1)  # -> [samples]
+            else:
+                raise RuntimeError(
+                    f"Unexpected label shape in {y_path}: {y.shape}"
+                )
+            n_samples = y.shape[0]
+            labels_list.append(y)
+            self.file_map.append((offset, offset + n_samples, x_path))
+            self.file_start_indices.append(offset)
+            offset += n_samples
+        self.master_labels = torch.cat(labels_list, dim=0)
+        print(f"Y example shape: {labels_list[0].shape}")
+        print("Total samples:", len(self.master_labels))
+
+    def _fetch_sample(self, real_idx):
+
+        file_idx = bisect.bisect_right(self.file_start_indices, real_idx) - 1
+        start, end, path = self.file_map[file_idx]
+        local_idx = real_idx - start
+
+        if path in self.file_cache:
+            self.file_cache.move_to_end(path)
+            tensor = self.file_cache[path]
+        else:
+            tensor = torch.load(path).float()
+
+            if tensor.ndim == 3:
+                tensor = tensor.permute(1, 0, 2)
+
+            self.file_cache[path] = tensor
+
+            if len(self.file_cache) > self.cache_size:
+                self.file_cache.popitem(last=False)
+
+        return tensor[local_idx]
+
+    def _balance_labels(self, balance, exclude_labels, seed):
+
+        labels = self.master_labels.cpu()
+
+        keep_mask = torch.ones_like(labels, dtype=torch.bool)
+        for lab in exclude_labels:
+            keep_mask &= labels != lab
+
+        keep_idx = torch.where(keep_mask)[0]
+        labels_kept = labels[keep_idx]
+
+        classes = torch.unique(labels_kept)
+        per_class = {int(c): keep_idx[labels_kept == c] for c in classes}
+
+        counts = {c: len(v) for c, v in per_class.items()}
+        print("class counts before:", counts)
+
+        if balance == "undersample":
+            target = min(counts.values())
+            replace = False
+        else:
+            target = max(counts.values())
+            replace = True
+
+        g = torch.Generator().manual_seed(seed)
+        balanced = []
+
+        for c, idxs in per_class.items():
+            if replace:
+                pick = idxs[torch.randint(0, len(idxs), (target,), generator=g)]
+            else:
+                pick = idxs[torch.randperm(len(idxs), generator=g)[:target]]
+            balanced.append(pick)
+
+        self.active_indices = torch.cat(balanced)
+        self.active_indices = self.active_indices[
+            torch.randperm(len(self.active_indices), generator=g)
+        ]
+
+        print("after balance:",
+              {int(c): int((self.master_labels[self.active_indices] == c).sum())
+               for c in torch.unique(self.master_labels[self.active_indices])})
+
+    def _remap_labels_to_contiguous(self):
+
+        labels = self.master_labels.cpu()
+        uniq = torch.unique(labels[self.active_indices])
+        mapping = {int(old): i for i, old in enumerate(uniq.tolist())}
+
+        new = torch.empty_like(labels)
+        for old, new_id in mapping.items():
+            new[labels == old] = new_id
+
+        self.label_mapping = mapping
+        self.inv_label_mapping = {v: k for k, v in mapping.items()}
+
+        self.master_labels = new.to(self.device)
+
+        print("label remap:", self.label_mapping)
+
+    def _augment(self, x):
+
+        x = x.clone()
+
+        if random.random() < 0.7:
+            x += torch.randn_like(x) * 0.01
+
+        if random.random() < 0.5:
+            scale = 0.5 + random.random()
+            x *= scale
+
+        if random.random() < 0.5:
+            max_shift = int(x.shape[1] * 0.02)
+            shift = random.randint(-max_shift, max_shift)
+            x = torch.roll(x, shifts=shift, dims=1)
+
+        return x
+
+class BufferedSleepDataset(IterableDataset):
+    """
+    Iterable version of SleepTraining.
+    Loads chunks of files into RAM (buffer), shuffles internally, and yields samples.
+    Solves I/O bottlenecks while maintaining batch diversity for Contrastive Learning.
+    Supports balancing, label remapping, augment, transform, and multiprocessing.
+    """
+
+    def __init__(self,
+                 data_path,
+                 random_state=0,
+                 n_files_to_pick=100,
+                 device='cuda',
+                 transform=None,
+                 augment=False,
+                 metadata=None,
+                 balance="none",
+                 exclude_labels=(),
+                 merge_nrem=False,
+                 buffer_size=100): # Replaced cache_size with buffer_size
+
+        torch.manual_seed(random_state)
+        self.device = device
+        self.transform = transform
+        self.augment = augment
+        self.params = metadata or {}
+        self.buffer_size = buffer_size
+
+        self.file_map = []              # (start_idx, end_idx, path)
+        self.file_start_indices = []
+        self.master_labels = None
+        self.active_indices = None
+
+        # 1. Load label metadata exactly as before
+        self._load(data_path, n_files_to_pick)
+
+        if merge_nrem:
+            self.master_labels[self.master_labels == 3] = 2
+
+        # 2. Balance and filter labels to get our global 'active_indices'
+        if balance != "none" or exclude_labels:
+            self._balance_labels(balance, exclude_labels, random_state)
+            self._remap_labels_to_contiguous()
+        else:
+            self.active_indices = torch.arange(len(self.master_labels))
+
+        self.master_labels = self.master_labels.to(self.device)
+
+    def __len__(self):
+        # Even for IterableDatasets, providing length helps DataLoader progress bars
+        return len(self.active_indices)
+
+    def __iter__(self):
+        """
+        The core buffered loading logic. Replaces __getitem__.
+        """
+        worker_info = torch.utils.data.get_worker_info()
+        file_indices = list(range(len(self.file_map)))
+        
+        # Shuffle the order of files every epoch
+        random.shuffle(file_indices)
+        
+        # If num_workers > 0 (e.g. 4), split the files evenly among the CPU workers
+        if worker_info is not None:
+            per_worker = int(np.ceil(len(file_indices) / float(worker_info.num_workers)))
+            worker_id = worker_info.id
+            file_indices = file_indices[worker_id * per_worker : (worker_id + 1) * per_worker]
+
+        # Process the assigned files in chunks of `buffer_size`
+        for i in range(0, len(file_indices), self.buffer_size):
+            chunk_file_indices = file_indices[i : i + self.buffer_size]
+            
+            chunk_x = []
+            chunk_y = []
+            
+            # Load all X files for this chunk into RAM
+            for f_idx in chunk_file_indices:
+                start_idx, end_idx, x_path = self.file_map[f_idx]
+                
+                # Find which active global indices belong to this specific file
+                mask = (self.active_indices >= start_idx) & (self.active_indices < end_idx)
+                valid_global_indices = self.active_indices[mask]
+                
+                if len(valid_global_indices) == 0:
+                    continue # Skip file entirely if all its samples were excluded/balanced away
+                
+                # Load the full file
+                tensor = torch.load(x_path).float()
+                if tensor.ndim == 3:
+                    tensor = tensor.permute(1, 0, 2)
+                    
+                # Extract only the valid samples using local indexing
+                local_indices = valid_global_indices - start_idx
+                chunk_x.append(tensor[local_indices])
+                chunk_y.append(self.master_labels[valid_global_indices])
+                
+            if not chunk_x:
+                continue # Edge case if an entire chunk was filtered out
+                
+            # Concatenate the active samples from the 300 files into one tensor
+            chunk_x_tensor = torch.cat(chunk_x, dim=0)
+            chunk_y_tensor = torch.cat(chunk_y, dim=0)
+            
+            # Shuffle thoroughly WITHIN the RAM chunk to ensure Contrastive batch diversity
+            num_samples = chunk_x_tensor.size(0)
+            shuffle_idx = torch.randperm(num_samples)
+            
+            chunk_x_tensor = chunk_x_tensor[shuffle_idx]
+            chunk_y_tensor = chunk_y_tensor[shuffle_idx]
+            
+            # Yield individual samples to the DataLoader
+            for j in range(num_samples):
+                x = chunk_x_tensor[j]
+                y = chunk_y_tensor[j]
+                
+                if self.augment:
+                    x = self._augment(x)
+                if self.transform:
+                    x = self.transform(x)
+                    
+                yield x, y
+
+    def _load(self, data_path, n_files_to_pick):
+        import glob
+        x_paths = sorted(glob.glob(data_path + './*/X*.pt'))
+        y_paths = sorted(glob.glob(data_path + './*/y*.pt'))
+
+        if not x_paths or not y_paths:
+            raise RuntimeError(f"No X/y files found in {data_path}")
+
+        if n_files_to_pick is None:
+            n_files_to_pick = len(x_paths)
+
+        subset = np.random.choice(len(x_paths),
+                                  size=min(n_files_to_pick, len(x_paths)),
+                                  replace=False)
+
+        x_paths = [x_paths[i] for i in subset]
+        y_paths = [y_paths[i] for i in subset]
+
+        labels_list = []
+        offset = 0
+
+        for x_path, y_path in zip(x_paths, y_paths):
+            y = torch.load(y_path).long()
+            if y.ndim == 3:
+                y = y.permute(1, 0, 2) 
+            if y.ndim == 3 and y.size(1) == 1:
+                y = y[..., 0].squeeze(1) 
+            else:
+                raise RuntimeError(f"Unexpected label shape in {y_path}: {y.shape}")
+            n_samples = y.shape[0]
+            labels_list.append(y)
+            self.file_map.append((offset, offset + n_samples, x_path))
+            self.file_start_indices.append(offset)
+            offset += n_samples
+            
+        self.master_labels = torch.cat(labels_list, dim=0)
+        print(f"Y example shape: {labels_list[0].shape}")
+        print("Total samples:", len(self.master_labels))
+
+    def _balance_labels(self, balance, exclude_labels, seed):
+        labels = self.master_labels.cpu()
+        keep_mask = torch.ones_like(labels, dtype=torch.bool)
+        for lab in exclude_labels:
+            keep_mask &= labels != lab
+
+        keep_idx = torch.where(keep_mask)[0]
+        labels_kept = labels[keep_idx]
+
+        classes = torch.unique(labels_kept)
+        per_class = {int(c): keep_idx[labels_kept == c] for c in classes}
+
+        counts = {c: len(v) for c, v in per_class.items()}
+        print("class counts before:", counts)
+
+        if balance == "undersample":
+            target = min(counts.values())
+            replace = False
+        else:
+            target = max(counts.values())
+            replace = True
+
+        g = torch.Generator().manual_seed(seed)
+        balanced = []
+
+        for c, idxs in per_class.items():
+            if replace:
+                pick = idxs[torch.randint(0, len(idxs), (target,), generator=g)]
+            else:
+                pick = idxs[torch.randperm(len(idxs), generator=g)[:target]]
+            balanced.append(pick)
+
+        self.active_indices = torch.cat(balanced)
+        self.active_indices = self.active_indices[
+            torch.randperm(len(self.active_indices), generator=g)
+        ]
+
+        print("after balance:",
+              {int(c): int((self.master_labels[self.active_indices] == c).sum())
+               for c in torch.unique(self.master_labels[self.active_indices])})
+
+    def _remap_labels_to_contiguous(self):
+        labels = self.master_labels.cpu()
+        uniq = torch.unique(labels[self.active_indices])
+        mapping = {int(old): i for i, old in enumerate(uniq.tolist())}
+
+        new = torch.empty_like(labels)
+        for old, new_id in mapping.items():
+            new[labels == old] = new_id
+
+        self.label_mapping = mapping
+        self.inv_label_mapping = {v: k for k, v in mapping.items()}
+        self.master_labels = new.to(self.device)
+        print("label remap:", self.label_mapping)
+
+    def _augment(self, x):
+        x = x.clone()
+        if random.random() < 0.7:
+            x += torch.randn_like(x) * 0.01
+        if random.random() < 0.5:
+            scale = 0.5 + random.random()
+            x *= scale
+        if random.random() < 0.5:
+            max_shift = int(x.shape[1] * 0.02)
+            shift = random.randint(-max_shift, max_shift)
+            x = torch.roll(x, shifts=shift, dims=1)
+        return x
+
 #for testing
 if __name__ == "__main__":
-    dataset = SleepTraining(
+    dataset = SleepTrainingLazy(
         data_path = 'G:/oslo_data',
-        n_files_to_pick = 100,
+        n_files_to_pick = None,
         random_state = 0,
         device = 'cuda',
         transform = None,
         augment = False,
         metadata = {'ecog_channels' : '1', 'emg_channels' : '2', 'sample_rate' : '250', 'ylim' : 'standard'}
     )    
+    
+    print(dataset[0])
