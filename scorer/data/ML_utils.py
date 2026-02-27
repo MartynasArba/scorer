@@ -3,6 +3,9 @@
 from scorer.data.preprocessing import bandpass_filter, sum_power, band_powers
 from scorer.data.storage import load_from_csv_in_chunks, save_windowed_for_testing, load_from_csv
 from pathlib import Path
+import pickle
+import numpy as np
+import re
 
 import torch
 
@@ -111,19 +114,99 @@ def raw_to_edf(csv_path: str) -> None:
         header = highlevel.make_header()
         highlevel.write_edf(str(out_path), [ecog, emg], signal_headers, header)
         
+def extract_chunk_number(filepath: Path) -> int:
+    """extracts the int from filename for numerical sorting"""
+    # find all sequences of digits in the filename
+    numbers = re.findall(r'\d+', filepath.name)
+    if numbers:
+        # return last number if more are present
+        return int(numbers[-1])
+    return 0  # Fallback if no number is found
+        
+def states_to_yfile(states_pkl_path: str, data_path: str, win_len: int = 1000):
+    """converts state files from GUI back to y.pt files for training"""
+    print(f"loading states from {states_pkl_path}")
+    with open(states_pkl_path, 'rb') as f:
+        states = pickle.load(f)
+    states = np.array(states)
+    print(f"loaded {len(states)} windows")
+    
+    dataset_dir = Path(data_path)
+    
+    # find all X files
+    raw_x_files = list(dataset_dir.glob("X*.pt"))
+    x_files = sorted(raw_x_files, key = extract_chunk_number)
+    
+    if not x_files:
+        print(f"No X files found in {dataset_dir}")
+        return
+        
+    current_idx = 0
+    
+    # iter through chunks, map states back to their respective files
+    for x_path in x_files:
+        # print(f'X: {x_path}')
+        # Load X to determine the chunk's exact size
+        X = torch.load(x_path, weights_only=False)
+        print(f'X size: {X.size()}')
+        
+        # _chop outputs shape [n_channels, n_samples, win_len]
+        n_samples = X.shape[1] 
+        
+        if current_idx + n_samples > len(states):
+            print(f"Error: Ran out of GUI states! Chunk {x_path.name} needs {n_samples} states, "
+                  f"but only {len(states) - current_idx} remain.")
+            break
+            
+        # Extract the exact number of states belonging to this specific chunk
+        chunk_states = states[current_idx : current_idx + n_samples]
+        current_idx += n_samples
+        
+        # reconstruct the training tensor format: [1, n_samples, win_len]
+        y_tensor = torch.tensor(chunk_states, dtype=torch.long)
+        
+        # Expand a single label across the entire time window (e.g. 1000 points)
+        y_tensor = y_tensor.unsqueeze(1).expand(n_samples, win_len)
+        
+        # Add the channel dimension back
+        y_tensor = y_tensor.unsqueeze(0)
+        
+        # Save the y file (replacing 'X' with 'y' in the filename)
+        y_filename = x_path.name.replace('X', 'y')
+        y_path = x_path.with_name(y_filename)
+        
+        torch.save(y_tensor, y_path)
+        print(f"Saved {y_filename} | Shape: {list(y_tensor.shape)}")
+        
+    # Validation
+    if current_idx < len(states):
+        print(f"\nWarning: {len(states) - current_idx} states were leftover. "
+              f"The GUI array had more labels than the X_*.pt files combined.")
+    elif current_idx == len(states):
+        print("\nSuccess: All states perfectly mapped and saved!")
+    
+            
+
 if __name__ == "__main__":
+    states_pkl_path = r"C:\Users\marty\Desktop\SCORING202602\2025-12-22-2\scores\noID_scores_windowed_2026022014270520251222-1_g0_t0.ob____0_frame10791.pkl"
+    data_path = r'C:\Users\marty\Desktop\SCORING202602\for_training\windowed_2026022014270520251222-1_g0_t0.obx0.obx_box2'
+    win_len = 1000
+    
+    states_to_yfile(states_pkl_path, data_path, win_len)
+    
+    
     # print('everything is commented out, edit script to do something')
     # import torch
     
     # raw_to_edf(r'g:\sleep-ecog-DOWNSAMPLED\20251124-1_g0_t0.obx0.obx_box1.csv')
     
 # converts whole folder to windows for ml
-    import glob
-    import tqdm
-    paths = glob.glob(r'G:\oslo_data\*.csv')
-    for i, path in enumerate(tqdm.tqdm(paths)):
-        print(i, path)
-        run_default_preprocessing(path)
+    # import glob
+    # import tqdm
+    # paths = glob.glob(r'G:\oslo_data\*.csv')
+    # for i, path in enumerate(tqdm.tqdm(paths)):
+    #     print(i, path)
+    #     run_default_preprocessing(path)
 # let's try checking whether states were actually saved
 #open one file, check shapes, check unique values in states
     # val_path = r"G:\oslo_data\windowed_trial_1_mouse_b1aqm2\X_trial_1_mouse_b1aqm2_chunk0.pt"

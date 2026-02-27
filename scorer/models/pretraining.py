@@ -3,7 +3,9 @@ from torch.utils.data import DataLoader, random_split
 import torch.optim as optim
 import torch.nn as nn
 
-from scorer.data.loaders import SleepTraining, SleepTrainingLazy, BufferedSleepDataset
+import random
+
+from scorer.data.loaders import SleepTraining, BufferedSleepDataset
 from scorer.models.contrastive_embedder import SupConLoss, SupConSleepCNN
 from scorer.models.sleep_cnn import EphysSleepCNN
 
@@ -18,19 +20,43 @@ def load_dataset(path, meta: dict, n_files: int):
     dataset = BufferedSleepDataset(
         data_path = path,
         n_files_to_pick = None,
-        buffer_size= 100, 
+        buffer_size= n_files, 
         random_state = 0,
         device = 'cpu',
         transform = None,
         augment = False,
         metadata = meta, 
-        balance = 'oversample',
+        balance = 'undersample',
         exclude_labels = (0,3),#add labels to exclude here
         merge_nrem = False
     )    
     return dataset
 
-def train_supcon(dataset, epochs=50):
+def batch_augment(x: torch.Tensor) -> torch.Tensor:
+    """Properly vectorizes augmentations so every sample gets unique transforms"""
+    x = x.clone()
+    bsz = x.shape[0]
+    device = x.device
+    
+    # noise per sample (70% chance)
+    apply_noise = (torch.rand(bsz, 1, 1, device=device) < 0.7).float()
+    x = x + (apply_noise * torch.randn_like(x) * 0.01)
+    
+    # scaling per sample (50% chance)
+    apply_scale = (torch.rand(bsz, 1, 1, device=device) < 0.5).float()
+    scales = 0.5 + torch.rand(bsz, x.shape[1], 1, device=device)
+    x = x * ((1 - apply_scale) + apply_scale * scales)
+    
+    # time shifts (loop required for roll)
+    for i in range(bsz):
+        if random.random() < 0.5:
+            max_shift = int(x.shape[2] * 0.02)
+            shift = random.randint(-max_shift, max_shift)
+            x[i] = torch.roll(x[i], shifts=shift, dims=1)
+            
+    return x
+
+def train_supcon(dataset, epochs=50, batch_size = 256):
     #SHOULD PRETRAIN ON ALL FILES INSTEAD!
     torch.set_grad_enabled(True)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -38,10 +64,10 @@ def train_supcon(dataset, epochs=50):
     base_cnn = EphysSleepCNN(num_classes = 3).to(device) # 3 class for now
     model = SupConSleepCNN(base_cnn).to(device)
     
-    optimizer = optim.Adam(model.parameters(), lr = 1e-4)
-    criterion = SupConLoss(temperature = 0.1)
+    optimizer = optim.Adam(model.parameters(), lr = 5e-5)
+    criterion = SupConLoss(temperature = 0.15)
     
-    dataloader = DataLoader(dataset, batch_size=128, shuffle=False)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
 
     model.train()
     for epoch in range(epochs):
@@ -50,8 +76,8 @@ def train_supcon(dataset, epochs=50):
             samples, labels = samples.to(device), labels.to(device)
             
             # get two augmented views of the same batch
-            view1 = dataset._augment(samples) 
-            view2 = dataset._augment(samples)
+            view1 = batch_augment(samples) 
+            view2 = batch_augment(samples)
             
             # combine views for the batch
             images = torch.cat([view1, view2], dim=0)
@@ -86,8 +112,8 @@ def run_linear_evaluation(
     pretrained_model_path: str, 
     data_path: str, 
     meta: dict, 
-    epochs: int = 50, 
-    batch_size: int = 128
+    epochs: int = 100, 
+    batch_size: int = 256
     ):
     """
     executes linear evaluation on a contrastive pre-trained encoder
@@ -105,7 +131,7 @@ def run_linear_evaluation(
         transform=None,
         augment=False, # augmentations are disabled
         metadata=meta,
-        balance='oversample', 
+        balance='none', 
         exclude_labels=(0, 3), # Excluding Unlabeled (0) and IS (3) based on pretraining
         merge_nrem=False
     )
@@ -195,22 +221,24 @@ def run_linear_evaluation(
 if __name__ == "__main__":
     path = 'G:/oslo_data'
     meta = {'ecog_channels' : '1', 'emg_channels' : '2', 'sample_rate' : '250', 'ylim' : 'standard', 'device':'cuda'}
-    n_files = 100
-    n_epochs = 50
+    meta2 = {'ecog_channels' : '0', 'emg_channels' : '2', 'sample_rate' : '250', 'ylim' : 'standard', 'device':'cuda'}
+    n_files = 200
+    n_epochs = 100
     model_name = 'weights/3state_contrastiveCNN_2026-02-25-2.pt'
     save_path = Path(r"C:\Users\marty\Projects\scorer\scorer\models")
 
-    print('starting pretraining...')
-    dataset = load_dataset(path = path, meta = meta, n_files = n_files)
-    print('data loaded, running train loop')
-    pretrained_cnn, loss = train_supcon(dataset, epochs = n_epochs)
-    torch.save(pretrained_cnn, save_path / model_name)
-    
+    # print('starting pretraining...')
+    # dataset = load_dataset(path = path, meta = meta, n_files = n_files)
+    # print('data loaded, running train loop')
+    # pretrained_cnn, loss = train_supcon(dataset, epochs = n_epochs, batch_size=1024)
+    # torch.save(pretrained_cnn, save_path / model_name)
+
     run_linear_evaluation(
         pretrained_model_path = save_path / model_name,
-        data_path = 'G:/oslo_data_val',
+        data_path = 'G:/oslo_data_val',#r'C:\Users\marty\Desktop\SCORING202602\for_training', 
         meta=meta,
-        epochs=30
+        epochs=30,
+        batch_size=1024
     )
     
     # plt.plot(loss.detach().cpu().numpy())

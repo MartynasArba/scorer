@@ -307,10 +307,9 @@ class SleepTraining(Dataset):
         if merge_nrem:
             self.all_labels[self.all_labels == 3] = 2
         
-        if balance != "none":
-            self._balance_labels(balance=balance, exclude_labels=exclude_labels, seed=random_state)
-            self._remap_labels_to_contiguous()
-                
+        self._balance_labels(balance=balance, exclude_labels=exclude_labels, seed=random_state)
+        self._remap_labels_to_contiguous()
+            
         #move to device after loading        
         self.all_samples = self.all_samples.to(device)
         self.all_labels = self.all_labels.to(device)
@@ -421,21 +420,21 @@ class SleepTraining(Dataset):
             
             return mean, std
         
-    def _balance_labels(self, balance:str = "undersample", exclude_labels:tuple = (0,), seed:int = 0) -> None:
+    def _balance_labels(self, balance:str = "none", exclude_labels:tuple = (0,), seed:int = 0) -> None:
         """
         rebalances labels, important in sleep as there are usually way less REM samples than NREM or W
-        balance: "undersample" (downsample to min class) or "oversample" (upsample to max class)
+        balance: "none", "undersample" (downsample to min class) or "oversample" (upsample to max class)
         exclude_labels: labels to remove before balancing  (0 for unlabeled)
         """
-        if balance not in ("undersample", "oversample"):
-            raise ValueError(f"balance must be 'undersample' or 'oversample', got {balance}")
+        if balance not in ("none", "undersample", "oversample"):
+            raise ValueError(f"balance must be 'none', 'undersample' or 'oversample', got {balance}")
 
         # on CPU for indexing
         labels = self.all_labels
         if labels.is_cuda:
             labels = labels.cpu()
 
-        # exclude labels
+        # 1. ALWAYS apply the exclude_labels mask first
         keep_mask = torch.ones_like(labels, dtype=torch.bool)
         for lab in exclude_labels or ():
             keep_mask &= (labels != lab)
@@ -443,6 +442,15 @@ class SleepTraining(Dataset):
         keep_idx = torch.where(keep_mask)[0]
         if keep_idx.numel() == 0:
             raise RuntimeError("after excluding labels, no samples remain.")
+            
+        # 2. If no balancing requested, just apply exclusions and exit early!
+        if balance == "none":
+            self.all_samples = self.all_samples[keep_idx]
+            self.all_labels = self.all_labels[keep_idx]
+            print("No balancing applied. Removed excluded labels.")
+            return
+
+        # 3. Otherwise, proceed with balancing
         labels_kept = labels[keep_idx]
 
         # get idx per class
@@ -476,6 +484,7 @@ class SleepTraining(Dataset):
                 pick = perm
 
             balanced_idx.append(pick)
+            
         balanced_idx = torch.cat(balanced_idx)
         # shuffle final set
         balanced_idx = balanced_idx[torch.randperm(balanced_idx.numel(), generator=g)]
@@ -510,211 +519,6 @@ class SleepTraining(Dataset):
 
         print("label remap:", self.label_mapping)
         
-class SleepTrainingLazy(Dataset):
-    """
-    Lazy-loading version of SleepTraining.
-    Loads labels into RAM, keeps X on disk.
-    Supports balancing, label remapping, augment, transform.
-    """
-
-    def __init__(self,
-                 data_path,
-                 random_state=0,
-                 n_files_to_pick=100,
-                 device='cuda',
-                 transform=None,
-                 augment=False,
-                 metadata=None,
-                 balance="none",
-                 exclude_labels=(),
-                 merge_nrem=False,
-                 cache_size=20):
-
-        torch.manual_seed(random_state)
-        self.device = device
-        self.transform = transform
-        self.augment = augment
-        self.params = metadata or {}
-        self.cache_size = cache_size
-        self.file_cache = OrderedDict()
-
-        self.file_map = []              # (start_idx, end_idx, path)
-        self.file_start_indices = []
-        self.master_labels = None
-        self.active_indices = None
-
-        self._load(data_path, n_files_to_pick)
-
-        if merge_nrem:
-            self.master_labels[self.master_labels == 3] = 2
-
-        if balance != "none" or exclude_labels:
-            self._balance_labels(balance, exclude_labels, random_state)
-            self._remap_labels_to_contiguous()
-        else:
-            self.active_indices = torch.arange(len(self.master_labels))
-
-        self.master_labels = self.master_labels.to(self.device)
-
-    def __len__(self):
-        return len(self.active_indices)
-
-    def __getitem__(self, idx):
-
-        real_idx = int(self.active_indices[idx])
-        sample = self._fetch_sample(real_idx)
-        label = self.master_labels[real_idx]
-
-        if self.augment:
-            sample = self._augment(sample)
-
-        if self.transform:
-            sample = self.transform(sample)
-
-        return sample, label #.to(self.device)
-
-    def _load(self, data_path, n_files_to_pick):
-
-        import glob
-
-        x_paths = sorted(glob.glob(data_path + './*/X*.pt'))
-        y_paths = sorted(glob.glob(data_path + './*/y*.pt'))
-
-        if not x_paths or not y_paths:
-            raise RuntimeError(f"No X/y files found in {data_path}")
-
-        if n_files_to_pick is None:
-            n_files_to_pick = len(x_paths)
-
-        subset = np.random.choice(len(x_paths),
-                                  size=min(n_files_to_pick, len(x_paths)),
-                                  replace=False)
-
-        x_paths = [x_paths[i] for i in subset]
-        y_paths = [y_paths[i] for i in subset]
-
-        labels_list = []
-        offset = 0
-
-        for x_path, y_path in zip(x_paths, y_paths):
-            y = torch.load(y_path).long()
-            # original shape: [1, samples, win_len]
-            if y.ndim == 3:
-                y = y.permute(1, 0, 2)  # -> [samples, 1, win_len]
-            if y.ndim == 3 and y.size(1) == 1:
-                y = y[..., 0].squeeze(1)  # -> [samples]
-            else:
-                raise RuntimeError(
-                    f"Unexpected label shape in {y_path}: {y.shape}"
-                )
-            n_samples = y.shape[0]
-            labels_list.append(y)
-            self.file_map.append((offset, offset + n_samples, x_path))
-            self.file_start_indices.append(offset)
-            offset += n_samples
-        self.master_labels = torch.cat(labels_list, dim=0)
-        print(f"Y example shape: {labels_list[0].shape}")
-        print("Total samples:", len(self.master_labels))
-
-    def _fetch_sample(self, real_idx):
-
-        file_idx = bisect.bisect_right(self.file_start_indices, real_idx) - 1
-        start, end, path = self.file_map[file_idx]
-        local_idx = real_idx - start
-
-        if path in self.file_cache:
-            self.file_cache.move_to_end(path)
-            tensor = self.file_cache[path]
-        else:
-            tensor = torch.load(path).float()
-
-            if tensor.ndim == 3:
-                tensor = tensor.permute(1, 0, 2)
-
-            self.file_cache[path] = tensor
-
-            if len(self.file_cache) > self.cache_size:
-                self.file_cache.popitem(last=False)
-
-        return tensor[local_idx]
-
-    def _balance_labels(self, balance, exclude_labels, seed):
-
-        labels = self.master_labels.cpu()
-
-        keep_mask = torch.ones_like(labels, dtype=torch.bool)
-        for lab in exclude_labels:
-            keep_mask &= labels != lab
-
-        keep_idx = torch.where(keep_mask)[0]
-        labels_kept = labels[keep_idx]
-
-        classes = torch.unique(labels_kept)
-        per_class = {int(c): keep_idx[labels_kept == c] for c in classes}
-
-        counts = {c: len(v) for c, v in per_class.items()}
-        print("class counts before:", counts)
-
-        if balance == "undersample":
-            target = min(counts.values())
-            replace = False
-        else:
-            target = max(counts.values())
-            replace = True
-
-        g = torch.Generator().manual_seed(seed)
-        balanced = []
-
-        for c, idxs in per_class.items():
-            if replace:
-                pick = idxs[torch.randint(0, len(idxs), (target,), generator=g)]
-            else:
-                pick = idxs[torch.randperm(len(idxs), generator=g)[:target]]
-            balanced.append(pick)
-
-        self.active_indices = torch.cat(balanced)
-        self.active_indices = self.active_indices[
-            torch.randperm(len(self.active_indices), generator=g)
-        ]
-
-        print("after balance:",
-              {int(c): int((self.master_labels[self.active_indices] == c).sum())
-               for c in torch.unique(self.master_labels[self.active_indices])})
-
-    def _remap_labels_to_contiguous(self):
-
-        labels = self.master_labels.cpu()
-        uniq = torch.unique(labels[self.active_indices])
-        mapping = {int(old): i for i, old in enumerate(uniq.tolist())}
-
-        new = torch.empty_like(labels)
-        for old, new_id in mapping.items():
-            new[labels == old] = new_id
-
-        self.label_mapping = mapping
-        self.inv_label_mapping = {v: k for k, v in mapping.items()}
-
-        self.master_labels = new.to(self.device)
-
-        print("label remap:", self.label_mapping)
-
-    def _augment(self, x):
-
-        x = x.clone()
-
-        if random.random() < 0.7:
-            x += torch.randn_like(x) * 0.01
-
-        if random.random() < 0.5:
-            scale = 0.5 + random.random()
-            x *= scale
-
-        if random.random() < 0.5:
-            max_shift = int(x.shape[1] * 0.02)
-            shift = random.randint(-max_shift, max_shift)
-            x = torch.roll(x, shifts=shift, dims=1)
-
-        return x
 
 class BufferedSleepDataset(IterableDataset):
     """

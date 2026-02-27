@@ -18,25 +18,12 @@ class SupConSleepCNN(nn.Module):
         )
 
     def forward(self, x):
-        # ephys only slicing
-        x = x[:, :2, :]
-        
-        # convolutions
-        x = F.relu(self.encoder.conv1(x))
-        x = self.encoder.pool(x)
-        x = F.relu(self.encoder.conv2(x))
-        x = self.encoder.pool(x)
-        x = F.relu(self.encoder.conv3(x))
-        x = self.encoder.pool(x)
-        x = F.relu(self.encoder.conv4(x))
-        x = self.encoder.pool(x)
-        
-        # features
-        features = self.encoder.global_pool(x).view(x.size(0), -1) 
-        
-        # project and normalize for cosine similarity
-        projected = self.projection_head(features)
-        return F.normalize(projected, p=2, dim=1)
+            # Let the updated EphysSleepCNN handle the BatchNorms, pooling, and flattening
+            features = self.encoder.get_features(x)
+            
+            # project and normalize for cosine similarity
+            projected = self.projection_head(features)
+            return F.normalize(projected, p=2, dim=1)
 
 class SupConLoss(nn.Module):
     """
