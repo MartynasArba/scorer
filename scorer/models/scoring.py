@@ -15,26 +15,21 @@ from torch.utils.data import DataLoader
 import torch.nn.functional as F
 import tqdm
 
-def score_signal(data_path, state_save_folder, meta, scorer_type = 'heuristic'):
+def score_signal(data_path, state_save_folder, meta, scorer_type = 'heuristic', apply_corrections = True):
     """
     runs scoring, launched from GUI
     saves states according to selected path
     scorers might have their own preprocessing requirements, check class definitions
     
     data_path should be the folder containing X_ and y_ paths of windowed data that results from preprocessing
-    state_save_folder is passed from GUI selection
-    
-    'heuristic', '3state_ephysCNN', '4state_ephysCNN', '3state_fftCNN', '4state_fftCNN','3state_CNN', '4state_CNN'
-    
+    state_save_folder is passed from GUI selection    
     """
 
-    available_scorers = {'heuristic': HeuristicScorer, 
-                         '3state_CNN': SleepCNN,
-                         '4state_CNN': SleepCNN,
-                         '3state_ephysCNN': EphysSleepCNN,
-                         '4state_ephysCNN': EphysSleepCNN,
-                         '3state_fftCNN': FreqSleepCNN,
-                         '4state_fftCNN': FreqSleepCNN}
+    available_scorers = {
+                        'heuristic': HeuristicScorer, 
+                        '3state_pretrained': EphysSleepCNN,
+                        '5state_pretrained': EphysSleepCNN
+                         }
     
     selected_scorer = available_scorers.get(scorer_type)
     try:
@@ -54,11 +49,11 @@ def score_signal(data_path, state_save_folder, meta, scorer_type = 'heuristic'):
         scorer.score()
         print(scorer)
         
-    elif scorer_type == '4state_CNN':
+    elif scorer_type == '3state_pretrained':
         loader = DataLoader(dataset, batch_size = 64, shuffle = False)
         #predict 
         try:
-            scorer = torch.load(r'C:\Users\marty\Projects\scorer\scorer\models\weights\4state_CNN_2026-01-27.pt', weights_only= False)
+            scorer = torch.load(r'C:\Users\marty\Projects\scorer\scorer\models\weights\3state_pretrained_ephys.pt', weights_only= False)
         except FileNotFoundError:
             print('Check weights folder - selected model not found!')
             return
@@ -71,35 +66,21 @@ def score_signal(data_path, state_save_folder, meta, scorer_type = 'heuristic'):
                 _, pred = torch.max(outputs.data, 1)
                 #to get final predictions
                 all_preds.extend(pred.to('cpu').numpy().tolist())
-        #now reset states to include 0 - shift by 1
-        all_preds = np.array(all_preds) + 1
-        
-    elif scorer_type == '3state_CNN':
-        loader = DataLoader(dataset, batch_size = 64, shuffle = False)
-        #predict 
-        try:
-            scorer = torch.load(r'C:\Users\marty\Projects\scorer\scorer\models\weights\3state_CNN_2026-01-27.pt', weights_only= False)
-        except FileNotFoundError:
-            print('Check weights folder - selected model not found!')
-            return
-        all_preds = []
-        scorer.eval()
-        with torch.no_grad():
-            for i, data in tqdm.tqdm(enumerate(loader)):
-                sample, label = data
-                outputs = scorer(sample)
-                _, pred = torch.max(outputs.data, 1)
-                #to get final predictions
-                all_preds.extend(pred.to('cpu').numpy().tolist())
+                
+        if apply_corrections:
+            all_preds = apply_heuristics(all_preds, num_classes = 3)        
+            
         #now reset states to include 0 - shift by 1, then reset REM to 4
         all_preds = np.array(all_preds) + 1
-        all_preds[all_preds == 3] = 4
+        all_preds[all_preds == 3] = 4 
         
-    elif scorer_type == '4state_ephysCNN':
+
+        
+    elif scorer_type == '5state_pretrained':
         loader = DataLoader(dataset, batch_size = 64, shuffle = False)
         #predict 
         try:
-            scorer = torch.load(r'C:\Users\marty\Projects\scorer\scorer\models\weights\4state_ephysCNN_2026-01-27.pt', weights_only= False)
+            scorer = torch.load(r'C:\Users\marty\Projects\scorer\scorer\models\weights\5state_pretrained_ephys.pt', weights_only= False)
         except FileNotFoundError:
             print('Check weights folder - selected model not found!')
             return
@@ -112,79 +93,68 @@ def score_signal(data_path, state_save_folder, meta, scorer_type = 'heuristic'):
                 _, pred = torch.max(outputs.data, 1)
                 #to get final predictions
                 all_preds.extend(pred.to('cpu').numpy().tolist())
-        #now reset states to include 0 - shift by 1
-        all_preds = np.array(all_preds) + 1
-        
-    elif scorer_type == '3state_ephysCNN':
-        loader = DataLoader(dataset, batch_size = 64, shuffle = False)
-        #predict 
-        try:
-            scorer = torch.load(r'C:\Users\marty\Projects\scorer\scorer\models\weights\3state_ephysCNN_2026-01-27.pt', weights_only= False)
-        except FileNotFoundError:
-            print('Check weights folder - selected model not found!')
-            return
-        all_preds = []
-        scorer.eval()
-        with torch.no_grad():
-            for i, data in tqdm.tqdm(enumerate(loader)):
-                sample, label = data
-                outputs = scorer(sample)
-                _, pred = torch.max(outputs.data, 1)
-                #to get final predictions
-                all_preds.extend(pred.to('cpu').numpy().tolist())
-        #now reset states to include 0 - shift by 1, then reset REM to 4
-        all_preds = np.array(all_preds) + 1
-        all_preds[all_preds == 3] = 4    
-        
-    elif scorer_type == '4state_fftCNN':
-        loader = DataLoader(dataset, batch_size = 64, shuffle = False)
-        #predict 
-        try:
-            scorer = torch.load(r'C:\Users\marty\Projects\scorer\scorer\models\weights\4state_fftCNN_2026-01-27.pt', weights_only= False)
-        except FileNotFoundError:
-            print('Check weights folder - selected model not found!')
-            return
-        all_preds = []
-        scorer.eval()
-        with torch.no_grad():
-            for i, data in tqdm.tqdm(enumerate(loader)):
-                sample, label = data
-                outputs = scorer(sample)
-                _, pred = torch.max(outputs.data, 1)
-                #to get final predictions
-                all_preds.extend(pred.to('cpu').numpy().tolist())
-        #now reset states to include 0 - shift by 1
-        all_preds = np.array(all_preds) + 1
-        
-    elif scorer_type == '3state_fftCNN':
-        loader = DataLoader(dataset, batch_size = 64, shuffle = False)
-        #predict 
-        try:
-            scorer = torch.load(r'C:\Users\marty\Projects\scorer\scorer\models\weights\3state_fftCNN_2026-01-27.pt', weights_only= False)
-        except FileNotFoundError:
-            print('Check weights folder - selected model not found!')
-            return
-        all_preds = []
-        scorer.eval()
-        with torch.no_grad():
-            for i, data in tqdm.tqdm(enumerate(loader)):
-                sample, label = data
-                outputs = scorer(sample)
-                _, pred = torch.max(outputs.data, 1)
-                #to get final predictions
-                all_preds.extend(pred.to('cpu').numpy().tolist())
-        #now reset states to include 0 - shift by 1, then reset REM to 4
-        all_preds = np.array(all_preds) + 1
-        all_preds[all_preds == 3] = 4
+        if apply_corrections:
+            all_preds = apply_heuristics(all_preds, num_classes = 5)
         
     else:
         print(f'unavailable scorer selected: {scorer_type}')
         return
-    
+        
     state_save_path = Path(state_save_folder) / str(meta.get('scoring_started', '') + '_' + meta.get('filename', '') + '_' + meta.get('optional_tag', '') + scorer_type + '_states.pkl')
     save_pickled_states(all_preds, state_save_path)
+    if apply_corrections:
+        print('score corrections applied')
     print(f'scoring done, states saved as {state_save_path}')
     print(f'found unique states: {np.unique(all_preds, return_counts = True)}')
+
+def apply_heuristics(states: np.ndarray, num_classes: int = 5) -> np.ndarray:
+    """
+    applies biological heuristic rules to a sequence of predicted sleep states.
+    states: 1D numpy array of predicted states.
+    5 class mapping: 0(Unlabeled), 1(Wake), 2(NREM), 3(IS), 4(REM)
+    3 class mapping: 0(Wake), 1(NREM), 2(REM)
+    """
+    smoothed = states.copy()
+    n = len(smoothed)
+
+    if n < 3:
+        return smoothed
+        
+    # Set the integer values based on your model's class mapping
+    if num_classes == 5:
+        WAKE, REM, IS = 1, 4, 3
+    elif num_classes == 3:
+        WAKE, REM, IS = 0, 2, -1  # IS doesn't exist in 3-class
+    else:
+        raise ValueError("num_classes must be 3 or 5")
+
+    # remove W -> REM transitions
+    for i in range(1, n):
+        if smoothed[i] == REM and smoothed[i-1] == WAKE:
+            smoothed[i] = WAKE  # Reclassify the false REM as Wake
+
+    # clean up single window states except wake (to keep microawakenings)
+    for i in range(1, n - 1):
+        if smoothed[i] == WAKE:
+            continue
+        elif smoothed[i-1] == smoothed[i+1] and smoothed[i] != smoothed[i-1]:
+            smoothed[i] = smoothed[i-1]
+
+    # only in 5 class: brief W -> IS -> W is impossible and is just W
+    if num_classes == 5:
+        for i in range(1, n - 1):
+            if smoothed[i] == IS:
+                if smoothed[i-1] == WAKE and smoothed[i+1] == WAKE:
+                    smoothed[i] = WAKE
+
+    # repeat of single window cleanup, as more might've been created
+    for i in range(1, n - 1):
+        if smoothed[i] == WAKE:
+            continue
+        elif smoothed[i-1] == smoothed[i+1] and smoothed[i] != smoothed[i-1]:
+            smoothed[i] = smoothed[i-1]
+
+    return smoothed
 
 if __name__ == "__main__":
     

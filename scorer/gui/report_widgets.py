@@ -5,9 +5,10 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt
 from scorer.gui.plots import hypnogram
 from scorer.data.storage import load_pickled_states, get_timearray_for_states
-from scorer.data.report import generate_sleep_report, label_microawakenings
+from scorer.data.report import generate_sleep_report, label_microawakenings, compare_scorers
 
 import json
+import numpy as np
 
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -67,6 +68,11 @@ class ReportWidget(QWidget):
         statereport_layout.addWidget(self.save_csv_check)
         statereport_layout.addWidget(self.by_hour_check)
         self.layout.addLayout(statereport_layout)
+        
+        #compare scorers button
+        compare_scorers_btn = QPushButton('compare two scorers')
+        compare_scorers_btn.clicked.connect(self._compare_scorers)
+        self.layout.addWidget(compare_scorers_btn)
                 
     def set_states_path(self) -> str:
         """dialog box to select states path"""
@@ -95,7 +101,7 @@ class ReportWidget(QWidget):
         save_csv = path[:-4] + '.csv' if self.save_csv_check.isChecked() else None
         
         states = load_pickled_states(self.states_path)
-        states = label_microawakenings(states, w_label = 1, nrem_label = 2, max_windows = 3, ma_label=5)
+        states = label_microawakenings(states, w_label = 1, nrem_label = 2, max_windows = 3, ma_label=6)
         times = get_timearray_for_states(states, win_len = int(self.winlen_textbox.text()), metadata = self.params)
         results = generate_sleep_report(states, times,
                                         get_by_hour = self.by_hour_check.isChecked(), 
@@ -140,7 +146,7 @@ class ReportWidget(QWidget):
         #load pickle
         if self.states_path is not None:
             states = load_pickled_states(self.states_path)
-            states = label_microawakenings(states, w_label = 1, nrem_label = 2, max_windows = 3, ma_label=5)
+            states = label_microawakenings(states, w_label = 1, nrem_label = 2, max_windows = 3, ma_label=6)
         else:
             self.mainlabel.setText('no states file selected')
             return
@@ -161,3 +167,23 @@ class ReportWidget(QWidget):
         self.canvas = FigureCanvas(fig)
         self.plot_layout.addWidget(self.canvas)
         self.canvas.draw()
+        
+    def _compare_scorers(self):
+        #infer num classes
+        file_name_a, _ = QFileDialog.getOpenFileName(self,
+                                            caption="select states file to open (A)",
+                                            directory=self.params.get('project_path', '.'),
+                                            filter="Pickle files (*.pkl)")
+        file_name_b, _ = QFileDialog.getOpenFileName(self,
+                                            caption="select states file to open (B)",
+                                            directory=self.params.get('project_path', '.'),
+                                            filter="Pickle files (*.pkl)")
+        if (file_name_a == None) or (file_name_b == None):
+            print('select valid files!')
+            return 
+        
+        scorer_a = load_pickled_states(file_name_a)
+        scorer_b = load_pickled_states(file_name_b)
+                
+        num_classes = max(len(np.unique(scorer_a)), len(np.unique(scorer_b)))
+        compare_scorers(scorer_a, scorer_b, num_classes = num_classes)

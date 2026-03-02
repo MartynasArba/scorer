@@ -1,5 +1,5 @@
 from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QComboBox, QPushButton, QFileDialog, QLabel
+    QWidget, QVBoxLayout, QComboBox, QPushButton, QFileDialog, QLabel, QCheckBox
 )
 
 from scorer.models.scoring import score_signal
@@ -12,7 +12,7 @@ class AutoScoringWidget(QWidget):
         super().__init__()
         
         self.params = meta
-        available_models = ['select model', 'heuristic', '3state_ephysCNN', '4state_ephysCNN', '3state_fftCNN', '4state_fftCNN','3state_CNN', '4state_CNN']
+        available_models = ['select model', 'heuristic', '3state_pretrained', '5state_pretrained']
         layout = QVBoxLayout(self)
         
         self.file_folder = '.'
@@ -26,6 +26,10 @@ class AutoScoringWidget(QWidget):
         self.model_selection = QComboBox()
         self.model_selection.addItems(available_models)
         layout.addWidget(self.model_selection)
+        
+        #checkbox to apply corrections
+        self.correction_check = QCheckBox('correct scores by common heuristics? (remove W->R etc.)')
+        layout.addWidget(self.correction_check)
         
         #button to select file folder
         button_sel_file = QPushButton('select data folder')
@@ -62,5 +66,6 @@ class AutoScoringWidget(QWidget):
         score_signal(self.file_folder, 
                      self.state_folder, 
                      meta = self.params, 
-                     scorer_type = str(self.model_selection.currentText()))
+                     scorer_type = str(self.model_selection.currentText()),
+                     apply_corrections = self.correction_check.isChecked)
         self.label.setText('scoring done')

@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+from sklearn.metrics import accuracy_score, cohen_kappa_score, confusion_matrix, classification_report
 
 def label_microawakenings(states: np.ndarray, 
                           w_label: int = 1, 
@@ -122,6 +123,81 @@ def generate_sleep_report(states: str, time_array: np.ndarray, get_by_hour = Tru
         except Exception as e:
             print(f'report excel saving failed: {e}')
     return results
+
+def compare_scorers(scorer_a: np.ndarray, scorer_b: np.ndarray, num_classes: int = 5):
+    """
+    compares two sleep state arrays and prints a report.
+    scorer_a: 1D numpy array of states from Scorer A 
+    scorer_b: 1D numpy array of states from Scorer B
+    num_classes: Int (3, 4, or 5) to format the names correctly.
+    """
+    scorer_a = np.array(scorer_a)
+    scorer_b = np.array(scorer_b)
+    
+    if len(scorer_a) != len(scorer_b):
+        raise ValueError(f"Arrays must be the same length! Got {len(scorer_a)} and {len(scorer_b)}.")
+
+    if num_classes == 5:
+        labels = [0, 1, 2, 3, 4]
+        target_names = ['Unlabeled', 'Wake', 'NREM', 'IS', 'REM']
+    elif num_classes == 4:
+        # 4 class excludes unlabeled
+        labels = [1, 2, 3, 4]
+        target_names = ['Wake', 'NREM', 'IS', 'REM']
+    elif num_classes == 3:
+        # 3 class excludes Unlabeled and IS
+        labels = [1, 2, 4]
+        target_names = ['Wake', 'NREM', 'REM']
+    else:
+        labels = list(range(num_classes))
+        target_names = [f"Class {i}" for i in range(num_classes)]
+
+    # accuracy (a == b)
+    acc = accuracy_score(scorer_a, scorer_b)
+    
+    #cohen's kappa (agreement adjusted for chance)
+    # > 0.80 is excellent, 0.60-0.80 is substantial, 0.40-0.60 is moderate
+    kappa = cohen_kappa_score(scorer_a, scorer_b, labels=labels)
+    
+    #confusion matrix
+    cm = confusion_matrix(scorer_a, scorer_b, labels=labels)
+    
+    #detailed report
+    report = classification_report(scorer_a, scorer_b, labels=labels, 
+                                   target_names=target_names, zero_division=0)
+    
+    print(f"{"="*40}")
+    print(f" INTER-RATER COMPARISON ({num_classes} CLASSES)")
+    print(f"{"="*40}")
+    print(f"overall agreement (accuracy): {acc * 100:.2f}%")
+    print(f"Cohen's Kappa score:          {kappa:.4f}")
+    if kappa > 0.8:
+        print(", excellent agreement")
+    elif kappa > 0.6:
+        print(", substantial agreement")
+    elif kappa > 0.4:
+        print(", moderate agreement")
+    else:
+        print(" -> Poor agreement")
+        
+    print(f"\n{'-'*40}")
+    print("CLASSIFICATION REPORT")
+    print(f"{'-'*40}")
+    print(report)
+    
+    print(f"{'-'*40}")
+    print("CONFUSION MATRIX")
+    print(f"{'-'*40}")
+    print(f"rows = scorer A, columns = scorer B\n")
+    
+    # Pretty print confusion matrix
+    header = f"{'':<12}" + "".join([f"{name:>10}" for name in target_names])
+    print(header)
+    for i, name in enumerate(target_names):
+        row_str = f"{name:<12}" + "".join([f"{val:>10}" for val in cm[i]])
+        print(row_str)
+        
+    return acc, kappa, cm
 
 
 if __name__ == "__main__":

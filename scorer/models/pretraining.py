@@ -27,7 +27,7 @@ def load_dataset(path, meta: dict, n_files: int):
         augment = False,
         metadata = meta, 
         balance = 'undersample',
-        exclude_labels = (0,3),#add labels to exclude here
+        exclude_labels = (),#add labels to exclude here
         merge_nrem = False
     )    
     return dataset
@@ -57,11 +57,10 @@ def batch_augment(x: torch.Tensor) -> torch.Tensor:
     return x
 
 def train_supcon(dataset, epochs=50, batch_size = 256):
-    #SHOULD PRETRAIN ON ALL FILES INSTEAD!
     torch.set_grad_enabled(True)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     # init base model and SupCon wrapper
-    base_cnn = EphysSleepCNN(num_classes = 3).to(device) # 3 class for now
+    base_cnn = EphysSleepCNN(num_classes = 5).to(device)
     model = SupConSleepCNN(base_cnn).to(device)
     
     optimizer = optim.Adam(model.parameters(), lr = 5e-5)
@@ -132,7 +131,7 @@ def run_linear_evaluation(
         augment=False, # augmentations are disabled
         metadata=meta,
         balance='none', 
-        exclude_labels=(0, 3), # Excluding Unlabeled (0) and IS (3) based on pretraining
+        exclude_labels=(), # Excluding Unlabeled (0) and IS (3) based on pretraining
         merge_nrem=False
     )
 
@@ -146,26 +145,29 @@ def run_linear_evaluation(
 
     # load pretrained encoder
     model = torch.load(pretrained_model_path, map_location=device, weights_only=False)
+    #overwrite final layer to correct num classes
+    model.fc2 = nn.Linear(64, 5).to(device)
     
     # freeze feature extraction: iterate through parameters and set all conv layers to no grad
     for name, param in model.named_parameters():
-        if 'conv' in name:
-            param.requires_grad = False
-        elif 'fc' in name:
+    #     if 'conv' in name:
+    #         param.requires_grad = False
+    #     elif 'fc' in name:
             param.requires_grad = True
 
     # new loss for classification
-    criterion = nn.CrossEntropyLoss()
+    weights = torch.tensor([1.5, 1.0, 1.5, 3.0, 6.0]).to(device) 
+    criterion = nn.CrossEntropyLoss(weight=weights)
     
     # strictly pass only the unfrozen parameters to the optimizer
     optimizer = optim.Adam(
         filter(lambda p: p.requires_grad, model.parameters()), 
-        lr=1e-3
+        lr=1e-4,
+        weight_decay=5e-5
     )
 
     best_val_acc = 0.0
-    save_dir = Path("weights")
-    save_dir.mkdir(exist_ok=True)
+    save_dir = Path(pretrained_model_path).parent
 
     # train loop
     for epoch in range(epochs):
@@ -213,7 +215,7 @@ def run_linear_evaluation(
         # save best model
         if val_acc > best_val_acc:
             best_val_acc = val_acc
-            torch.save(model, save_dir / "best_linear_eval_model.pt")
+            torch.save(model, save_dir / "5state_pretrained_ephys.pt")
 
     print(f"Optimization complete. Peak Validation Accuracy: {best_val_acc:.4f}")
     return model
@@ -224,7 +226,7 @@ if __name__ == "__main__":
     meta2 = {'ecog_channels' : '0', 'emg_channels' : '2', 'sample_rate' : '250', 'ylim' : 'standard', 'device':'cuda'}
     n_files = 200
     n_epochs = 100
-    model_name = 'weights/3state_contrastiveCNN_2026-02-25-2.pt'
+    model_name = 'weights/5state_contrastiveCNN_2026-02-27.pt'
     save_path = Path(r"C:\Users\marty\Projects\scorer\scorer\models")
 
     # print('starting pretraining...')

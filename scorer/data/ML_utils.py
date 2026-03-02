@@ -130,6 +130,7 @@ def states_to_yfile(states_pkl_path: str, data_path: str, win_len: int = 1000):
         states = pickle.load(f)
     states = np.array(states)
     print(f"loaded {len(states)} windows")
+    print(np.unique(states, return_counts = True))
     
     dataset_dir = Path(data_path)
     
@@ -142,6 +143,7 @@ def states_to_yfile(states_pkl_path: str, data_path: str, win_len: int = 1000):
         return
         
     current_idx = 0
+    total_samples = 0
     
     # iter through chunks, map states back to their respective files
     for x_path in x_files:
@@ -152,7 +154,7 @@ def states_to_yfile(states_pkl_path: str, data_path: str, win_len: int = 1000):
         
         # _chop outputs shape [n_channels, n_samples, win_len]
         n_samples = X.shape[1] 
-        
+        total_samples += n_samples        
         if current_idx + n_samples > len(states):
             print(f"Error: Ran out of GUI states! Chunk {x_path.name} needs {n_samples} states, "
                   f"but only {len(states) - current_idx} remain.")
@@ -177,7 +179,8 @@ def states_to_yfile(states_pkl_path: str, data_path: str, win_len: int = 1000):
         
         torch.save(y_tensor, y_path)
         print(f"Saved {y_filename} | Shape: {list(y_tensor.shape)}")
-        
+
+        print(f'found{total_samples} samples for {len(states)} states')        
     # Validation
     if current_idx < len(states):
         print(f"\nWarning: {len(states) - current_idx} states were leftover. "
