@@ -6,10 +6,20 @@ from pathlib import Path
 import pickle
 import numpy as np
 import re
-
+import shutil
 import torch
-
 from pyedflib import highlevel
+from tqdm import tqdm
+import glob
+
+def move_into_subfolder(csv_path: str) -> None:
+    """moves loose files into folders"""
+    file_path = Path(csv_path)
+    file_name = file_path.stem.replace('.','')
+    Path.mkdir(file_path.parent / file_name)
+    new_path = file_path.parent / file_name / file_path.name
+    shutil.move(file_path, new_path)
+    print(f'moved into subdir: {file_path.parent / file_name}')
 
 def run_default_preprocessing(csv_path: str) -> None:
         """
@@ -50,7 +60,6 @@ def run_default_preprocessing(csv_path: str) -> None:
                                               overwrite = True)
                 else:           
                     print('not implemented')      
-                    
         
 def _bandpass(signal: torch.Tensor, freqs: tuple, metadata: dict) -> torch.Tensor:
         """
@@ -191,11 +200,16 @@ def states_to_yfile(states_pkl_path: str, data_path: str, win_len: int = 1000):
             
 
 if __name__ == "__main__":
-    states_pkl_path = r"C:\Users\marty\Desktop\SCORING202602\2025-12-22-2\scores\noID_scores_windowed_2026022014270520251222-1_g0_t0.ob____0_frame10791.pkl"
-    data_path = r'C:\Users\marty\Desktop\SCORING202602\for_training\windowed_2026022014270520251222-1_g0_t0.obx0.obx_box2'
-    win_len = 1000
+    # print('nothing uncommented!')
+    paths = glob.glob('G:/sleep-ecog-DOWNSAMPLED/*.csv')
+    for path in tqdm(paths):
+        move_into_subfolder(path)
+        
+    # states_pkl_path = r"C:\Users\marty\Desktop\SCORING202602\2025-12-22-2\scores\noID_scores_windowed_2026022014270520251222-1_g0_t0.ob____0_frame10791.pkl"
+    # data_path = r'C:\Users\marty\Desktop\SCORING202602\for_training\windowed_2026022014270520251222-1_g0_t0.obx0.obx_box2'
+    # win_len = 1000
     
-    states_to_yfile(states_pkl_path, data_path, win_len)
+    # states_to_yfile(states_pkl_path, data_path, win_len)
     
     
     # print('everything is commented out, edit script to do something')
@@ -204,8 +218,6 @@ if __name__ == "__main__":
     # raw_to_edf(r'g:\sleep-ecog-DOWNSAMPLED\20251124-1_g0_t0.obx0.obx_box1.csv')
     
 # converts whole folder to windows for ml
-    # import glob
-    # import tqdm
     # paths = glob.glob(r'G:\oslo_data\*.csv')
     # for i, path in enumerate(tqdm.tqdm(paths)):
     #     print(i, path)
