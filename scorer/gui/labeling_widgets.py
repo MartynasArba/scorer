@@ -67,6 +67,7 @@ class SleepGUI(QWidget):
         self._len_dataset = len(dataset) if dataset is not None else 0
         self.current_idx = 0
         self.scale = 1
+        self._prev_scale = 1    #used by macro toggle
 
         # ylims: stored as (center, spread) for each channel
         self.ylim_defaults = [(0, 1)]
@@ -163,6 +164,11 @@ class SleepGUI(QWidget):
         btn_minus.clicked.connect(self.decrease_scale)
         btn_minus.setShortcut("-")
         control_layout.addWidget(btn_minus)
+        
+        btn_10min = QPushButton("toggle macro view")
+        btn_10min.clicked.connect(self.toggle_10min_view)
+        btn_10min.setShortcut("T") 
+        control_layout.addWidget(btn_10min)
 
         btn_y_plus = QPushButton("+ y scale")
         btn_y_plus.clicked.connect(self.increase_yscale)
@@ -840,10 +846,16 @@ class SleepGUI(QWidget):
         self.update_screen()
 
     def next(self) -> None:
-        self._set_idx_and_update(self.current_idx + 1)
+        if self.scale == int(600 / self.frame_duration_s):   #if in macro scale, jump by 100 
+            self._set_idx_and_update(self.current_idx + 100)
+        else:
+            self._set_idx_and_update(self.current_idx + 1)
 
     def prev(self) -> None:
-        self._set_idx_and_update(self.current_idx - 1)
+        if self.scale == int(600 / self.frame_duration_s):
+            self._set_idx_and_update(self.current_idx - 100)
+        else:
+            self._set_idx_and_update(self.current_idx - 1)
 
     def jump(self) -> None:
         if self._len_dataset == 0:
@@ -948,7 +960,29 @@ class SleepGUI(QWidget):
             self.scale -= 1
             self._plot_cache["idx"] = None
             self.update_screen()
-
+            
+    def toggle_10min_view(self) -> None:
+            """
+            Switches between the user's custom zoom level and a macro 10-minute view.
+            """
+            if self._len_dataset == 0:
+                return
+                
+            # calculate how many frames in 10 minutes (600 s)
+            frames_in_10_min = int(600 / self.frame_duration_s)
+            
+            if self.scale != frames_in_10_min:
+                # save previous view to jump back to micro scale and change
+                self._prev_scale = self.scale
+                self.scale = frames_in_10_min
+            else:
+                # change back to micro
+                self.scale = self._prev_scale
+                
+            # invalidate the cache to force update
+            self._plot_cache["idx"] = None 
+            self.update_screen()
+            
     # RESET ALL
     def reset_settings(self) -> None:
         self.scale = 1
