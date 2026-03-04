@@ -101,7 +101,7 @@ class ReportWidget(QWidget):
         save_csv = path[:-4] + '.csv' if self.save_csv_check.isChecked() else None
         
         states = load_pickled_states(self.states_path)
-        states = label_microawakenings(states, w_label = 1, nrem_label = 2, max_windows = 3, ma_label=6)
+        # states = label_microawakenings(states, w_label = 1, nrem_label = 2, max_windows = 3, ma_label=6)
         times = get_timearray_for_states(states, win_len = int(self.winlen_textbox.text()), metadata = self.params)
         results = generate_sleep_report(states, times,
                                         get_by_hour = self.by_hour_check.isChecked(), 
@@ -146,7 +146,7 @@ class ReportWidget(QWidget):
         #load pickle
         if self.states_path is not None:
             states = load_pickled_states(self.states_path)
-            states = label_microawakenings(states, w_label = 1, nrem_label = 2, max_windows = 3, ma_label=6)
+            # states = label_microawakenings(states, w_label = 1, nrem_label = 2, max_windows = 3, ma_label=6)
         else:
             self.mainlabel.setText('no states file selected')
             return

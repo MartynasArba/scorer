@@ -227,6 +227,6 @@ if __name__ == "__main__":
             "old_sample_rate": "1000"}
     with open(path, 'rb') as f:
         states = pickle.load(f)
-        states = label_microawakenings(states, w_label = 1, nrem_label = 2, max_windows = 3, ma_label=5)
+        # states = label_microawakenings(states, w_label = 1, nrem_label = 2, max_windows = 3, ma_label=5)
     time_array = get_timearray_for_states(states, win_len = 1000, metadata = meta)
     generate_sleep_report(states, time_array= time_array, save_excel = path[:-4] + '.csv', metadata = meta)

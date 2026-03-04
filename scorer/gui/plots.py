@@ -213,37 +213,47 @@ def plot_signals_update(
         ln.set_ydata(stretched)
         ln.set_visible(True)
     
-def get_visual_envelope(time_array: np.ndarray, data_array: np.ndarray, max_points: int = 8000):
+def get_visual_envelope(time_array: np.ndarray, data_array: np.ndarray, max_points=10000):
     """
-    fast min-max downsampling to preserve visual ephys spikes without aliasing
+    fast min-max downsampling to preserve visual ephys features without aliasing
+    dynamically scales step size so the time axis is never warped
     """
     n = len(time_array)
     if n <= max_points:
         return time_array, data_array
+        
+    # calculate a safe step size (max_points / 2 because there is both min and max per step)
+    step = int(np.ceil(n / (max_points / 2)))
     
-    #2 channels are needed, so num_chunks is less than actual num points
-    num_chunks = max_points // 2
-    # pick step that covers all selected data
-    step = int(np.ceil(n / num_chunks))
-    # calculate pad size
-    pad_length = (step * num_chunks) - n
-    # pad data with the last value to not skew 
-    d_padded = np.pad(data_array, (0, pad_length), mode='edge')
+    # calculate  how many points to add so it is divisible by step
+    remainder = n % step
+    pad_len = 0 if remainder == 0 else step - remainder
     
-    # reshape into blocks and take the min max
-    d_chunks = d_padded.reshape((num_chunks, step))
+    if pad_len > 0:
+        # pad with mode = 'edge' so no 0s get added to the end
+        t_pad = np.pad(time_array, (0, pad_len), mode='edge')
+        d_pad = np.pad(data_array, (0, pad_len), mode='edge')
+    else:
+        t_pad = time_array
+        d_pad = data_array
+        
+    # reshape into blocks of size step
+    d_chunks = d_pad.reshape(-1, step)
+    t_chunks = t_pad.reshape(-1, step)
+    
+    # extract min and max of each block
     d_min = d_chunks.min(axis=1)
     d_max = d_chunks.max(axis=1)
     
-    # interleave them so plt draws a solid block between min and max
-    d_env = np.empty(num_chunks * 2, dtype=d_padded.dtype)
+    # for X pull timestamp from the start of each block
+    t_starts = t_chunks[:, 0]
+    
+    # interleave the arrays so plt draws vertical lines [min0, max0, min1, max1...]
+    d_env = np.empty(len(d_min) * 2, dtype=data_array.dtype)
     d_env[0::2] = d_min
     d_env[1::2] = d_max
     
-    # create matching time array
-    t_chunks = d_padded[::step]
-    t_env = np.repeat(t_chunks, 2)
-    
+    t_env = np.repeat(t_starts, 2)
     return t_env, d_env
 
 def plot_spectrogram(spect_data, ylim: Tuple[int, int] = (0, 20)) -> plt.figure:
