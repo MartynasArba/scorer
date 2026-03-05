@@ -543,10 +543,6 @@ def ratio_signals(signal: torch.Tensor,
         
         #force 1, time always - reduce to single dim, then expand
         amplitude = amplitude.squeeze(0).squeeze(0).unsqueeze(0)
-        
-        sub = amplitude[0, ::10]
-        q = torch.quantile(sub, q=0.98) #every 10th value for speed
-        amplitude = torch.clamp(amplitude, max = q) #remove vals above 98th quantile   
         amplitudes[name] = amplitude
         
     ld = torch.log(amplitudes['delta'] + eps)
@@ -557,12 +553,17 @@ def ratio_signals(signal: torch.Tensor,
     band_envelopes['t_d_logratio'] = lt - ld
     band_envelopes['b_d_logratio'] = lb - ld
     band_envelopes['s_d_logratio'] = ls - ld
-    band_envelopes['delta_logfraction'] = ld - torch.log(amplitudes['delta'] + amplitudes['theta'] + amplitudes['beta']+ eps)
+    band_envelopes['delta_logfraction'] = ld - torch.log(amplitudes['delta'] + amplitudes['theta']+ amplitudes['sigma'] + amplitudes['beta']+ eps)
 
     #handle EMG
-    band_envelopes['emg_logpower'] = torch.log(sum_power(emg, smoothing = 1, sr = sr, device = emg.device, normalize = False, gaussian_smoothen = None) + eps)   
-    #median center everything
+    filtered_emg = bandpass_filter(emg, sr=sr, freqs=(10.0, 100.0), device=device)
+    band_envelopes['emg_logpower'] = torch.log(sum_power(filtered_emg, smoothing = 1, sr = sr, device = emg.device, normalize = False, gaussian_smoothen = None) + eps)   
+    #median center everything, apply clamping
     for key, val in band_envelopes.items():
+        sub = val[0, ::10]
+        q98 = torch.quantile(sub, q=0.98)
+        val = torch.clamp(val, max=q98)
+        
         band_envelopes[key] = _median_center(val)
         
     return band_envelopes   
