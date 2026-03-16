@@ -4,7 +4,7 @@
 from scorer.data.loaders import SleepSignals
 from scorer.models.heuristic_scorer import HeuristicScorer
 # from scorer.models.heuristic_scorer_v2 import HeuristicScorer2
-from scorer.models.sleep_cnn import SleepCNN, EphysSleepCNN, FreqSleepCNN
+from scorer.models.sleep_cnn import SleepCNN, EphysSleepCNN, DualStreamSleepCNN
 from scorer.data.storage import save_pickled_states
 import numpy as np
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, accuracy_score
@@ -28,6 +28,7 @@ def score_signal(data_path, state_save_folder, meta, scorer_type = 'heuristic', 
     available_scorers = {
                         'heuristic': HeuristicScorer, 
                         '3state_pretrained': EphysSleepCNN,
+                        '3state_dual': DualStreamSleepCNN,
                         '5state_pretrained': EphysSleepCNN
                          }
     
@@ -53,7 +54,7 @@ def score_signal(data_path, state_save_folder, meta, scorer_type = 'heuristic', 
         loader = DataLoader(dataset, batch_size = 64, shuffle = False)
         #predict 
         try:
-            scorer = torch.load(r'C:\Users\marty\Projects\scorer\scorer\models\weights\3state_pretrained_ephys.pt', weights_only= False)
+            scorer = torch.load(r'C:\Users\marty\Projects\scorer\scorer\models\weights\3state_pretrained_ephys_dropout.pt', weights_only= False)
         except FileNotFoundError:
             print('Check weights folder - selected model not found!')
             return
@@ -73,8 +74,31 @@ def score_signal(data_path, state_save_folder, meta, scorer_type = 'heuristic', 
         #now reset states to include 0 - shift by 1, then reset REM to 4
         all_preds = np.array(all_preds) + 1
         all_preds[all_preds == 3] = 4 
-        
-
+    
+    elif scorer_type == '3state_dual':
+        loader = DataLoader(dataset, batch_size = 64, shuffle = False)
+        #predict 
+        try:
+            scorer = torch.load(r'C:\Users\marty\Projects\scorer\scorer\models\weights\3state_dual.pt', weights_only= False)
+        except FileNotFoundError:
+            print('Check weights folder - selected model not found!')
+            return
+        all_preds = []
+        scorer.eval()
+        with torch.no_grad():
+            for i, data in tqdm.tqdm(enumerate(loader)):
+                sample, label = data
+                outputs = scorer(sample)
+                _, pred = torch.max(outputs.data, 1)
+                #to get final predictions
+                all_preds.extend(pred.to('cpu').numpy().tolist())
+                
+        if apply_corrections:
+            all_preds = apply_heuristics(all_preds, num_classes = 3)        
+            
+        #now reset states to include 0 - shift by 1, then reset REM to 4
+        all_preds = np.array(all_preds) + 1
+        all_preds[all_preds == 3] = 4 
         
     elif scorer_type == '5state_pretrained':
         loader = DataLoader(dataset, batch_size = 64, shuffle = False)

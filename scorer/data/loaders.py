@@ -8,6 +8,7 @@ from torch.fft import rfft, rfftfreq
 from pathlib import Path
 import bisect
 from collections import OrderedDict
+import os
 
 class SleepSignals(Dataset):
     """
@@ -59,17 +60,10 @@ class SleepSignals(Dataset):
         self.augment = augment
 
         self.spectral = spectral_features
-        
-         #for plotting
-        
-        if self.spectral == 'spectrogram':
-            self.spect = Spectrogram(n_fft = 100, #changes freq bins
-                                    hop_length = 10, #changes time bins
-                                    pad = 0, 
-                                    power = 2, 
-                                    center = False,
-                                    normalized = False).to(device)
-        
+        if self.spectral is not None:
+            print('SleepDataset no longer supports spectral features')
+            
+
     def __len__(self) -> int:
         return len(self.all_labels)
     
@@ -85,12 +79,6 @@ class SleepSignals(Dataset):
             sample = self._augment(sample)
         if self.transform:
             sample = self.transform(sample)
-        if self.spectral:
-            if self.spectral == 'spectrogram':
-                sample = (sample, self._spect(sample, channel = 0))
-            elif self.spectral == 'fourier':
-                sample = (sample, self._fft(sample, channel = 0))
-        
         return sample, label
     
     def _load(self, data_path: str, score_path: str) -> None:
@@ -105,9 +93,31 @@ class SleepSignals(Dataset):
         
         #load folders with chunk data
         if data_path.is_dir():
-            x_files = sorted(data_path.glob("X_*.pt"))
-            if not x_files:
+            raw_x_files = sorted(data_path.glob("X_*.pt"))
+            if not raw_x_files:
                 raise RuntimeError(f"No X_*.pt found in folder: {data_path}")
+            
+            #double check all files exist:
+            x_files = []
+            y_files = []
+        
+            for x_file in raw_x_files:
+                dir_name = os.path.dirname(x_file)
+                base_name = os.path.basename(x_file)
+                
+                # swap X with y to ensure correct file pairings
+                y_name = base_name.replace('X', 'y', 1) 
+                y_file = os.path.join(dir_name, y_name)
+                
+                # require that both files exist
+                if os.path.exists(y_file):
+                    x_files.append(x_file)
+                    y_files.append(y_file)
+                else:
+                    print(f"WARNING: Missing label file for {x_file}. Skipping.")
+
+            if not x_files:
+                raise RuntimeError(f"No valid X/y file pairs found in folder: {data_path}")
 
             x_chunks = [torch.load(f).float() for f in x_files]
             X = torch.cat(x_chunks, dim=1)        # concat on sample dimension
@@ -119,11 +129,6 @@ class SleepSignals(Dataset):
             print(f"Loaded {len(x_files)} X chunks: {X.shape}")
             self.channel_ylims = self.compute_ylims()
             
-            #do same for y
-            y_files = sorted(data_path.glob("y_*.pt"))
-            if not y_files:
-                raise RuntimeError(f"No y_*.pt found in folder: {data_path}")
-
             y_chunks = [torch.load(f).long() for f in y_files]
             #chunk state dimensions are 1channel, samples, win_len
             Y = torch.cat(y_chunks, dim = 1) 
@@ -156,53 +161,9 @@ class SleepSignals(Dataset):
                     Y = Y[..., 0].squeeze(1)
             self.all_labels = Y
         else:
-            print('only .pt files are supported, states')      
+            print('only .pt files are supported, states')    
+              
         self.channel_ylims = self.compute_ylims()
-        
-        
-    def _augment(self, x: torch.Tensor) -> torch.Tensor:
-        """randomly apply time series augmentations - noise, scale, time shift"""
-        x = x.clone()
-        
-        # Random noise
-        if random.random() < 0.7:
-            noise = torch.randn_like(x) * 0.01
-            x = x + noise
-        
-        # Random scaling
-        if random.random() < 0.5:
-            scale = 0.8 + random.random() * 0.4  # Scale between 0.8 and 1.2
-            x = x * scale
-        
-        # Random time shift
-        if random.random() < 0.5:
-            max_shift = int(x.shape[1] * 0.02)  # 2% of sequence length
-            shift = random.randint(-max_shift, max_shift)
-            if shift > 0:
-                x = torch.cat([x[:, shift:], x[:, :shift]], dim=0)
-            elif shift < 0:
-                x = torch.cat([x[:, shift:], x[:, :shift]], dim=0)
-        return x
-    
-    def _spect(self, x: torch.Tensor, channel: int = 0) -> torch.Tensor:
-        """
-        compute spectrogram for one channel
-        input: 2, time or 2, resample_freq
-        output: 2, freq_bins, time_bins
-        """
-        spect = self.spect(x[channel, :])         
-        return spect.to(self.device)
-    
-    def _fft(self, x: torch.Tensor, channel: int = 0) -> torch.Tensor:
-        """
-        compute fft for passed data
-        """
-        fft = rfft(x[channel, :]).to('cuda')
-        power = torch.abs(fft) ** 2
-        freqs = rfftfreq(x.size(-1), d = 1 / int(self.params.get('sample_rate', 250))).to('cuda')
-        output = torch.stack((power, freqs), dim = -1)      #stacked power/freqs tensor
-        
-        return output.to(self.device)
     
     def compute_ylims(self) -> list[tuple[float, float]]:
         """
@@ -349,16 +310,36 @@ class SleepTraining(Dataset):
         score_paths = sorted(glob.glob(data_path + './*/y*.pt'))
         if n_files_to_pick == None:
             n_files_to_pick = len(data_paths)
-        
-        subset_idxs = np.random.choice(len(data_paths), size = n_files_to_pick, replace = False)
-        
-        x_paths = [data_paths[idx] for idx in subset_idxs]
-        y_paths = [score_paths[idx] for idx in subset_idxs]
-        
-        if not (x_paths or y_paths):
-                raise RuntimeError(f"No X_*.pt or no y_*.pt found in folder: {data_path}")
+            
+        #same pairing as before
+        #double check all files exist:
+        x_paths = []
+        y_paths = []
     
-        x_chunks = [torch.load(f).float() for f in x_paths]
+        for x_file in data_paths:
+            dir_name = os.path.dirname(x_file)
+            base_name = os.path.basename(x_file)
+            
+            # swap X with y to ensure correct file pairings
+            y_name = base_name.replace('X', 'y', 1) 
+            y_file = os.path.join(dir_name, y_name)
+            
+            # require that both files exist
+            if os.path.exists(y_file):
+                x_paths.append(x_file)
+                y_paths.append(y_file)
+            else:
+                print(f"WARNING: Missing label file for {x_file}. Skipping.")
+
+        if not x_paths:
+            raise RuntimeError(f"No valid X/y file pairs found in folder: {data_path}")
+
+        subset_idxs = np.random.choice(len(x_paths), size = n_files_to_pick, replace = False)
+        
+        sel_x = [x_paths[idx] for idx in subset_idxs]
+        sel_y = [y_paths[idx] for idx in subset_idxs]
+
+        x_chunks = [torch.load(f).float() for f in sel_x]
         X = torch.cat(x_chunks, dim=1)        # concat on sample dimension
 
         if X.ndim == 3:
@@ -367,7 +348,7 @@ class SleepTraining(Dataset):
         self.all_samples = X
         print(f"Loaded {len(x_paths)} X files: {X.shape}")
 
-        y_chunks = [torch.load(f).long() for f in y_paths]
+        y_chunks = [torch.load(f).long() for f in sel_y]
         #chunk state dimensions are 1channel, samples, win_len
         Y = torch.cat(y_chunks, dim = 1) 
         Y = Y.to(dtype = torch.long)
@@ -553,13 +534,13 @@ class BufferedSleepDataset(IterableDataset):
         self.master_labels = None
         self.active_indices = None
 
-        # 1. Load label metadata exactly as before
+        # load label metadata 
         self._load(data_path, n_files_to_pick)
 
         if merge_nrem:
             self.master_labels[self.master_labels == 3] = 2
 
-        # 2. Balance and filter labels to get our global 'active_indices'
+        # balance and filter labels to get our global 'active_indices'
         if balance != "none" or exclude_labels:
             self._balance_labels(balance, exclude_labels, random_state)
             self._remap_labels_to_contiguous()
@@ -749,16 +730,16 @@ class BufferedSleepDataset(IterableDataset):
             x = torch.roll(x, shifts=shift, dims=1)
         return x
 
-#for testing
-if __name__ == "__main__":
-    dataset = SleepTrainingLazy(
-        data_path = 'G:/oslo_data',
-        n_files_to_pick = None,
-        random_state = 0,
-        device = 'cuda',
-        transform = None,
-        augment = False,
-        metadata = {'ecog_channels' : '1', 'emg_channels' : '2', 'sample_rate' : '250', 'ylim' : 'standard'}
-    )    
+# #for testing
+# if __name__ == "__main__":
+#     dataset = SleepTrainingLazy(
+#         data_path = 'G:/oslo_data',
+#         n_files_to_pick = None,
+#         random_state = 0,
+#         device = 'cuda',
+#         transform = None,
+#         augment = False,
+#         metadata = {'ecog_channels' : '1', 'emg_channels' : '2', 'sample_rate' : '250', 'ylim' : 'standard'}
+#     )    
     
-    print(dataset[0])
+#     print(dataset[0])

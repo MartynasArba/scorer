@@ -31,7 +31,7 @@ def run_default_preprocessing(csv_path: str) -> None:
             
             by_state = True
             file_name = Path(csv_path).stem
-            save_folder = r'G:\oslo_data'
+            save_folder = r'G:\oslo_data' 
             chunk_size = 1000000
             states = 3
             times = (None, None)
@@ -201,15 +201,20 @@ def states_to_yfile(states_pkl_path: str, data_path: str, win_len: int = 1000):
 
 if __name__ == "__main__":
     # print('nothing uncommented!')
-    paths = glob.glob('G:/sleep-ecog-DOWNSAMPLED/*.csv')
-    for path in tqdm(paths):
-        move_into_subfolder(path)
-        
-    # states_pkl_path = r"C:\Users\marty\Desktop\SCORING202602\2025-12-22-2\scores\noID_scores_windowed_2026022014270520251222-1_g0_t0.ob____0_frame10791.pkl"
-    # data_path = r'C:\Users\marty\Desktop\SCORING202602\for_training\windowed_2026022014270520251222-1_g0_t0.obx0.obx_box2'
-    # win_len = 1000
+    # paths = glob.glob('G:/sleep-ecog-DOWNSAMPLED/*.csv')
+    # for path in tqdm(paths):
+    #     move_into_subfolder(path)
     
-    # states_to_yfile(states_pkl_path, data_path, win_len)
+    data_paths = glob.glob(r'C:\Users\marty\Desktop\SCORING202602\for_training\*')
+    for path in data_paths:
+        score_paths = glob.glob(path + '/*scores*.pkl')
+        if len(score_paths) > 1:
+            print(f'something is wrong, multiple score files in folder: {path}')
+
+        win_len = 1000
+        
+        # states_to_yfile(score_paths[0], path, win_len)
+        print(path, '\n',  score_paths[0])
     
     
     # print('everything is commented out, edit script to do something')

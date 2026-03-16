@@ -7,7 +7,7 @@ import random
 
 from scorer.data.loaders import SleepTraining, BufferedSleepDataset
 from scorer.models.contrastive_embedder import SupConLoss, SupConSleepCNN
-from scorer.models.sleep_cnn import EphysSleepCNN
+from scorer.models.sleep_cnn import EphysSleepCNN, DualStreamSleepCNN, SleepCNN
 
 import matplotlib.pyplot as plt
 from pathlib import Path
@@ -27,8 +27,8 @@ def load_dataset(path, meta: dict, n_files: int):
         augment = False,
         metadata = meta, 
         balance = 'undersample',
-        exclude_labels = (),#add labels to exclude here
-        merge_nrem = False
+        exclude_labels = (0,),#add labels to exclude here
+        merge_nrem = True
     )    
     return dataset
 
@@ -46,21 +46,27 @@ def batch_augment(x: torch.Tensor) -> torch.Tensor:
     apply_scale = (torch.rand(bsz, 1, 1, device=device) < 0.5).float()
     scales = 0.5 + torch.rand(bsz, x.shape[1], 1, device=device)
     x = x * ((1 - apply_scale) + apply_scale * scales)
-    
-    # time shifts (loop required for roll)
+
     for i in range(bsz):
+        #random shift (50% chance)
         if random.random() < 0.5:
             max_shift = int(x.shape[2] * 0.02)
             shift = random.randint(-max_shift, max_shift)
             x[i] = torch.roll(x[i], shifts=shift, dims=1)
             
+        #random emg dropout (30% chance)
+        if random.random() < 0.3:
+            noise_level = random.random() * 1e-4
+            if x.ndim == 3:  # batch
+                noise = torch.randn(1, 1, x.shape[2], device=x.device) * noise_level
+                x[i, 1:2, :] = noise
     return x
 
 def train_supcon(dataset, epochs=50, batch_size = 256):
     torch.set_grad_enabled(True)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     # init base model and SupCon wrapper
-    base_cnn = EphysSleepCNN(num_classes = 5).to(device)
+    base_cnn = DualStreamSleepCNN(num_classes = 3).to(device)    #change to 5 if doing 5 states
     model = SupConSleepCNN(base_cnn).to(device)
     
     optimizer = optim.Adam(model.parameters(), lr = 5e-5)
@@ -131,38 +137,38 @@ def run_linear_evaluation(
         augment=False, # augmentations are disabled
         metadata=meta,
         balance='none', 
-        exclude_labels=(), # Excluding Unlabeled (0) and IS (3) based on pretraining
-        merge_nrem=False
+        exclude_labels=(0,3), # Excluding Unlabeled (0) and IS (3) based on pretraining, plus I don't label them
+        merge_nrem=True    #no merging on my data as it shouldn't include it, but can merge on Oslo data
     )
-
-    # could replace random_split with subject-wise splitting for real, biological evaluation
+    
     train_size = int(0.8 * len(dataset))
     val_size = len(dataset) - train_size
     train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
-
+    
     # load pretrained encoder
     model = torch.load(pretrained_model_path, map_location=device, weights_only=False)
-    #overwrite final layer to correct num classes
-    model.fc2 = nn.Linear(64, 5).to(device)
+    # #overwrite final layers to correct num classes
+    model.fc1 = nn.Linear(128, 64).to(device)
+    model.fc2 = nn.Linear(64, 3).to(device)
     
     # freeze feature extraction: iterate through parameters and set all conv layers to no grad
     for name, param in model.named_parameters():
-    #     if 'conv' in name:
-    #         param.requires_grad = False
-    #     elif 'fc' in name:
+        if 'fc' in name:
             param.requires_grad = True
+        else:
+            param.requires_grad = False
 
     # new loss for classification
-    weights = torch.tensor([1.5, 1.0, 1.5, 3.0, 6.0]).to(device) 
+    weights = torch.tensor([1.0, 1.5, 6.0]).to(device) #1.5, 1.0, 1.5, 3.0, 6.0
     criterion = nn.CrossEntropyLoss(weight=weights)
     
     # strictly pass only the unfrozen parameters to the optimizer
     optimizer = optim.Adam(
         filter(lambda p: p.requires_grad, model.parameters()), 
-        lr=1e-4,
+        lr=1e-3,
         weight_decay=5e-5
     )
 
@@ -215,7 +221,7 @@ def run_linear_evaluation(
         # save best model
         if val_acc > best_val_acc:
             best_val_acc = val_acc
-            torch.save(model, save_dir / "5state_pretrained_ephys.pt")
+            torch.save(model, save_dir / "3state_dual_CHANGE.pt")
 
     print(f"Optimization complete. Peak Validation Accuracy: {best_val_acc:.4f}")
     return model
@@ -223,10 +229,10 @@ def run_linear_evaluation(
 if __name__ == "__main__":
     path = 'G:/oslo_data'
     meta = {'ecog_channels' : '1', 'emg_channels' : '2', 'sample_rate' : '250', 'ylim' : 'standard', 'device':'cuda'}
-    meta2 = {'ecog_channels' : '0', 'emg_channels' : '2', 'sample_rate' : '250', 'ylim' : 'standard', 'device':'cuda'}
+    # meta2 = {'ecog_channels' : '0', 'emg_channels' : '2', 'sample_rate' : '250', 'ylim' : 'standard', 'device':'cuda'}
     n_files = 200
     n_epochs = 100
-    model_name = 'weights/5state_contrastiveCNN_2026-02-27.pt'
+    model_name = 'weights/3state_contrastiveDualCNN_2026-03_CHANGE.pt'
     save_path = Path(r"C:\Users\marty\Projects\scorer\scorer\models")
 
     # print('starting pretraining...')
@@ -234,14 +240,11 @@ if __name__ == "__main__":
     # print('data loaded, running train loop')
     # pretrained_cnn, loss = train_supcon(dataset, epochs = n_epochs, batch_size=1024)
     # torch.save(pretrained_cnn, save_path / model_name)
-
+    
     run_linear_evaluation(
         pretrained_model_path = save_path / model_name,
-        data_path = 'G:/oslo_data_val',#r'C:\Users\marty\Desktop\SCORING202602\for_training', 
-        meta=meta,
-        epochs=30,
-        batch_size=1024
+        data_path = 'G:/oslo_data_val'#r'C:\Users\marty\Desktop\SCORING202602\for_training', #'G:/oslo_data_val'
+        meta = meta,
+        epochs = 30,
+        batch_size = 1024  #batch size can also be smaller as this step uses regular loss 
     )
-    
-    # plt.plot(loss.detach().cpu().numpy())
-    # plt.show()

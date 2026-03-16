@@ -156,7 +156,7 @@ if __name__ == "__main__":
     
     model_names = ['heuristic', '3state_ephysCNN', '4state_ephysCNN', '3state_fftCNN', '4state_fftCNN','3state_CNN', '4state_CNN']
     
-    model_paths = glob.glob(r'C:\Users\marty\Projects\scorer\scorer\models\weights\5state_pre*.pt')
+    model_paths = glob.glob(r'C:\Users\marty\Projects\scorer\scorer\models\weights\3state_pre*.pt')
     #testing all models
     
     dataset = SleepTraining(
