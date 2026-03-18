@@ -197,24 +197,109 @@ def states_to_yfile(states_pkl_path: str, data_path: str, win_len: int = 1000):
     elif current_idx == len(states):
         print("\nSuccess: All states perfectly mapped and saved!")
     
-            
+
+def remap_and_fix_state_files(data_dir, states_path, win_len = 1000, new_states_name = "_corrected"):
+    
+    data_dir = Path(data_dir)
+    
+    # load original states from GUI
+    with open(states_path, 'rb') as f:
+        original_states = np.array(pickle.load(f))
+        
+    print(f"loaded scrambled state labels: {original_states.shape} total epochs")
+
+    # find all X files
+    raw_x_files = list(data_dir.glob("X_chunk*.pt"))
+    if not raw_x_files:
+        print("No X files found!")
+        return
+    # sort alphabetically to match old incorrect sorting
+    x_files_alphabetical = sorted(raw_x_files, key=lambda p: p.name)
+
+    current_idx = 0
+    
+    # dict to hold corrected slices keyed by chronological number
+    chronological_slices = {} 
+    
+    # slice states array and save individual y_chunk files
+    print("extracting and saving individual state chunks")
+    for x_path in x_files_alphabetical:
+        x_tensor = torch.load(x_path, map_location='cpu')
+        if x_tensor.ndim == 3:
+            n_samples = x_tensor.shape[1]
+        else:
+            raise RuntimeError('X tensor must have 3 dims!')
+        if current_idx + n_samples > len(original_states):
+            print(f"ran out of GUI states: chunk {x_path.name} needs {n_samples} states, but only {len(original_states) - current_idx} left")
+            break
+        
+        # slice labels to match chunks
+        end_idx = current_idx + n_samples
+        y_chunk = original_states[current_idx:end_idx]
+        # reconstruct training tensor format: [1, n_samples, win_len]
+        y_tensor = torch.tensor(y_chunk, dtype=torch.long)
+        y_tensor = y_tensor.unsqueeze(1).expand(n_samples, win_len)
+        y_tensor = y_tensor.unsqueeze(0)
+        # save individual y_chunk*.pt
+        y_name = x_path.name.replace('X', 'y', 1)
+        torch.save(y_tensor, data_dir / y_name)
+        # extract the true chunk integer using regex so it can be used for numerical sort
+        chunk_num = int(re.search(r'\d+', x_path.name).group())
+        # store the slice in the dictionary under its true chronological index
+        chronological_slices[chunk_num] = y_chunk
+        current_idx = end_idx
+        
+    if current_idx < len(original_states):
+        print(f" {len(original_states) - current_idx} states were leftover,  GUI array had more labels than X_*.pt files")
+    elif current_idx == len(original_states):
+        print("all individual states mapped and saved!")
+        
+    print(f"extracted {current_idx} epochs into individual y_chunk files.")
+    print("rebuilding states file in correct numerical order")
+    # sort dict keys numerically
+    sorted_chunk_nums = sorted(chronological_slices.keys())
+    # take slices in correct order
+    ordered_slices = [chronological_slices[num] for num in sorted_chunk_nums]
+    
+    # cat all states into new correct file
+    corrected_states = np.concatenate(ordered_slices)
+    corrected_pkl_path = data_dir / (str(Path(states_path).name)[:-4] + str(new_states_name) + '.pkl')
+    
+    with open(corrected_pkl_path, 'wb') as f:
+        pickle.dump(corrected_states.tolist(), f)
+        
+    print(f"saved corrected states to {corrected_pkl_path.name}")
 
 if __name__ == "__main__":
     # print('nothing uncommented!')
+    
+    #get all subfolders as data dirs
+    subfolders = glob.glob(r'C:\Users\marty\Desktop\SCORING202602\for_training\*')
+    for sub in subfolders:
+        print(sub)
+        states_files = glob.glob(sub + '/*.pkl')
+        for states in states_files:
+            if 'corrected' not in states:
+                remap_and_fix_state_files(sub, states)
+        # print(states_files)
+    # data_folder = r"C:\Users\marty\Desktop\SCORING202602\for_training\windowed_20260224115335 20260107-1_g0_t0.obx0.obx_box1"
+    # states_file = r"C:\Users\marty\Desktop\SCORING202602\for_training\windowed_20260224115335 20260107-1_g0_t0.obx0.obx_box1\noID_scores_windowed_20260312140926 20260107-1_g0_t0.ob____0_frame10799_corrected.pkl"
+    
+    # remap_and_fix_state_files(data_folder, states_file)
     # paths = glob.glob('G:/sleep-ecog-DOWNSAMPLED/*.csv')
     # for path in tqdm(paths):
     #     move_into_subfolder(path)
     
-    data_paths = glob.glob(r'C:\Users\marty\Desktop\SCORING202602\for_training\*')
-    for path in data_paths:
-        score_paths = glob.glob(path + '/*scores*.pkl')
-        if len(score_paths) > 1:
-            print(f'something is wrong, multiple score files in folder: {path}')
+    # data_paths = glob.glob(r'C:\Users\marty\Desktop\SCORING202602\for_training\*')
+    # for path in data_paths:
+    #     score_paths = glob.glob(path + '/*scores*.pkl')
+    #     if len(score_paths) > 1:
+    #         print(f'something is wrong, multiple score files in folder: {path}')
 
-        win_len = 1000
+    #     win_len = 1000
         
-        # states_to_yfile(score_paths[0], path, win_len)
-        print(path, '\n',  score_paths[0])
+    #     # states_to_yfile(score_paths[0], path, win_len)
+    #     print(path, '\n',  score_paths[0])
     
     
     # print('everything is commented out, edit script to do something')

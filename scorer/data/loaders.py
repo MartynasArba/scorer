@@ -9,6 +9,14 @@ from pathlib import Path
 import bisect
 from collections import OrderedDict
 import os
+import re
+
+def natural_sort_key(filepath):
+    """
+    splits a filepath string into text and numbers, ensuring that
+    X_2.pt is sorted before X_10.pt, while keeping folder names intact
+    """
+    return [int(text) if text.isdigit() else text.lower() for text in re.split(r'(\d+)', str(filepath))]
 
 class SleepSignals(Dataset):
     """
@@ -93,7 +101,7 @@ class SleepSignals(Dataset):
         
         #load folders with chunk data
         if data_path.is_dir():
-            raw_x_files = sorted(data_path.glob("X_*.pt"))
+            raw_x_files = sorted(data_path.glob("X_*.pt"), key = natural_sort_key)
             if not raw_x_files:
                 raise RuntimeError(f"No X_*.pt found in folder: {data_path}")
             
@@ -306,8 +314,8 @@ class SleepTraining(Dataset):
         2. loads as usual, joins into one output
         """
         import glob
-        data_paths = sorted(glob.glob(data_path + './*/X*.pt'))
-        score_paths = sorted(glob.glob(data_path + './*/y*.pt'))
+        data_paths = sorted(glob.glob(data_path + './*/X*.pt'), key = natural_sort_key)
+        score_paths = sorted(glob.glob(data_path + './*/y*.pt'), key = natural_sort_key)
         if n_files_to_pick == None:
             n_files_to_pick = len(data_paths)
             
@@ -415,7 +423,7 @@ class SleepTraining(Dataset):
         if labels.is_cuda:
             labels = labels.cpu()
 
-        # 1. ALWAYS apply the exclude_labels mask first
+        # ALWAYS apply the exclude_labels mask first
         keep_mask = torch.ones_like(labels, dtype=torch.bool)
         for lab in exclude_labels or ():
             keep_mask &= (labels != lab)
@@ -588,9 +596,12 @@ class BufferedSleepDataset(IterableDataset):
                     continue # Skip file entirely if all its samples were excluded/balanced away
                 
                 # Load the full file
-                tensor = torch.load(x_path).float()
+                tensor = torch.load(x_path, map_location = 'cpu').float()
                 if tensor.ndim == 3:
                     tensor = tensor.permute(1, 0, 2)
+                    
+                #force 2 dims for training, as I only use ephys features and others can be mismatched
+                tensor = tensor[:, :2, :]
                     
                 # Extract only the valid samples using local indexing
                 local_indices = valid_global_indices - start_idx
@@ -599,8 +610,8 @@ class BufferedSleepDataset(IterableDataset):
                 
             if not chunk_x:
                 continue # Edge case if an entire chunk was filtered out
-                
-            # Concatenate the active samples from the 300 files into one tensor
+                                
+            # Concatenate the active samples from the 300 files into one tensor            
             chunk_x_tensor = torch.cat(chunk_x, dim=0)
             chunk_y_tensor = torch.cat(chunk_y, dim=0)
             
@@ -625,8 +636,8 @@ class BufferedSleepDataset(IterableDataset):
 
     def _load(self, data_path, n_files_to_pick):
         import glob
-        x_paths = sorted(glob.glob(data_path + './*/X*.pt'))
-        y_paths = sorted(glob.glob(data_path + './*/y*.pt'))
+        x_paths = sorted(glob.glob(data_path + './*/X*.pt'), key = natural_sort_key)
+        y_paths = sorted(glob.glob(data_path + './*/y*.pt'), key = natural_sort_key)
 
         if not x_paths or not y_paths:
             raise RuntimeError(f"No X/y files found in {data_path}")
@@ -645,7 +656,8 @@ class BufferedSleepDataset(IterableDataset):
         offset = 0
 
         for x_path, y_path in zip(x_paths, y_paths):
-            y = torch.load(y_path).long()
+            #also make sure it's all on cpu
+            y = torch.load(y_path, map_location = 'cpu').long()
             if y.ndim == 3:
                 y = y.permute(1, 0, 2) 
             if y.ndim == 3 and y.size(1) == 1:

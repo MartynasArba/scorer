@@ -70,7 +70,7 @@ def train_supcon(dataset, epochs=50, batch_size = 256):
     model = SupConSleepCNN(base_cnn).to(device)
     
     optimizer = optim.Adam(model.parameters(), lr = 5e-5)
-    criterion = SupConLoss(temperature = 0.15)
+    criterion = SupConLoss(temperature = 0.15)  #worked well with 0.15
     
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
 
@@ -137,7 +137,7 @@ def run_linear_evaluation(
         augment=False, # augmentations are disabled
         metadata=meta,
         balance='none', 
-        exclude_labels=(0,3), # Excluding Unlabeled (0) and IS (3) based on pretraining, plus I don't label them
+        exclude_labels=(0,), # Excluding Unlabeled (0) and IS (3) based on pretraining, plus I don't label them
         merge_nrem=True    #no merging on my data as it shouldn't include it, but can merge on Oslo data
     )
     
@@ -221,20 +221,19 @@ def run_linear_evaluation(
         # save best model
         if val_acc > best_val_acc:
             best_val_acc = val_acc
-            torch.save(model, save_dir / "3state_dual_CHANGE.pt")
+            torch.save(model, save_dir / "3state_dual.pt")
 
     print(f"Optimization complete. Peak Validation Accuracy: {best_val_acc:.4f}")
     return model
 
 if __name__ == "__main__":
-    path = 'G:/oslo_data'
+    path = 'G:/for_training'
     meta = {'ecog_channels' : '1', 'emg_channels' : '2', 'sample_rate' : '250', 'ylim' : 'standard', 'device':'cuda'}
-    # meta2 = {'ecog_channels' : '0', 'emg_channels' : '2', 'sample_rate' : '250', 'ylim' : 'standard', 'device':'cuda'}
     n_files = 200
     n_epochs = 100
-    model_name = 'weights/3state_contrastiveDualCNN_2026-03_CHANGE.pt'
+    model_name = 'weights/3state_contrastiveDualCNN_2026-03_17.pt'
     save_path = Path(r"C:\Users\marty\Projects\scorer\scorer\models")
-
+    
     # print('starting pretraining...')
     # dataset = load_dataset(path = path, meta = meta, n_files = n_files)
     # print('data loaded, running train loop')
@@ -243,8 +242,19 @@ if __name__ == "__main__":
     
     run_linear_evaluation(
         pretrained_model_path = save_path / model_name,
-        data_path = 'G:/oslo_data_val'#r'C:\Users\marty\Desktop\SCORING202602\for_training', #'G:/oslo_data_val'
+        data_path = 'G:/oslo_data_val',#r'C:\Users\marty\Desktop\SCORING202602\for_training', #r'G:\for_training',#'G:/oslo_data_val'
         meta = meta,
         epochs = 30,
         batch_size = 1024  #batch size can also be smaller as this step uses regular loss 
     )
+    
+    
+    
+    # #double check whether labels match data
+    # X = torch.load(r'C:\Users\marty\Desktop\SCORING202602\for_training\windowed_20260303170912 20251126-1_g0_t0.obx0.obx_box3\X_chunk2.pt', map_location='cpu')
+    # y = torch.load(r'C:\Users\marty\Desktop\SCORING202602\for_training\windowed_20260303170912 20251126-1_g0_t0.obx0.obx_box3\y_chunk2.pt', map_location='cpu')
+
+    # epoch_idx = 50
+    # plt.plot(X[0, epoch_idx, :].numpy()) # Plot ECoG
+    # plt.title(f"Label: {y[0, epoch_idx, 0].item()} (1=W, 2=NR, 4=R)")
+    # plt.show()
