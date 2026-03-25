@@ -272,15 +272,19 @@ def remap_and_fix_state_files(data_dir, states_path, win_len = 1000, new_states_
 
 if __name__ == "__main__":
     # print('nothing uncommented!')
+    states_pkl_path = r"G:\for_training\windowed_2026032316115720260116-1_g0_t0.obx0.obx_box3\noID_scores_windowed_2026032316115720260116-1_g0_t0.ob____0_frame10799.pkl"
+    data_path = r"G:\for_training\windowed_2026032316115720260116-1_g0_t0.obx0.obx_box3"
+    win_len = 1000
+    states_to_yfile(states_pkl_path, data_path, win_len)
     
     #get all subfolders as data dirs
-    subfolders = glob.glob(r'C:\Users\marty\Desktop\SCORING202602\for_training\*')
-    for sub in subfolders:
-        print(sub)
-        states_files = glob.glob(sub + '/*.pkl')
-        for states in states_files:
-            if 'corrected' not in states:
-                remap_and_fix_state_files(sub, states)
+    # subfolders = glob.glob(r'C:\Users\marty\Desktop\SCORING202602\for_training\*')
+    # for sub in subfolders:
+    #     print(sub)
+    #     states_files = glob.glob(sub + '/*.pkl')
+    #     for states in states_files:
+    #         if 'corrected' not in states:
+    #             remap_and_fix_state_files(sub, states)
         # print(states_files)
     # data_folder = r"C:\Users\marty\Desktop\SCORING202602\for_training\windowed_20260224115335 20260107-1_g0_t0.obx0.obx_box1"
     # states_file = r"C:\Users\marty\Desktop\SCORING202602\for_training\windowed_20260224115335 20260107-1_g0_t0.obx0.obx_box1\noID_scores_windowed_20260312140926 20260107-1_g0_t0.ob____0_frame10799_corrected.pkl"

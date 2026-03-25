@@ -53,27 +53,28 @@ def design_bandpass_hamming(fs: int, lowcut: float, highcut: float,
     hamming = 0.54 - 0.46 * torch.cos(2.0 * math.pi * n / (M - 1))
     taps = taps * hamming
     
-    # normalize to gain at the passband center frequency
+    #ormalizing by max
+    # normalize by the maximal magnitude of the FFT of taps.
+    # Compute small FFT on CPU to find max magnitude
     with torch.no_grad():
-        f0 = 0.5 * (lowcut + highcut) # center frequency (Hz)
-        w0 = 2.0 * math.pi * f0 / fs  # rad/sample
-        n = torch.arange(M, device=device, dtype=dtype)
-        # complex frequency response at w0: H(e^{jw0}) = sum h[n] e^{-j w0 n}
-        H0 = torch.sum(taps * torch.exp(-1j * w0 * n))
-        gain0 = torch.abs(H0).clamp_min(1e-12)
-        taps = taps / gain0
-        
-    #OLD IMPLEMENTATION: normalizing by max
-    # normalize by the maximal magnitude of the FFT of taps for better passband scaling).
-    # Compute small FFT on CPU to find max magnitude (cheap because numtaps moderate)
+        # use zero padding to do fine FFT resolution
+        fftlen = 4096
+        H = torch.fft.rfft(taps, n=fftlen)
+        mag = torch.abs(H)
+        max_mag = float(mag.max())
+        if max_mag > 0:
+            taps = taps / max_mag
+    
+    #alternative implementation
+    # normalize by gain at the passband center frequency, might be dangerous for EEG specifically
     # with torch.no_grad():
-    #     # use zero padding to do fine FFT resolution
-    #     fftlen = 4096
-    #     H = torch.fft.rfft(taps, n=fftlen)
-    #     mag = torch.abs(H)
-    #     max_mag = float(mag.max())
-    #     if max_mag > 0:
-    #         taps = taps / max_mag
+    #     f0 = 0.5 * (lowcut + highcut) # center frequency (Hz)
+    #     w0 = 2.0 * math.pi * f0 / fs  # rad/sample
+    #     n = torch.arange(M, device=device, dtype=dtype)
+    #     # complex frequency response at w0: H(e^{jw0}) = sum h[n] e^{-j w0 n}
+    #     H0 = torch.sum(taps * torch.exp(-1j * w0 * n))
+    #     gain0 = torch.abs(H0).clamp_min(1e-12)
+    #     taps = taps / gain0
     return taps  # on device
 
 def design_notch_hamming(fs: int, notch_center: float, 
@@ -333,7 +334,10 @@ def bandpass_filter(signal: torch.Tensor,
     signal: [T], [C, T], [batch, channel, time] (should work on all formats)
     hopefully fast!
     """   
-    taps = design_bandpass_hamming(sr, freqs[0], freqs[1], transition_width = 1.0, device = device)
+    #dynamic transition width so it's never larger than low cut
+    dynamic_tw = min(1.0, freqs[0] * 0.8)
+    
+    taps = design_bandpass_hamming(sr, freqs[0], freqs[1], transition_width = dynamic_tw, device = device)
     y = fft_filtfilt_fir(signal, taps)
     return y
 
@@ -452,7 +456,10 @@ def band_powers(signal: torch.Tensor,
         amplitude = amplitude.unsqueeze(0).unsqueeze(0)
         
         if kernel is not None:
-            amplitude = F.conv1d(amplitude, kernel, padding = 'same').squeeze(0)
+            #padding not same to avoid 0s at edges
+            pad_len = kernel.shape[-1] // 2
+            padded_amplitude = F.pad(amplitude, (pad_len, pad_len), mode='replicate')
+            amplitude = F.conv1d(padded_amplitude, kernel, padding='valid').squeeze(0)
         
         #force 1, time always - reduce to single dim, then expand
         amplitude = amplitude.squeeze(0).squeeze(0).unsqueeze(0)
@@ -539,7 +546,9 @@ def ratio_signals(signal: torch.Tensor,
         amplitude = amplitude.unsqueeze(0).unsqueeze(0)
         
         if kernel is not None:
-            amplitude = F.conv1d(amplitude, kernel, padding = 'same').squeeze(0)
+            pad_len = kernel.shape[-1] // 2
+            padded_amplitude = F.pad(amplitude, (pad_len, pad_len), mode='replicate')
+            amplitude = F.conv1d(padded_amplitude, kernel, padding='valid').squeeze(0)
         
         #force 1, time always - reduce to single dim, then expand
         amplitude = amplitude.squeeze(0).squeeze(0).unsqueeze(0)
