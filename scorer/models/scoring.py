@@ -4,7 +4,7 @@
 from scorer.data.loaders import SleepSignals
 from scorer.models.heuristic_scorer import HeuristicScorer
 # from scorer.models.heuristic_scorer_v2 import HeuristicScorer2
-from scorer.models.sleep_cnn import SleepCNN, EphysSleepCNN, DualStreamSleepCNN
+from scorer.models.sleep_cnn import SleepCNN, EphysSleepCNN, DualStreamSleepCNN, SCDSSleepCNN
 from scorer.data.storage import save_pickled_states
 import numpy as np
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, accuracy_score
@@ -100,11 +100,11 @@ def score_signal(data_path, state_save_folder, meta, scorer_type = 'heuristic', 
         all_preds = np.array(all_preds) + 1
         all_preds[all_preds == 3] = 4 
     
-    elif scorer_type == '3state_dual_Oslo':
+    elif scorer_type == '3state_SCDS':
         loader = DataLoader(dataset, batch_size = 64, shuffle = False)
         #predict 
         try:
-            scorer = torch.load(r'C:\Users\marty\Projects\scorer\scorer\models\weights\3state_dual.pt', weights_only= False)
+            scorer = torch.load(r'C:\Users\marty\Projects\scorer\scorer\models\weights\3state_SCDS_2.pt', weights_only= False)
         except FileNotFoundError:
             print('Check weights folder - selected model not found!')
             return

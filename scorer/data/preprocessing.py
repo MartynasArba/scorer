@@ -494,13 +494,99 @@ def _median_center(x: torch.Tensor) -> torch.Tensor:
         return x - med
     else:
         raise ValueError(f"Unexpected shape {x.shape}")
-
+    
 def ratio_signals(signal: torch.Tensor, 
                   emg: torch.Tensor,
                   sr: int = 250, 
                   device: str = 'cuda', 
                   smoothen: float = 0.2) -> dict[torch.Tensor]:
     """
+    generates custom measures: 
+    theta/beta ratio (REM-W axis)
+    delta/beta ratio (NREM-W axis)
+    sigma/beta ratio (spindle-W axis)
+    beta/(theta+delta+sigma) (W-sleep axis)
+    """
+    eps = 1e-12
+    bands = {'delta': (0.5, 4),
+            'theta': (5, 9),
+            'sigma': (12, 15),
+            'beta': (15, 30)}
+    signal = signal.to(device) #make sure just in case
+    signal = signal.to(dtype = torch.float32)
+    if signal.ndim == 1:        #just in case a single channel with [, time] is passed
+            signal = signal.unsqueeze(0)
+    if signal.size(dim = 0) > 1:    #if there are more channels, takes the first one
+        print('multiple channels passed for band powers, using channel 0')
+        signal = signal[0, :]   #should be 1, time
+    
+    band_envelopes = {}
+    amplitudes = {}
+    
+    if smoothen:
+        kernel = gaussian_kernel(sigma = smoothen, sr = sr, device = device)
+    else:
+        kernel = None
+
+    for name, (low, high) in bands.items():
+        filtered = bandpass_filter(signal, sr, freqs = (low, high), device=device)  #still 1, time
+        #enforce 1d for Hilbert transform
+        if filtered.ndim == 2:          # 1, T or C, T
+            filtered1d = filtered[0]    # take channel 0
+        elif filtered.ndim == 1:     
+            filtered1d = filtered
+        else:
+            raise ValueError(f"Unexpected filtered shape: {filtered.shape}")
+       
+        analytic = hilbert_transform(filtered1d)        
+        amplitude = torch.abs(analytic) 
+        
+        #expand for convolution to 1, 1, time
+        amplitude = amplitude.unsqueeze(0).unsqueeze(0)
+        
+        if kernel is not None:
+            pad_len = kernel.shape[-1] // 2
+            padded_amplitude = F.pad(amplitude, (pad_len, pad_len), mode='replicate')
+            amplitude = F.conv1d(padded_amplitude, kernel, padding='valid').squeeze(0)
+        
+        #force 1, time always - reduce to single dim, then expand
+        amplitude = amplitude.squeeze(0).squeeze(0).unsqueeze(0)
+        amplitudes[name] = amplitude
+        
+    ld = torch.log(amplitudes['delta'] + eps)
+    lt = torch.log(amplitudes['theta'] + eps)
+    lb = torch.log(amplitudes['beta']  + eps)
+    ls = torch.log(amplitudes['sigma'] + eps)
+    
+    # theta/beta ratio (REM-W axis)
+    # theta/delta ratio (REM-NREM axis)
+    # delta/beta ratio (NREM-W axis)
+    # sigma/beta ratio (spindle-W axis)
+    # beta/(theta+delta+sigma) (W-sleep axis)
+    
+    band_envelopes['theta/beta'] = lt - lb
+    band_envelopes['theta/delta'] = lt - ld
+    band_envelopes['delta/beta'] = ld - lb
+    band_envelopes['sigma/beta'] = ls - lb
+    band_envelopes['beta'] = lb - torch.log(amplitudes['theta'] + amplitudes['theta']+ amplitudes['sigma'] + eps)
+
+    #median center everything, apply clamping
+    for key, val in band_envelopes.items():
+        sub = val[0, ::10]
+        q98 = torch.quantile(sub, q=0.98)
+        val = torch.clamp(val, max=q98)
+        
+        band_envelopes[key] = _median_center(val)
+        
+    return band_envelopes   
+
+def ratio_signals_original(signal: torch.Tensor, 
+                  emg: torch.Tensor,
+                  sr: int = 250, 
+                  device: str = 'cuda', 
+                  smoothen: float = 0.2) -> dict[torch.Tensor]:
+    """
+    original ratio_signals func that has now been updated
     generates custom measures: 
     theta/delta ratio (REM-NREM axis)
     beta/delta ratio (wake-sleep axis)
@@ -684,7 +770,7 @@ def preprocess_test(sr: int = 250,
     peak_idx = int(torch.argmax(torch.abs(y_imp)).item())
     print(f"[Impulse] peak at {peak_idx}, expected {mid}, shift = {peak_idx - mid} samples")
     
-    # 2) SINE BURST TEST (envelope alignment)
+    # SINE BURST TEST (envelope alignment)
     # Create a burst of 10 Hz in the middle (Gaussian-windowed)
     f0 = 10.0
     sigma_s = 0.5  # seconds, controls burst width
@@ -699,7 +785,7 @@ def preprocess_test(sr: int = 250,
     a_peak = int(torch.argmax(a).item())
     print(f"[Burst] true env peak at {env_peak}, Hilbert amp peak at {a_peak}, shift = {a_peak - env_peak} samples")
 
-    # 3) BAND ENVELOPES vs RMS TEST (rough consistency)
+    # BAND ENVELOPES vs RMS TEST (rough consistency)
     # Multi-tone + noise
     x_mix = (
         0.8 * torch.sin(2 * math.pi * 2.0 * t) +   # delta-ish

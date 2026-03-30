@@ -1,15 +1,11 @@
 import random
 import numpy as np
 import torch
-import pickle
 from torch.utils.data import Dataset, IterableDataset
-from torchaudio.transforms import Spectrogram
-from torch.fft import rfft, rfftfreq
 from pathlib import Path
-import bisect
-from collections import OrderedDict
 import os
 import re
+import glob
 
 def natural_sort_key(filepath):
     """
@@ -21,8 +17,8 @@ def natural_sort_key(filepath):
 class SleepSignals(Dataset):
     """
     Dataset structure for chopped signals and labels, developed using 1000-datapoint windows
-    Generally, there are 2 channels (ECoG, EMG), and 6 extracted features: ECoG & EMG power, Delta, Theta, Alpha and Sigma powers
-    This dataset is designed and used mostly in the GUI. For training and evaluating models, see SleepTraining class.
+    Generally, there are 2 channels (ECoG, EMG), and some extracted features
+    This dataset is designed and used mostly in the GUI. For training and evaluating models, see other classes.
     Sleep is labeled as: 
           0:'Unlabeled',
           1:'Wake',
@@ -240,12 +236,12 @@ class SleepTraining(Dataset):
     This is a dataset made to load training data with labels, not to score data.
     It mirrors the main SleepDataset class. 
     
-    USE ONLY FOR TRAINING AND ONLY WITH RANDOM SHUFFLE!
+    USE ONLY FOR TRAINING
     Ensure y contains actual pre-scored labels
     If balance or exclude_labels is passed, the order of frames will not be as recorded. This is also the case as multiple recordings are loaded at random.
     
     Dataset structure for chopped signals and labels, developed using 1000-datapoint windows
-    Generally, there are at least 2 channels (ECoG, EMG), and 6 extracted features: ECoG & EMG power, Delta, Theta, Alpha and Sigma power
+    Generally, there are at least 2 channels (ECoG, EMG), and any extracted features
     Sleep is labeled as: 
           0:'Unlabeled',
           1:'Wake',
@@ -275,6 +271,8 @@ class SleepTraining(Dataset):
         
         if merge_nrem:
             self.all_labels[self.all_labels == 3] = 2
+            #also merge 0 and W
+            self.master_labels[self.master_labels == 0] = 1
         
         self._balance_labels(balance=balance, exclude_labels=exclude_labels, seed=random_state)
         self._remap_labels_to_contiguous()
@@ -348,6 +346,11 @@ class SleepTraining(Dataset):
         sel_y = [y_paths[idx] for idx in subset_idxs]
 
         x_chunks = [torch.load(f).float() for f in sel_x]
+        #skip channel in last dim if doesn't match lowest (happens due to old preprocessing)
+        lowest_dim = min(chunk.size(dim=0) for chunk in x_chunks)
+        print(f'lowest dim in data: {lowest_dim}')
+        x_chunks = [chunk[:lowest_dim, :, :] for chunk in x_chunks]
+        
         X = torch.cat(x_chunks, dim=1)        # concat on sample dimension
 
         if X.ndim == 3:
@@ -512,9 +515,8 @@ class SleepTraining(Dataset):
 class BufferedSleepDataset(IterableDataset):
     """
     Iterable version of SleepTraining.
-    Loads chunks of files into RAM (buffer), shuffles internally, and yields samples.
-    Solves I/O bottlenecks while maintaining batch diversity for Contrastive Learning.
-    Supports balancing, label remapping, augment, transform, and multiprocessing.
+    Loads chunks of files, shuffles internally, and yields samples.
+    Solves i/o bottlenecks  for contrastive learning.
     """
 
     def __init__(self,
@@ -547,6 +549,8 @@ class BufferedSleepDataset(IterableDataset):
 
         if merge_nrem:
             self.master_labels[self.master_labels == 3] = 2
+            #also merge 0 and W
+            self.master_labels[self.master_labels == 0] = 1
 
         # balance and filter labels to get our global 'active_indices'
         if balance != "none" or exclude_labels:
@@ -610,7 +614,7 @@ class BufferedSleepDataset(IterableDataset):
                 
             if not chunk_x:
                 continue # Edge case if an entire chunk was filtered out
-                                
+                                            
             # Concatenate the active samples from the 300 files into one tensor            
             chunk_x_tensor = torch.cat(chunk_x, dim=0)
             chunk_y_tensor = torch.cat(chunk_y, dim=0)
@@ -742,16 +746,134 @@ class BufferedSleepDataset(IterableDataset):
             x = torch.roll(x, shifts=shift, dims=1)
         return x
 
-# #for testing
-# if __name__ == "__main__":
-#     dataset = SleepTrainingLazy(
-#         data_path = 'G:/oslo_data',
-#         n_files_to_pick = None,
-#         random_state = 0,
-#         device = 'cuda',
-#         transform = None,
-#         augment = False,
-#         metadata = {'ecog_channels' : '1', 'emg_channels' : '2', 'sample_rate' : '250', 'ylim' : 'standard'}
-#     )    
-    
-#     print(dataset[0])
+class SequenceSleepDataset(Dataset):
+    """
+    dataset class for sequence modeling
+    groups chronological data into sliding windows of length `seq_len`
+    ensures sequences do not cross between different recordings/mice
+    """
+    def __init__(self, data_path, seq_len=5, stride=1, device='cpu', 
+                 transform=None, augment=False, exclude_labels=(0,), merge_nrem=True):
+        
+        self.seq_len = seq_len
+        self.stride = stride
+        self.device = device
+        self.transform = transform
+        self.augment = augment
+        self.exclude_labels = exclude_labels
+        
+        self.all_samples = []
+        self.all_labels = []
+        self.valid_starts = [] # starting idxs of valid sequences
+        
+        self._load_sequences(data_path, merge_nrem)
+        
+        # Concatenate everything into massive tensors for rapid memory access
+        if self.all_samples:
+            self.all_samples = torch.cat(self.all_samples, dim=0).to(self.device)
+            self.all_labels = torch.cat(self.all_labels, dim=0).to(self.device)
+        else:
+            raise RuntimeError("No valid sequences found! Check data paths or exclusion rules.")
+            
+        print(f"Sequence Dataset Built: {len(self.valid_starts)} valid sequences of length {self.seq_len}.")
+
+    def __len__(self):
+        return len(self.valid_starts)
+
+    def __getitem__(self, idx):
+        # 1. Get the actual memory index for the start of this sequence
+        start_idx = self.valid_starts[idx]
+        end_idx = start_idx + self.seq_len
+        
+        # 2. Slice the sequence
+        # x_seq shape: [seq_len, channels, window_len]
+        # y_seq shape: [seq_len]
+        x_seq = self.all_samples[start_idx:end_idx]
+        y_seq = self.all_labels[start_idx:end_idx]
+        
+        # Optional: apply augmentations to the sequence
+        # Note: If your augment function expects 3D tensors, it works natively here!
+        if self.augment:
+            x_seq = self._augment_sequence(x_seq)
+        if self.transform:
+            x_seq = self.transform(x_seq)
+            
+        return x_seq, y_seq
+
+    def _load_sequences(self, data_path, merge_nrem):
+        # Find all mouse/recording subdirectories
+        # Using glob to match the structure: data_path/mouse_folder/X_chunk*.pt
+        dir_paths = sorted(glob.glob(os.path.join(data_path, '*')))
+        
+        global_offset = 0
+        
+        for d in dir_paths:
+            if not os.path.isdir(d):
+                continue
+                
+            x_paths = sorted(glob.glob(os.path.join(d, 'X*.pt')), key=natural_sort_key)
+            y_paths = sorted(glob.glob(os.path.join(d, 'y*.pt')), key=natural_sort_key)
+            
+            if not x_paths or not y_paths:
+                continue
+                
+            print(f"Processing recording directory: {Path(d).name}")
+            
+            # Load all chunks for THIS specific recording
+            rec_x_chunks = [torch.load(f, map_location='cpu', weights_only=False).float() for f in x_paths]
+            rec_y_chunks = [torch.load(f, map_location='cpu', weights_only=False).long() for f in y_paths]
+            
+            # Ensure channel dimensions match (Truncate 8 channels to 7 if mixing old/new data)
+            min_channels = min(chunk.size(0) for chunk in rec_x_chunks)
+            rec_x_chunks = [chunk[:min_channels, :, :] for chunk in rec_x_chunks]
+            
+            # Concatenate the specific recording along the sample dimension (dim=1)
+            X_rec = torch.cat(rec_x_chunks, dim=1) 
+            Y_rec = torch.cat(rec_y_chunks, dim=1)
+            
+            # Permute X to [samples, channels, win_len]
+            if X_rec.ndim == 3:
+                X_rec = X_rec.permute(1, 0, 2)
+                
+            # Collapse Y to 1D [samples]
+            if Y_rec.ndim == 3:
+                Y_rec = Y_rec[..., 0].squeeze(1)
+                
+            if merge_nrem:
+                Y_rec[Y_rec == 3] = 2 # Merge IS into NREM
+                
+            num_samples = X_rec.shape[0]
+            
+            # Add to our global memory lists
+            self.all_samples.append(X_rec)
+            self.all_labels.append(Y_rec)
+            
+            # Calculate valid sequences for THIS recording only (prevents crossover)
+            for i in range(0, num_samples - self.seq_len + 1, self.stride):
+                seq_labels = Y_rec[i : i + self.seq_len]
+                
+                # Check if this sequence contains any excluded labels (like Unlabeled '0')
+                contains_excluded = False
+                for ex in self.exclude_labels:
+                    if (seq_labels == ex).any():
+                        contains_excluded = True
+                        break
+                        
+                if not contains_excluded:
+                    # Map the valid sequence back to the global flattened tensor index
+                    self.valid_starts.append(global_offset + i)
+            
+            # Move the pointer forward by the size of this recording
+            global_offset += num_samples
+
+    def _augment_sequence(self, x_seq):
+        """Applies augmentations coherently across the sequence"""
+        x_seq = x_seq.clone()
+        # Random scale applied to the whole sequence uniformly
+        if torch.rand(1).item() < 0.5:
+            scale = 0.5 + torch.rand(1, device=x_seq.device).item()
+            x_seq *= scale
+        # Random noise per-window
+        if torch.rand(1).item() < 0.7:
+            x_seq += torch.randn_like(x_seq) * 0.01
+        return x_seq

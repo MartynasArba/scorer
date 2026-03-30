@@ -272,8 +272,8 @@ def remap_and_fix_state_files(data_dir, states_path, win_len = 1000, new_states_
 
 if __name__ == "__main__":
     # print('nothing uncommented!')
-    states_pkl_path = r"G:\for_training\windowed_2026032316115720260116-1_g0_t0.obx0.obx_box3\noID_scores_windowed_2026032316115720260116-1_g0_t0.ob____0_frame10799.pkl"
-    data_path = r"G:\for_training\windowed_2026032316115720260116-1_g0_t0.obx0.obx_box3"
+    states_pkl_path = r"G:\for_training\windowed_2026032514575020251207-1_g0_t0.obx0.obx_box3\noID_scores_windowed_2026032514575020251207-1_g0_t0.ob____0_frame10799.pkl"
+    data_path = r"G:\for_training\windowed_2026032514575020251207-1_g0_t0.obx0.obx_box3"
     win_len = 1000
     states_to_yfile(states_pkl_path, data_path, win_len)
     
