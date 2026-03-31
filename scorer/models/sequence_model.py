@@ -5,22 +5,21 @@ class ContextAwareSleepScorer(nn.Module):
     def __init__(self, pretrained_cnn, embedding_dim=128, hidden_dim=64, num_classes=3, num_layers=2):
         super().__init__()
         
-        # 1. The Frozen Feature Extractor
+        # feature extractor is contrastive-pretrained SCDS CNN
         self.encoder = pretrained_cnn
         
-        # Freeze the CNN parameters
+        # freeze CNN
         for param in self.encoder.parameters():
             param.requires_grad = False
             
-        # Remove the old classification head from the CNN if it's still attached
-        # (Assuming your base_cnn outputs 'embedding_dim' directly before the fc layers)
+        # remove classification layer if it's there
+        # CNN outputs 'embedding_dim' directly before fc layers (as feature_proj)
         if hasattr(self.encoder, 'fc1'):
             self.encoder.fc1 = nn.Identity()
         if hasattr(self.encoder, 'fc2'):
             self.encoder.fc2 = nn.Identity()
 
-        # 2. The Context Wrapper (Bi-directional GRU)
-        # Bi-directional means it looks at past AND future context to score the present
+        # context wrapper (bi-directional GRU, default from torch)
         self.rnn = nn.GRU(
             input_size=embedding_dim,
             hidden_size=hidden_dim,
@@ -30,7 +29,7 @@ class ContextAwareSleepScorer(nn.Module):
             dropout=0.3 if num_layers > 1 else 0
         )
         
-        # 3. The Classification Head
+        # classification head
         # hidden_dim * 2 because it's bi-directional
         self.classifier = nn.Sequential(
             nn.Linear(hidden_dim * 2, hidden_dim),
@@ -40,31 +39,25 @@ class ContextAwareSleepScorer(nn.Module):
         )
 
     def forward(self, x):
-        # x expected shape: [Batch_size, Sequence_Length, Channels, Window_Length]
-        # Example: [32, 5, 2, 1000] (A batch of 32 sequences, each sequence has 5 windows)
-        
+        # x expected shape: [batch_size, seq_length, chs, win_len]
         batch_size, seq_len, channels, win_len = x.size()
         
-        # Step 1: Flatten batch and sequence to push through the CNN
-        # Shape becomes: [160, 2, 1000]
+        # flatten batch and sequence to push through pretrained CNN to [batch * seq, chs, win_len]
         x_flat = x.view(batch_size * seq_len, channels, win_len)
         
-        # Step 2: Extract features using your Contrastive Pretrained CNN
-        with torch.no_grad(): # Ensure no gradients leak into the frozen encoder
-            embeddings = self.encoder(x_flat) # Shape: [160, 128]
+        # extract features
+        with torch.no_grad(): # ensure no gradients leak into frozen encoder
+            embeddings = self.encoder(x_flat) # Shape: [batch * seq, embedding_dim (128)]
             
-        # Step 3: Reshape back to sequence format for the RNN
-        # Shape becomes: [32, 5, 128]
+        # reshape back to sequence format for RNN: [batch, seq, embedding_dim]
         rnn_input = embeddings.view(batch_size, seq_len, -1)
         
-        # Step 4: Pass through the Bi-GRU
-        # rnn_out shape: [32, 5, hidden_dim * 2]
+        # pass through Bi-GRU
+        # rnn_out shape: [batch, seq, hidden_dim * 2]
         rnn_out, _ = self.rnn(rnn_input)
         
-        # Step 5: Classify every step in the sequence
-        # Shape becomes: [32, 5, 3]
+        # classify every step in the sequence: [batch, seq, num_classes]
         logits = self.classifier(rnn_out)
         
-        # In standard PyTorch CrossEntropyLoss for sequences, we usually transpose to:
-        # [Batch, Classes, Sequence_Length] -> [32, 3, 5]
+        # for standard crossentropy transpose to: [batch, num_classes, seq_len]
         return logits.transpose(1, 2)

@@ -2,7 +2,6 @@
 # load into SleepSignals
 #do scoring: launcher function 
 from scorer.data.loaders import SleepSignals
-from scorer.models.heuristic_scorer import HeuristicScorer
 # from scorer.models.heuristic_scorer_v2 import HeuristicScorer2
 from scorer.models.sleep_cnn import SleepCNN, EphysSleepCNN, DualStreamSleepCNN, SCDSSleepCNN
 from scorer.data.storage import save_pickled_states
@@ -26,7 +25,6 @@ def score_signal(data_path, state_save_folder, meta, scorer_type = 'heuristic', 
     """
 
     available_scorers = {
-                        'heuristic': HeuristicScorer, 
                         '3state_pretrained': EphysSleepCNN,
                         '3state_dual': DualStreamSleepCNN,
                         '5state_pretrained': EphysSleepCNN
@@ -46,9 +44,9 @@ def score_signal(data_path, state_save_folder, meta, scorer_type = 'heuristic', 
         return
     
     if scorer_type == 'heuristic':
-        scorer = selected_scorer(dataset)
-        scorer.score()
-        print(scorer)
+        print('heuristic scorer has been depreciated')
+        return
+
         
     elif scorer_type == '3state_pretrained':
         loader = DataLoader(dataset, batch_size = 64, shuffle = False)
@@ -206,32 +204,4 @@ def apply_heuristics(states: np.ndarray, num_classes: int = 5) -> np.ndarray:
     return smoothed
 
 if __name__ == "__main__":
-    
-    save_path = 'C:/Users/marty/Projects/scorer/proj_data/scores/trial_1_mouse_b1aqm2_heuristic_score.pkl'
-
-    dataset = SleepSignals(
-        data_path = 'G:/oslo_data/windowed_trial_1_mouse_b1aqm2',
-        score_path = 'G:/oslo_data/windowed_trial_1_mouse_b1aqm2',
-        device = 'cuda',
-        transform = None,
-        augment = False,
-        spectral_features = None,
-        metadata = {'ecog_channels' : '1', 'emg_channels' : '2', 'sample_rate' : '250', 'ylim' : 'standard'}
-    )    
-    scorer = HeuristicScorer(dataset)
-    scorer.score()
-    print(scorer)
-
-    save_pickled_states(np.array(scorer.states), save_path)
-
-    old_states = dataset.all_labels.cpu().numpy()
-    print(np.unique(old_states, return_counts = True))
-
-    print(f'accuracy: {accuracy_score(old_states, scorer.states)}')
-
-    cm1 = confusion_matrix(old_states, scorer.states)
-    print(cm1)
-
-    disp1 = ConfusionMatrixDisplay(cm1)
-    disp1.plot()
-    plt.show()
+    print('not implemented as a standalone script')

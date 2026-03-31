@@ -253,7 +253,7 @@ class SleepTraining(Dataset):
                  n_files_to_pick = 100, device = 'cuda', 
                  transform = None, augment = False,
                  metadata: dict = {}, 
-                 balance: str = "none", # "none" | "undersample" | "oversample") -> None:
+                 balance: str = "none", # "none" | "undersample" | "oversample" 
                  exclude_labels: tuple = (), 
                  merge_nrem: bool = False):  
         """
@@ -516,7 +516,7 @@ class BufferedSleepDataset(IterableDataset):
     """
     Iterable version of SleepTraining.
     Loads chunks of files, shuffles internally, and yields samples.
-    Solves i/o bottlenecks  for contrastive learning.
+    Written to solve RAM/drive loading bottlenecks for contrastive learning.
     """
 
     def __init__(self,
@@ -552,7 +552,7 @@ class BufferedSleepDataset(IterableDataset):
             #also merge 0 and W
             self.master_labels[self.master_labels == 0] = 1
 
-        # balance and filter labels to get our global 'active_indices'
+        # balance and filter labels to get global 'active_indices'
         if balance != "none" or exclude_labels:
             self._balance_labels(balance, exclude_labels, random_state)
             self._remap_labels_to_contiguous()
@@ -562,33 +562,33 @@ class BufferedSleepDataset(IterableDataset):
         self.master_labels = self.master_labels.to(self.device)
 
     def __len__(self):
-        # Even for IterableDatasets, providing length helps DataLoader progress bars
+        #len method might help dataloaders and provide loading bars etc.
         return len(self.active_indices)
 
     def __iter__(self):
         """
-        The core buffered loading logic. Replaces __getitem__.
+        iterable replacement of __getitem__
         """
         worker_info = torch.utils.data.get_worker_info()
         file_indices = list(range(len(self.file_map)))
         
-        # Shuffle the order of files every epoch
+        # shuffle the order of files every epoch to get random batches
         random.shuffle(file_indices)
         
-        # If num_workers > 0 (e.g. 4), split the files evenly among the CPU workers
+        # If num_workers > 0, split the files evenly among the CPU workers
         if worker_info is not None:
             per_worker = int(np.ceil(len(file_indices) / float(worker_info.num_workers)))
             worker_id = worker_info.id
             file_indices = file_indices[worker_id * per_worker : (worker_id + 1) * per_worker]
 
-        # Process the assigned files in chunks of `buffer_size`
+        #process files in chunks of `buffer_size` at once (load into RAM and do things)
         for i in range(0, len(file_indices), self.buffer_size):
             chunk_file_indices = file_indices[i : i + self.buffer_size]
             
             chunk_x = []
             chunk_y = []
             
-            # Load all X files for this chunk into RAM
+            # load all X files for this chunk into RAM
             for f_idx in chunk_file_indices:
                 start_idx, end_idx, x_path = self.file_map[f_idx]
                 
@@ -597,36 +597,36 @@ class BufferedSleepDataset(IterableDataset):
                 valid_global_indices = self.active_indices[mask]
                 
                 if len(valid_global_indices) == 0:
-                    continue # Skip file entirely if all its samples were excluded/balanced away
+                    continue # skip file if all its samples were excluded/balanced 
                 
-                # Load the full file
+                # load the full file
                 tensor = torch.load(x_path, map_location = 'cpu').float()
                 if tensor.ndim == 3:
                     tensor = tensor.permute(1, 0, 2)
                     
-                #force 2 dims for training, as I only use ephys features and others can be mismatched
+                #force 2 dims for training, as I only use ephys features and others can be mismatched between datasets
                 tensor = tensor[:, :2, :]
                     
-                # Extract only the valid samples using local indexing
+                # extract only valid samples using local indexing
                 local_indices = valid_global_indices - start_idx
                 chunk_x.append(tensor[local_indices])
                 chunk_y.append(self.master_labels[valid_global_indices])
                 
             if not chunk_x:
-                continue # Edge case if an entire chunk was filtered out
+                continue # edge case - entire chunk was filtered out
                                             
-            # Concatenate the active samples from the 300 files into one tensor            
+            # concat active samples from n_files files to one tensor            
             chunk_x_tensor = torch.cat(chunk_x, dim=0)
             chunk_y_tensor = torch.cat(chunk_y, dim=0)
             
-            # Shuffle thoroughly WITHIN the RAM chunk to ensure Contrastive batch diversity
+            # Shuffle thoroughly within RAM chunk to ensure Contrastive batch diversity
             num_samples = chunk_x_tensor.size(0)
             shuffle_idx = torch.randperm(num_samples)
             
             chunk_x_tensor = chunk_x_tensor[shuffle_idx]
             chunk_y_tensor = chunk_y_tensor[shuffle_idx]
             
-            # Yield individual samples to the DataLoader
+            # yield individual samples to DataLoader
             for j in range(num_samples):
                 x = chunk_x_tensor[j]
                 y = chunk_y_tensor[j]
@@ -639,6 +639,7 @@ class BufferedSleepDataset(IterableDataset):
                 yield x, y
 
     def _load(self, data_path, n_files_to_pick):
+        """basically loads only y, as x is iterable"""
         import glob
         x_paths = sorted(glob.glob(data_path + './*/X*.pt'), key = natural_sort_key)
         y_paths = sorted(glob.glob(data_path + './*/y*.pt'), key = natural_sort_key)
@@ -752,8 +753,15 @@ class SequenceSleepDataset(Dataset):
     groups chronological data into sliding windows of length `seq_len`
     ensures sequences do not cross between different recordings/mice
     """
-    def __init__(self, data_path, seq_len=5, stride=1, device='cpu', 
-                 transform=None, augment=False, exclude_labels=(0,), merge_nrem=True):
+    def __init__(self, 
+                 data_path, 
+                 seq_len=5, 
+                 stride=1, 
+                 device='cpu', 
+                 transform=None, 
+                 augment=False, 
+                 exclude_labels=(0,), 
+                 merge_nrem=True):
         
         self.seq_len = seq_len
         self.stride = stride
@@ -768,31 +776,30 @@ class SequenceSleepDataset(Dataset):
         
         self._load_sequences(data_path, merge_nrem)
         
-        # Concatenate everything into massive tensors for rapid memory access
+        # concat everything into tensors for RAM access
         if self.all_samples:
             self.all_samples = torch.cat(self.all_samples, dim=0).to(self.device)
             self.all_labels = torch.cat(self.all_labels, dim=0).to(self.device)
         else:
             raise RuntimeError("No valid sequences found! Check data paths or exclusion rules.")
             
-        print(f"Sequence Dataset Built: {len(self.valid_starts)} valid sequences of length {self.seq_len}.")
+        print(f"Sequence dataset built: {len(self.valid_starts)} valid sequences of length {self.seq_len}")
 
     def __len__(self):
         return len(self.valid_starts)
 
     def __getitem__(self, idx):
-        # 1. Get the actual memory index for the start of this sequence
+        # get actual index for start of selected sequence
         start_idx = self.valid_starts[idx]
         end_idx = start_idx + self.seq_len
         
-        # 2. Slice the sequence
+        # slice:
         # x_seq shape: [seq_len, channels, window_len]
         # y_seq shape: [seq_len]
         x_seq = self.all_samples[start_idx:end_idx]
         y_seq = self.all_labels[start_idx:end_idx]
         
-        # Optional: apply augmentations to the sequence
-        # Note: If your augment function expects 3D tensors, it works natively here!
+        # apply augmentations to the sequence if needed, but augmentations were already done in pretraining, might not need here
         if self.augment:
             x_seq = self._augment_sequence(x_seq)
         if self.transform:
@@ -801,8 +808,8 @@ class SequenceSleepDataset(Dataset):
         return x_seq, y_seq
 
     def _load_sequences(self, data_path, merge_nrem):
-        # Find all mouse/recording subdirectories
-        # Using glob to match the structure: data_path/mouse_folder/X_chunk*.pt
+        # find all mouse/recording dirs
+        # glob to match the structure: data_path/mouse_folder/X_chunk*.pt
         dir_paths = sorted(glob.glob(os.path.join(data_path, '*')))
         
         global_offset = 0
@@ -817,30 +824,31 @@ class SequenceSleepDataset(Dataset):
             if not x_paths or not y_paths:
                 continue
                 
-            print(f"Processing recording directory: {Path(d).name}")
+            print(f"processing recording dir: {Path(d).name}")
             
-            # Load all chunks for THIS specific recording
-            rec_x_chunks = [torch.load(f, map_location='cpu', weights_only=False).float() for f in x_paths]
+            # load all chunks for one rec
+            rec_x_chunks = [torch.load(f, map_location='cpu', weights_only=False).float()[:2, :, :] for f in x_paths]
             rec_y_chunks = [torch.load(f, map_location='cpu', weights_only=False).long() for f in y_paths]
             
-            # Ensure channel dimensions match (Truncate 8 channels to 7 if mixing old/new data)
-            min_channels = min(chunk.size(0) for chunk in rec_x_chunks)
-            rec_x_chunks = [chunk[:min_channels, :, :] for chunk in rec_x_chunks]
-            
-            # Concatenate the specific recording along the sample dimension (dim=1)
+            # now keeping only ephys to save compute, alternatively do:
+            # min_channels = min(chunk.size(0) for chunk in rec_x_chunks)
+            # rec_x_chunks = [chunk[:min_channels, :, :] for chunk in rec_x_chunks]
+        
+            # concat specific rec along the sample dimension (dim=1)
             X_rec = torch.cat(rec_x_chunks, dim=1) 
             Y_rec = torch.cat(rec_y_chunks, dim=1)
             
-            # Permute X to [samples, channels, win_len]
+            # permute X to [samples, channels, win_len]
             if X_rec.ndim == 3:
                 X_rec = X_rec.permute(1, 0, 2)
                 
-            # Collapse Y to 1D [samples]
+            # collapse y to 1D [samples]
             if Y_rec.ndim == 3:
                 Y_rec = Y_rec[..., 0].squeeze(1)
                 
             if merge_nrem:
-                Y_rec[Y_rec == 3] = 2 # Merge IS into NREM
+                Y_rec[Y_rec == 3] = 2 # merge IS into NREM,
+                Y_rec[Y_rec == 0] = 1 # 0 into W
                 
             num_samples = X_rec.shape[0]
             
@@ -848,11 +856,11 @@ class SequenceSleepDataset(Dataset):
             self.all_samples.append(X_rec)
             self.all_labels.append(Y_rec)
             
-            # Calculate valid sequences for THIS recording only (prevents crossover)
+            # calculate valid sequences for rec (to prevent crossover)
             for i in range(0, num_samples - self.seq_len + 1, self.stride):
                 seq_labels = Y_rec[i : i + self.seq_len]
                 
-                # Check if this sequence contains any excluded labels (like Unlabeled '0')
+                # check if sequence contains any excluded labels (shouldn't, but doublecheck)
                 contains_excluded = False
                 for ex in self.exclude_labels:
                     if (seq_labels == ex).any():
@@ -860,20 +868,20 @@ class SequenceSleepDataset(Dataset):
                         break
                         
                 if not contains_excluded:
-                    # Map the valid sequence back to the global flattened tensor index
+                    # map valid sequence back to the global flattened tensor index
                     self.valid_starts.append(global_offset + i)
             
             # Move the pointer forward by the size of this recording
             global_offset += num_samples
 
     def _augment_sequence(self, x_seq):
-        """Applies augmentations coherently across the sequence"""
+        """applies augmentations coherently across the sequence"""
         x_seq = x_seq.clone()
-        # Random scale applied to the whole sequence uniformly
+        # random scale applied to whole sequence uniformly
         if torch.rand(1).item() < 0.5:
             scale = 0.5 + torch.rand(1, device=x_seq.device).item()
             x_seq *= scale
-        # Random noise per-window
+        # random noise per window
         if torch.rand(1).item() < 0.7:
             x_seq += torch.randn_like(x_seq) * 0.01
         return x_seq
