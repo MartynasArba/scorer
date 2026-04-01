@@ -780,6 +780,7 @@ class SequenceSleepDataset(Dataset):
         if self.all_samples:
             self.all_samples = torch.cat(self.all_samples, dim=0).to(self.device)
             self.all_labels = torch.cat(self.all_labels, dim=0).to(self.device)
+            self._remap_labels_to_contiguous()
         else:
             raise RuntimeError("No valid sequences found! Check data paths or exclusion rules.")
             
@@ -844,6 +845,7 @@ class SequenceSleepDataset(Dataset):
                 
             # collapse y to 1D [samples]
             if Y_rec.ndim == 3:
+                Y_rec = Y_rec.permute(1, 0, 2) #permute to the same format
                 Y_rec = Y_rec[..., 0].squeeze(1)
                 
             if merge_nrem:
@@ -884,4 +886,23 @@ class SequenceSleepDataset(Dataset):
         # random noise per window
         if torch.rand(1).item() < 0.7:
             x_seq += torch.randn_like(x_seq) * 0.01
+        #sequence blanking
+        if torch.rand(1).item() < 0.3:
+            mask_idx = torch.randint(0, x_seq.shape[0], (1,)).item()
+            x_seq[mask_idx] = 0.0   
+            
         return x_seq
+    
+    def _remap_labels_to_contiguous(self):
+        """remaps labels to 0, 1, 2, ... so crossentropy doesn't crash"""
+        unique_labels = torch.unique(self.all_labels).cpu().tolist()
+        mapping = {old_label: new_id for new_id, old_label in enumerate(unique_labels)}
+        
+        print(f"Remapping sequence labels for PyTorch: {mapping}")
+        
+        new_labels = torch.empty_like(self.all_labels)
+        for old, new_id in mapping.items():
+            new_labels[self.all_labels == old] = new_id
+            
+        self.label_mapping = mapping
+        self.all_labels = new_labels

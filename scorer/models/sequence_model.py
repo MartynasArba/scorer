@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 class ContextAwareSleepScorer(nn.Module):
     def __init__(self, pretrained_cnn, embedding_dim=128, hidden_dim=64, num_classes=3, num_layers=2):
@@ -26,7 +27,7 @@ class ContextAwareSleepScorer(nn.Module):
             num_layers=num_layers,
             batch_first=True,
             bidirectional=True,
-            dropout=0.3 if num_layers > 1 else 0
+            dropout=0.5 if num_layers > 1 else 0
         )
         
         # classification head
@@ -34,7 +35,7 @@ class ContextAwareSleepScorer(nn.Module):
         self.classifier = nn.Sequential(
             nn.Linear(hidden_dim * 2, hidden_dim),
             nn.ReLU(),
-            nn.Dropout(0.3),
+            nn.Dropout(0.5),
             nn.Linear(hidden_dim, num_classes)
         )
 
@@ -61,3 +62,27 @@ class ContextAwareSleepScorer(nn.Module):
         
         # for standard crossentropy transpose to: [batch, num_classes, seq_len]
         return logits.transpose(1, 2)
+    
+class FocalLoss(nn.Module):
+    def __init__(self, weight=None, gamma=2.0, reduction='mean'):
+        super(FocalLoss, self).__init__()
+        self.weight = weight # handles class imbalance
+        self.gamma = gamma
+        self.reduction = reduction
+
+    def forward(self, inputs, targets):
+        #standard crossentropy
+        ce_loss = F.cross_entropy(inputs, targets, weight = self.weight, reduction='none', label_smoothing = 0.1)
+        
+        #extract prob of true class, CE = -log(pt), so pt = exp(-CE)
+        pt = torch.exp(-ce_loss)
+        # applied focal scaling factor gamma, loss = (1 - pt)^gamma
+        focal_loss = ((1 - pt) ** self.gamma) * ce_loss
+        
+        # final reduction (mean or sum)
+        if self.reduction == 'mean':
+            return focal_loss.mean()
+        elif self.reduction == 'sum':
+            return focal_loss.sum()
+        else:
+            return focal_loss
