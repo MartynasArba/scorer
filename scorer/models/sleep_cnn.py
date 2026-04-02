@@ -239,23 +239,22 @@ class DualStreamSleepCNN(nn.Module):
         out = self.fc2(out)
         return out
 
-
 class SCDSSleepCNN(nn.Module):
     """
-    Alternative single channel dual stream sleep CNN
-    two-stream model: combining phase-invariant FFT power with time-domain features
+    updated single channel dual stream sleep CNN
     """
-    def __init__(self, num_classes: int):
+    def __init__(self, num_classes: int, sampling_rate: int = 250):
         super().__init__()             
         
-        #time series stream
+        # time series stream
+        # increased 1st layer kernel to capture delta better
         self.time_conv = nn.Sequential(
-            nn.Conv1d(1, 32, kernel_size=11, padding=5),
+            nn.Conv1d(1, 32, kernel_size=64, stride=2, padding=32),
             nn.BatchNorm1d(32),
             nn.ReLU(),
             nn.MaxPool1d(2),
             
-            nn.Conv1d(32, 64, kernel_size=7, padding=3),
+            nn.Conv1d(32, 64, kernel_size=11, padding=5),
             nn.BatchNorm1d(64),
             nn.ReLU(),
             nn.MaxPool1d(2),
@@ -268,12 +267,10 @@ class SCDSSleepCNN(nn.Module):
             nn.Conv1d(128, 256, kernel_size=3, padding=1),
             nn.BatchNorm1d(256),
             nn.ReLU(),
-            nn.MaxPool1d(2),
-            
-            nn.AdaptiveAvgPool1d(1) # flattens to [batch, 256]
+            nn.AdaptiveAvgPool1d(1)
         )
         
-        # freq domain stream, architecture is basically the same
+        # freq domain stream
         self.freq_conv = nn.Sequential(
             nn.Conv1d(1, 64, kernel_size=7, padding=3),
             nn.BatchNorm1d(64),
@@ -289,64 +286,55 @@ class SCDSSleepCNN(nn.Module):
             nn.BatchNorm1d(256),
             nn.ReLU(),
             nn.MaxPool1d(2),
-            
-            nn.AdaptiveAvgPool1d(1) # flattens to [batch, 256]
+            # no AdaptiveAvgPool to preserve frequency bins
         )
         
-        # fusion, classification
+        # 62 bins should be left with window 1000
+        self.freq_flatten = nn.Sequential(
+            nn.Flatten(),
+            nn.LazyLinear(256), # LazyLinear automatically calculates input size
+            nn.ReLU()
+        )
+        
+        # fusion of streams
         self.dropout = nn.Dropout(0.5)
         
-        self.feature_proj = nn.Linear(512, 128) #added bottleneck to support contrastive learning
-        self.fc1 = nn.Linear(128, 64)
-        self.fc2 = nn.Linear(64, num_classes)
+        # Hann window pre-computation for FFT to prevent edge artifacts
+        self.register_buffer('hann_window', torch.hann_window(1000)) 
         
     def _robust_scale(self, x):
-        """median-based batch scaling for the time stream"""
-        B, C, T = x.shape
-        x_flat = x.transpose(0, 1).reshape(C, -1) 
-        median = torch.quantile(x_flat, q=0.50, dim=1).view(1, C, 1)
-        q75 = torch.quantile(x_flat, q=0.75, dim=1).view(1, C, 1)
-        q25 = torch.quantile(x_flat, q=0.25, dim=1).view(1, C, 1)
+        # changed from batch scale to window scale 
+        median = torch.quantile(x, q=0.50, dim=-1, keepdim=True)
+        q75 = torch.quantile(x, q=0.75, dim=-1, keepdim=True)
+        q25 = torch.quantile(x, q=0.25, dim=-1, keepdim=True)
         iqr = (q75 - q25) + 1e-8 
         return (x - median) / iqr
         
     def _freqtransform(self, x):
-        """log-power spectrum"""
-        X = torch.fft.rfft(x, dim=-1)
+        """log-power spectrum with Hann window"""
+        x_windowed = x * self.hann_window
+        X = torch.fft.rfft(x_windowed, dim=-1)
         power = X.real.square() + X.imag.square()
-        power = power[..., 1:] # drop 0th (DC) bin to prevent baseline spikes
-        return torch.log1p(power) # Log scale for stable gradients
+        power = power[..., 1:] # Drop DC
+        return torch.log1p(power)
     
-    def get_features(self, x):               
-        # take SINGLE channel
-        x = x[:, :1, :]
+    def get_features(self, x):              
+        x = x[:, :1, :] # single channel
         
+        # time stream
         x_time = self._robust_scale(x)
-        feat_time = self.time_conv(x_time).squeeze(-1) # shape: [batch, 256]
+        feat_time = self.time_conv(x_time).squeeze(-1) # [batch, 256]
         
+        # freq stream
         x_freq = self._freqtransform(x)
-        feat_freq = self.freq_conv(x_freq).squeeze(-1) # shape: [batch, 256]
+        feat_freq = self.freq_conv(x_freq)
+        feat_freq = self.freq_flatten(feat_freq) # [batch, 256]
         
-        fused = torch.cat([feat_time, feat_freq], dim=1)  # shape: [batch, 512]
-        
-        # fuse
-        fused = torch.cat([feat_time, feat_freq], dim=1)  # shape: [batch, 128]
-        #pass through projection 
-        fused = F.relu(self.feature_proj(fused))
+        # fuse and return
+        fused = torch.cat([feat_time, feat_freq], dim=1)  # [batch, 512]
         
         return fused
         
-    def forward(self, x):               
-        
-        fused = self.get_features(x)
-        
-        # classification head
-        out = self.dropout(fused)
-        out = F.relu(self.fc1(out))
-        out = self.dropout(out)
-        out = self.fc2(out)
-        return out
-
 
 if __name__ == "__main__":
     print(torch.__version__)
