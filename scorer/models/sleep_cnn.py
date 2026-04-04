@@ -319,6 +319,24 @@ class SCDSSleepCNN(nn.Module):
         return torch.log1p(power)
     
     def get_features(self, x):              
+        """probably a better idea would be to just use forward"""
+        x = x[:, :1, :] # single channel
+        
+        # time stream
+        x_time = self._robust_scale(x)
+        feat_time = self.time_conv(x_time).squeeze(-1) # [batch, 256]
+        
+        # freq stream
+        x_freq = self._freqtransform(x)
+        feat_freq = self.freq_conv(x_freq)
+        feat_freq = self.freq_flatten(feat_freq) # [batch, 256]
+        
+        # fuse and return
+        fused = torch.cat([feat_time, feat_freq], dim=1)  # [batch, 512]
+        
+        return fused
+        
+    def forward(self, x):
         x = x[:, :1, :] # single channel
         
         # time stream

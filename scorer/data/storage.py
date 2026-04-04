@@ -271,7 +271,7 @@ def save_windowed_for_testing(tensors: tuple,
     else:
         if states.dim() != 2:       #ensure states shape 1 x time, required to use the same chop function
             states = states.unsqueeze(0)
-    to_save, states = _chop_by_state(states, to_save, win_len)
+    to_save, states = _chop_continuous(states, to_save, win_len)
     
     if to_save.size(1) == 0:
         print("Warning: to_save has 0 windows — skipping save.")
@@ -304,16 +304,56 @@ def _chop(values: torch.Tensor, win_len: int):
     values = values.reshape(n_channels, n_samples, win_len)
     return values
 
+def _chop_continuous(states: torch.Tensor, 
+                     values: torch.Tensor, 
+                     win_len: int = 1000) -> tuple[torch.Tensor, torch.Tensor]:
+    """chops into windows and assigns most common label"""
+    if values.dim() != 2:
+        raise ValueError(f"values must be [C, L], got {tuple(values.shape)}")
+    C, L = values.shape
+
+    if states.dim() == 1:
+        states_ = states.unsqueeze(0)          
+    elif states.dim() == 2:
+        states_ = states                        
+    else:
+        raise ValueError(f"states must be [L] or [S, L], got {tuple(states.shape)}")
+
+    S, Ls = states_.shape
+    if Ls != L:
+        raise ValueError(f"states length ({Ls}) must match values length ({L})")
+
+    #chop
+    n_samples = L // win_len 
+    values_trimmed = values[:, : win_len * n_samples] 
+    states_trimmed = states_[:, : win_len * n_samples]
+    
+    #reshape vals
+    values_out = values_trimmed.reshape(C, n_samples, win_len)
+    
+    # reshape states
+    states_windowed = states_trimmed.reshape(S, n_samples, win_len)
+    
+    # convert states to majority
+    # torch.mode returns tuple (values, indices), take values
+    states_majority, _ = torch.mode(states_windowed, dim=2)
+    
+    # add  final dim so it matches downstream [S, N, 1]
+    states_out = states_majority.unsqueeze(2) 
+
+    return values_out, states_out
+    
+
 def _chop_by_state(states: torch.Tensor, 
                   values: torch.Tensor, 
                   win_len: int) -> tuple[torch.Tensor, torch.Tensor]:
     """
     split values by state
-    Input (same format as _chop):
+    input (same as _chop):
       values: [channel, time]
       states: [time] or [state, time]
 
-    Output (same format as _chop):
+    output (same as _chop):
       values_out: [channel, win_num, window(1000)]
       states_out: [state, win_num, window(1000)]
     """

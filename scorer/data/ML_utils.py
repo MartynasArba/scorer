@@ -2,6 +2,9 @@
 
 from scorer.data.preprocessing import bandpass_filter, sum_power, band_powers
 from scorer.data.storage import load_from_csv_in_chunks, save_windowed_for_testing, load_from_csv
+from torchaudio.functional import resample
+import torch.nn.functional as F
+
 from pathlib import Path
 import pickle
 import numpy as np
@@ -21,36 +24,36 @@ def move_into_subfolder(csv_path: str) -> None:
     shutil.move(file_path, new_path)
     print(f'moved into subdir: {file_path.parent / file_name}')
 
-def run_default_preprocessing(csv_path: str) -> None:
+def run_default_preprocessing(csv_path: str, save_folder =  r'G:\oslo_data') -> None:
         """
         runs default preprocessing from raw to X, y
-        filters ecog 0.5-49 Hz, emg 10-100 Hz, calculates sum powers and band powers
+        filters ecog 0.5-49 Hz, emg 10-100 Hz
         saves windowed data for use with SleepTraining dataset
         """
         if csv_path is not None:
             
             by_state = True
             file_name = Path(csv_path).stem
-            save_folder = r'G:\oslo_data' 
+            save_folder = save_folder
             chunk_size = 1000000
-            states = 3
+            states = 4
             times = (None, None)
             win_len = 1000
-            metadata = {'time_channel': '0',
-                        'ecog_channels':'1',
-                        'emg_channels':'2',
+            metadata = {'time_channel': '1',
+                        'ecog_channels':'2',
+                        'emg_channels':'3',
                         'device':'cuda',
-                        'sample_rate':'250'
+                        'sample_rate':256
                         }
             if win_len % chunk_size != 0:
                 print('warning: window length doesn\'t fit chunk size!')
             
             #run loading, preprocessing, etc
             for i, (ecog_chunk, emg_chunk, states_chunk) in enumerate(load_from_csv_in_chunks(csv_path, metadata = metadata, states = states, chunk_size = chunk_size, times = times)):
-                tensor_seq = _preprocess(ecog_chunk, emg_chunk, metadata)     
+                ecog_chunk, emg_chunk, states_chunk = _preprocess(ecog_chunk, emg_chunk, states_chunk, metadata) 
                 #change this to save chopped
                 if by_state:
-                    save_windowed_for_testing(tensors = tensor_seq, 
+                    save_windowed_for_testing(tensors = (ecog_chunk, emg_chunk), 
                                               save_folder = save_folder,
                                               file_name = file_name,
                                               states = states_chunk, 
@@ -72,11 +75,31 @@ def _bandpass(signal: torch.Tensor, freqs: tuple, metadata: dict) -> torch.Tenso
                         device = metadata.get('device'))
         return signal        
 
-def _preprocess(ecog: torch.Tensor, emg: torch.Tensor, metadata: dict) -> tuple:
+def _preprocess(ecog: torch.Tensor, emg: torch.Tensor, states: torch.Tensor, metadata: dict) -> tuple:
         """
         leftover from GUI, runs preprocessing helpers
         """
-        ecog, emg = ecog.T, emg.T       #torch usually requires channels x time
+        sample_rate = float(metadata.get('sample_rate', 256))
+        new_rate = 250
+        
+        ecog = ecog.T
+        emg = emg.T
+        if states is not None:
+            states = states.T 
+        
+        if sample_rate == new_rate:
+            print('not resampling: old sr = new sr')
+
+        else:
+            ecog = resample(ecog.contiguous(), sample_rate, new_rate)
+            emg = resample(emg.contiguous(), sample_rate, new_rate)
+            
+            if states is not None:
+                original_len = states.shape[-1]
+                target_len = ecog.shape[-1]
+                ratio = original_len / target_len
+                indices = (torch.arange(target_len, device=states.device) * ratio).long()
+                states = states[:, indices]
         
         freqs = (0.5, 49.0)
         ecog = _bandpass(ecog, freqs, metadata)
@@ -85,21 +108,8 @@ def _preprocess(ecog: torch.Tensor, emg: torch.Tensor, metadata: dict) -> tuple:
         freqs = (10.0, 100.0)
         emg = _bandpass(emg, freqs, metadata)
         print('emg data filtered')
-    
-        ecog_power = sum_power(ecog, smoothing = 0.2, sr = int(metadata.get('sample_rate', 1000)), device = metadata.get('device'), normalize = True, gaussian_smoothen=0.25)
-        emg_power = sum_power(emg, smoothing = 0.2, sr = int(metadata.get('sample_rate', 1000)), device = metadata.get('device'), normalize = True, gaussian_smoothen=0.25)
-        print('sum pows calculated')
-    
-        bands = band_powers(signal = ecog, bands = {'delta': (0.5, 4),
-                                                    'theta': (5, 9),
-                                                    'alpha': (8, 13),
-                                                    'sigma': (12, 15)}, 
-                            sr = int(metadata.get('sample_rate', 1000)), 
-                            device= metadata.get('device'), smoothen = 0.25)
 
-        print('band pows calculated')
-        print('preprocessing done')
-        return (ecog, emg, ecog_power, emg_power) + tuple(bands.values())
+        return ecog, emg, states#, ecog_power, emg_power) + tuple(bands.values()
     
 def raw_to_edf(csv_path: str) -> None:
     """ 
@@ -269,13 +279,112 @@ def remap_and_fix_state_files(data_dir, states_path, win_len = 1000, new_states_
         pickle.dump(corrected_states.tolist(), f)
         
     print(f"saved corrected states to {corrected_pkl_path.name}")
+    
+def edf_to_csv(edf_path, hypnogram_path, channels = [2, 3]):
+    """self explanatory, used to convert open source .edf files to compatible .csv"""
+    import pandas as pd
+    
+    signals, signal_headers, header = highlevel.read_edf(edf_path)
+    sample_rate = signal_headers[0].get('sample_frequency')
+    if sample_rate is not None:
+        sample_rate = float(sample_rate)
+        print(sample_rate)
+    else:
+        raise ValueError('sample rate not found in EDF header!')
+    
+    ch = channels[0]
+    num_samples = len(signals[ch])
+            
+    time = np.arange(0, num_samples) / sample_rate
+    ecog = np.array(signals[ch])
+    emg = np.array(signals[-1])
+    scores = np.zeros_like(ecog)
+    #parse state scores
+    if hypnogram_path is not None:
+        with open(hypnogram_path, 'rt') as f:
+            current_start_idx = 0
+            for i, line in enumerate(f.readlines()):
+                try:
+                    state, end_time = line.split('\t')
+                    end_idx = int(float(end_time) * sample_rate)
+                    if end_idx > num_samples:
+                        end_idx = num_samples
+                    
+                    if 'awake' in state:
+                        scores[current_start_idx:end_idx] = 1
+                    elif 'non-REM' in state:
+                        scores[current_start_idx:end_idx] = 2
+                    elif 'REM' in state:
+                        scores[current_start_idx:end_idx] = 4
+                    else:
+                        scores[current_start_idx:end_idx] = 0
+                    current_start_idx = end_idx
+                    if current_start_idx >= num_samples:
+                        break
+    
+                except:
+                    print(f'line {i} failed')
+        print('hypnogram parsed! found states:')
+        print(np.unique(scores, return_counts= True))
+        
+    ecog_chs = channels
+        
+    for ch in ecog_chs:
+        fname = Path(edf_path)
+        save_name = fname.parent / f'{fname.stem}_ch{ch}.csv'
+        print(f'saving csv to: {save_name}')
+        pd.DataFrame({
+            'time':time,
+            'ecog':signals[ch],
+            'emg':emg,
+            'sleep_episode':scores
+                        }).to_csv(save_name)
 
 if __name__ == "__main__":
     # print('nothing uncommented!')
-    states_pkl_path = r"G:\for_training\windowed_2026032514575020251207-1_g0_t0.obx0.obx_box3\noID_scores_windowed_2026032514575020251207-1_g0_t0.ob____0_frame10799.pkl"
-    data_path = r"G:\for_training\windowed_2026032514575020251207-1_g0_t0.obx0.obx_box3"
-    win_len = 1000
-    states_to_yfile(states_pkl_path, data_path, win_len)
+    edf_paths = sorted(glob.glob(r"C:\Users\marty\Desktop\train_sets\unsorted\Oxford\test\test\recordings\*.edf"))       
+    hypnogram_paths = sorted(glob.glob(r"C:\Users\marty\Desktop\train_sets\unsorted\Oxford\test\test\annotations\*_consensus_state_annotation.hyp"))
+    
+    for edf_path, hyp_path in zip(edf_paths, hypnogram_paths):
+        print(edf_path, hyp_path)
+        edf_to_csv(edf_path = edf_path,
+                hypnogram_path = hyp_path, 
+                channels = [2, 3])
+    
+    edf_paths = sorted(glob.glob(r"C:\Users\marty\Desktop\train_sets\unsorted\Oxford\sleep_deprivation\sleep_deprivation\recordings\*.edf"))       
+    hypnogram_paths = sorted(glob.glob(r"C:\Users\marty\Desktop\train_sets\unsorted\Oxford\sleep_deprivation\sleep_deprivation\annotations\*_CBD.hyp"))
+    
+    for edf_path, hyp_path in zip(edf_paths, hypnogram_paths):
+        print(edf_path, hyp_path)
+        edf_to_csv(edf_path = edf_path,
+                hypnogram_path = hyp_path, 
+                channels = [16, 17])
+        
+    edf_paths = sorted(glob.glob(r"C:\Users\marty\Desktop\train_sets\unsorted\Oxford\optogenetic_stimulation\optogenetic_stimulation\recordings\*.edf"))
+    hypnogram_paths = sorted(glob.glob(r"C:\Users\marty\Desktop\train_sets\unsorted\Oxford\optogenetic_stimulation\optogenetic_stimulation\annotations\*_TY.hyp"))
+    for edf_path, hyp_path in zip(edf_paths, hypnogram_paths):
+        print(edf_path, hyp_path)
+        edf_to_csv(edf_path = edf_path,
+                hypnogram_path = hyp_path, 
+                channels = [0, 1])
+    #also convert Oslo data
+    #     # converts whole folder to windows for ml
+    # paths = glob.glob(r'C:\Users\marty\Desktop\train_sets\unsorted\to_convert\*.csv')
+    # for i, path in enumerate(tqdm(paths)):
+    #     print(i, path)
+    #     run_default_preprocessing(path, save_folder = r'C:\Users\marty\Desktop\train_sets\labeled')
+    
+    
+
+        
+
+        
+
+    #this is most relevant when converting my data to scorer format
+    # states_pkl_path = r"G:\for_training\windowed_2026032514575020251207-1_g0_t0.obx0.obx_box3\noID_scores_windowed_2026032514575020251207-1_g0_t0.ob____0_frame10799.pkl"
+    # data_path = r"G:\for_training\windowed_2026032514575020251207-1_g0_t0.obx0.obx_box3"
+    # win_len = 1000
+    # states_to_yfile(states_pkl_path, data_path, win_len)
     
     #get all subfolders as data dirs
     # subfolders = glob.glob(r'C:\Users\marty\Desktop\SCORING202602\for_training\*')

@@ -50,11 +50,18 @@ def train_supcon(model, dataset, save_dir = '.', epochs=50, batch_size=256):
     
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
 
+    best_loss = float('inf')
+    early_stop_counter = 0
+    patience = 5
+    min_delta = 0.01
+
     for epoch in range(epochs):
         model.train()
         print(f'epoch {epoch} supcon train started')
         
         running_loss = 0.0
+        running_pos_sim = 0.0
+        running_neg_sim = 0.0
         num_batches = 0
         
         for samples, labels in dataloader:
@@ -76,13 +83,44 @@ def train_supcon(model, dataset, save_dir = '.', epochs=50, batch_size=256):
             running_loss += loss.item()
             num_batches += 1
             
+            # debug tracking (compute pos/neg similarity)
+            with torch.no_grad():
+                sim_matrix = torch.matmul(features, features.T)
+                mask = torch.eq(combined_labels.unsqueeze(1), combined_labels.unsqueeze(0)).float()
+                
+                pos_sim = (sim_matrix * mask).sum() / mask.sum()
+                neg_sim = (sim_matrix * (1 - mask)).sum() / (1 - mask).sum()
+                
+                running_pos_sim += pos_sim.item()
+                running_neg_sim += neg_sim.item()
+            
         epoch_loss = running_loss / num_batches
+        
+        if epoch_loss < (best_loss - min_delta):
+            # loss improved
+            best_loss = epoch_loss
+            early_stop_counter = 0
+            
+            # save snapshot
+            print(f"new best loss found: {best_loss:.4f}, saving")
+            torch.save(base_cnn.state_dict(), save_dir / f'supcon_SCDS_best_model.pt')
+            
+        else:
+            # didn't improve enough
+            early_stop_counter += 1
+            print(f"early stopping counter: {early_stop_counter}/{patience}")
+            
+            if early_stop_counter >= patience:
+                print(f"early stopping triggered at epoch {epoch}, loss flat")
+                print(f"saving snapshot")
+                torch.save(base_cnn.state_dict(), save_dir / f'supcon_SCDS_snapshot_{epoch}.pt')
+                break
             
         if epoch % 20 == 0:
             print(f"saving snapshot")
-            torch.save(base_cnn.state_dict(), save_dir / f'/supcon_SCDS_snapshot_{epoch}.pt')
+            torch.save(base_cnn.state_dict(), save_dir / f'supcon_SCDS_snapshot_{epoch}.pt')
             
-        print(f"epoch [{epoch}/{epochs}]: average loss {epoch_loss:.4f}")
+        print(f"epoch [{epoch}/{epochs}]: average loss {epoch_loss:.4f} | similarity pos: {running_pos_sim/num_batches:.3f} neg: {running_neg_sim/num_batches:.3f}")
     
     return base_cnn, loss 
 
@@ -96,14 +134,17 @@ def train_unsupervised(model, dataset, save_dir = '.', epochs=50, batch_size=256
     criterion = SimCLRLoss(temperature=0.15) 
     
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+    
+    best_loss = float('inf')
+    early_stop_counter = 0
+    patience = 5
+    min_delta = 0.01
 
     for epoch in range(epochs):
         model.train()
         print(f'epoch {epoch} simclr training started')
         
         running_loss = 0.0
-        running_pos_sim = 0.0
-        running_neg_sim = 0.0
         num_batches = 0
         
         for samples, labels in dataloader:
@@ -127,27 +168,34 @@ def train_unsupervised(model, dataset, save_dir = '.', epochs=50, batch_size=256
             running_loss += loss.item()
             num_batches += 1
             
-            # debug tracking (compute pos/neg similarity)
-            with torch.no_grad():
-                features = torch.cat([z1, z2], dim=0)
-                combined_labels = torch.cat([labels, labels], dim=0)
-                
-                sim_matrix = torch.matmul(features, features.T)
-                mask = torch.eq(combined_labels.unsqueeze(1), combined_labels.unsqueeze(0)).float()
-                
-                pos_sim = (sim_matrix * mask).sum() / mask.sum()
-                neg_sim = (sim_matrix * (1 - mask)).sum() / (1 - mask).sum()
-                
-                running_pos_sim += pos_sim.item()
-                running_neg_sim += neg_sim.item()
             
         epoch_loss = running_loss / num_batches
+        
+        if epoch_loss < (best_loss - min_delta):
+            # loss improved
+            best_loss = epoch_loss
+            early_stop_counter = 0
             
+            # save snapshot
+            print(f"new best loss found: {best_loss:.4f}, saving")
+            torch.save(base_cnn.state_dict(), save_dir / f'SimCLR_best_model.pt')
+            
+        else:
+            # didn't improve enough
+            early_stop_counter += 1
+            print(f"early stopping counter: {early_stop_counter}/{patience}")
+            
+            if early_stop_counter >= patience:
+                print(f"early stopping triggered at epoch {epoch}, loss flat")
+                print(f"saving snapshot")
+                torch.save(base_cnn.state_dict(), save_dir / f'SimCLR_SCDS_snapshot_{epoch}.pt')
+                break
+        
         if epoch % 20 == 0:
             print(f"saving snapshot")
-            torch.save(base_cnn.state_dict(), save_dir / f'/SimCLR_SCDS_snapshot_{epoch}.pt')
+            torch.save(base_cnn.state_dict(), save_dir / f'SimCLR_SCDS_snapshot_{epoch}.pt')
             
-        print(f"epoch [{epoch}/{epochs}]: loss {epoch_loss:.4f} | similarity pos: {running_pos_sim/num_batches:.3f} neg: {running_neg_sim/num_batches:.3f}")
+        print(f"epoch [{epoch}/{epochs}]: loss {epoch_loss:.4f}")
     
     return base_cnn, model, loss 
 
@@ -157,20 +205,21 @@ if __name__ == "__main__":
     torch.set_grad_enabled(True)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
-    path = r"G:\oslo_data_train"
+    path_for_simclr = r"C:\Users\marty\Desktop\train_sets\unlabeled"
+    path_for_supcon= r"C:\Users\marty\Desktop\train_sets\labeled"
     meta = {'ecog_channels' : '1', 'emg_channels' : '2', 'sample_rate' : '250', 'ylim' : 'standard', 'device':'cuda'}
     n_files = 200
     n_epochs = 100
-    model_name = '3state_contrastiveSCDS_2026-03-27.pt'
+    model_name = '3state_contrastiveSCDS_2026-04-03.pt'
     save_path = Path(r"C:\Users\marty\Projects\scorer\scorer\models\weights")
-    save_path.mkdir(parents=True, exist_ok=True) # Good practice to ensure directory exists
+    save_path.mkdir(parents=True, exist_ok=True) # ensure dir exists
     batch_size = 1024
     
     print('starting pretraining...')
     
     # load full dataset for unsupervised learning
     dataset = BufferedSleepDataset(
-        data_path=path,
+        data_path=path_for_simclr,
         n_files_to_pick=None,
         buffer_size=n_files, 
         random_state=0,
@@ -178,11 +227,10 @@ if __name__ == "__main__":
         transform=None,
         augment=False,
         metadata=meta, 
-        balance='undersample',
+        balance='none',
         exclude_labels=(0,),
         merge_nrem=True
     )    
-        
         
     print('initializing model')
     base_cnn = SCDSSleepCNN(num_classes=3).to(device)    
@@ -194,6 +242,23 @@ if __name__ == "__main__":
     
     # save weights just in case
     torch.save(pretrained_cnn.state_dict(), save_path / 'SimCLR_base_weights.pt')
+    
+    #reload dataset
+    del dataset #free ram
+    print('reloading the dataset for supcon')
+    dataset = BufferedSleepDataset(
+        data_path=path_for_supcon,
+        n_files_to_pick=None,
+        buffer_size=n_files, 
+        random_state=0,
+        device='cpu',
+        transform=None,
+        augment=False,
+        metadata=meta, 
+        balance='undersample',  #here make sure categories are equaly represented
+        exclude_labels=(0,),
+        merge_nrem=True
+    )    
     
     # supervised contrastive pretrianing
     print('starting supervised pretraining')

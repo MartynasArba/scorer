@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class ContextAwareSleepScorer(nn.Module):
-    def __init__(self, pretrained_cnn, embedding_dim=128, hidden_dim=64, num_classes=3, num_layers=2):
+    def __init__(self, pretrained_cnn, embedding_dim=512, hidden_dim=64, num_classes=3, num_layers=2):
         super().__init__()
         
         # feature extractor is contrastive-pretrained SCDS CNN
@@ -12,13 +12,16 @@ class ContextAwareSleepScorer(nn.Module):
         # freeze CNN
         for param in self.encoder.parameters():
             param.requires_grad = False
-            
+        
         # remove classification layer if it's there
         # CNN outputs 'embedding_dim' directly before fc layers (as feature_proj)
         if hasattr(self.encoder, 'fc1'):
             self.encoder.fc1 = nn.Identity()
         if hasattr(self.encoder, 'fc2'):
             self.encoder.fc2 = nn.Identity()
+        
+        #put in eval to disable dropout
+        self.encoder.eval()
 
         # context wrapper (bi-directional GRU, default from torch)
         self.rnn = nn.GRU(
@@ -35,7 +38,7 @@ class ContextAwareSleepScorer(nn.Module):
         self.classifier = nn.Sequential(
             nn.Linear(hidden_dim * 2, hidden_dim),
             nn.ReLU(),
-            nn.Dropout(0.5),
+            nn.Dropout(0.2),
             nn.Linear(hidden_dim, num_classes)
         )
 
@@ -49,6 +52,7 @@ class ContextAwareSleepScorer(nn.Module):
         # extract features
         with torch.no_grad(): # ensure no gradients leak into frozen encoder
             embeddings = self.encoder(x_flat) # Shape: [batch * seq, embedding_dim (128)]
+            embeddings = F.normalize(embeddings, p=2, dim=1)
             
         # reshape back to sequence format for RNN: [batch, seq, embedding_dim]
         rnn_input = embeddings.view(batch_size, seq_len, -1)

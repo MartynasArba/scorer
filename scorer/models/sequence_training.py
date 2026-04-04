@@ -8,6 +8,7 @@ from pathlib import Path
 
 from scorer.data.loaders import SequenceSleepDataset
 from scorer.models.sequence_model import ContextAwareSleepScorer, FocalLoss
+from scorer.models.sleep_cnn import SCDSSleepCNN
 
 def train_sequence_model(dataset, encoder_path, epochs = 50, batch_size = 64):
     """
@@ -23,19 +24,23 @@ def train_sequence_model(dataset, encoder_path, epochs = 50, batch_size = 64):
     val_loader = DataLoader(val_dataset, batch_size = batch_size, shuffle = False)
     
     # load pretrained encoder
-    encoder = torch.load(encoder_path, map_location = device, weights_only = False)
+    encoder = SCDSSleepCNN(num_classes = 3)
+    saved_weights = torch.load(encoder_path, map_location=device, weights_only=True)
+    encoder.load_state_dict(saved_weights)
+    encoder = encoder.to(device)
+    
     #init sequence model
-    model = ContextAwareSleepScorer(encoder, embedding_dim = 128, hidden_dim = 64, num_classes = 3, num_layers = 2)
+    model = ContextAwareSleepScorer(encoder, embedding_dim = 512, hidden_dim = 64, num_classes = 3, num_layers = 2)
     model = model.to(device)
 
     # loss for classification
     weights = torch.tensor([1.0, 1.5, 6.0]).to(device) #1.5, 1.0, 1.5, 3.0, 6.0
-    criterion = FocalLoss(weight = weights, gamma = 2)
+    criterion = nn.CrossEntropyLoss(label_smoothing=0.1, weight= weights) #alternatively FocalLoss(weight = weights, gamma = 2)
     
     # strictly pass only the unfrozen parameters to the optimizer
-    optimizer = optim.Adam(
+    optimizer = optim.AdamW(
         filter(lambda p: p.requires_grad, model.parameters()), 
-        lr=1e-3,
+        lr=1e-4,
         weight_decay=1e-4
     )
     #add scheduler
@@ -89,6 +94,7 @@ def train_sequence_model(dataset, encoder_path, epochs = 50, batch_size = 64):
               f"train loss: {train_loss:.4f} | "
               f"val loss: {val_loss:.4f} | "
               f"val acc: {val_acc:.4f}")
+        print(f"predicted classes: {predicted.unique(return_counts=True)}")
 
         # save best model
         if val_acc > best_val_acc:
@@ -100,15 +106,15 @@ def train_sequence_model(dataset, encoder_path, epochs = 50, batch_size = 64):
 
 if __name__ == "__main__":
     
-    data_path = r"C:\Users\marty\Desktop\oslo_data_train"
+    data_path = r'C:\Users\marty\Desktop\train_sets\labeled'
     device = 'cuda'
-    encoder_path = r'C:\Users\marty\Projects\scorer\scorer\models\weights\3state_contrastiveSCDS_2026-03-27.pt'
+    encoder_path = r'C:\Users\marty\Projects\scorer\scorer\models\weights\3state_contrastiveSCDS_2026-04-03.pt'#supcon_SCDS_best_model.pt'
     
 
     dataset = SequenceSleepDataset(
             data_path = data_path,
-            seq_len = 5,       # 5 continuous windows per sequence
-            stride = 1,        # slide the window by 1 step (Overlapping data for more training examples!)
+            seq_len = 10,       # 10 continuous windows per sequence
+            stride = 1,        # slide windows by 1 step
             device = device,
             exclude_labels = (0,), 
             merge_nrem = True,

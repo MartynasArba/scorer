@@ -435,14 +435,13 @@ class SleepTraining(Dataset):
         if keep_idx.numel() == 0:
             raise RuntimeError("after excluding labels, no samples remain.")
             
-        # 2. If no balancing requested, just apply exclusions and exit early!
+        # if no balancing  apply exclusions and exit 
         if balance == "none":
             self.all_samples = self.all_samples[keep_idx]
             self.all_labels = self.all_labels[keep_idx]
             print("No balancing applied. Removed excluded labels.")
             return
 
-        # 3. Otherwise, proceed with balancing
         labels_kept = labels[keep_idx]
 
         # get idx per class
@@ -686,6 +685,12 @@ class BufferedSleepDataset(IterableDataset):
             keep_mask &= labels != lab
 
         keep_idx = torch.where(keep_mask)[0]
+        
+        if balance == 'none':
+            print('no class balancing applied')
+            self.active_indices = keep_idx
+            return
+        
         labels_kept = labels[keep_idx]
 
         classes = torch.unique(labels_kept)
@@ -697,7 +702,7 @@ class BufferedSleepDataset(IterableDataset):
         if balance == "undersample":
             target = min(counts.values())
             replace = False
-        else:
+        elif balance == "oversample":
             target = max(counts.values())
             replace = True
 
