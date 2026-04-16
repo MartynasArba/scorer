@@ -1,158 +1,117 @@
 # scorer
-A custom semi-automated sleep scorer in development
+A framework for sleep stage classification in rodents, utilizing self-supervised pretraining and temporal sequence modeling.
+Automated, manual, and mixed labeling modes are considered. 
 
-**Notes for use**:
-- create fresh metadata for each recording
-- chop_by_state is depreciated and removed from gui, make sure it works somewhere in script as it is needed for testing of models
-- make sure start timestamps match recordings, as they are only updated when loading from csv in preprocessing - or use specific metadata per recording
-- one heuristic-based scorer is added, which not accurate (~40%), but might provide a starting point
+## Core architecture
+The main (automated scoring) part of this project features a three-stage pipeline designed to maximize accuracy even with limited labeled data:
+1.  **SimCLR pretraining**: Unsupervised contrastive learning on large volumes of unlabeled ECoG/EMG data to learn general physiological features
+2.  **SupCon pretraining**: Supervised contrastive learning (using labeled data) to refine embeddings for class discriminability
+3.  **Sequence training (Bi-GRU)**: A temporal model that takes frozen CNN embeddings across 10-window sequences to capture sleep stage transitions and context
 
-## TODO:
-### Bugs or testing needed:
-- bug: (in preprocessing) recording duration is calculated by provided hours, so if the recording starts later than the 1st number, the end will also shift
-- if calling preprocessing multiple times, metadata might be messed up
-- notch is still weird, should test it more (or depreciate it)
-- spectral plots are not very informative, should be depreciated (or can be left blank in settings)
-- test multiple scorer plotting
+This model relies on a single cortical channel. 
 
-### Missing features and ideas:
-
-`settings`:
-
-`utils`:
-- could add additional qc metrics for converted obx files
-- add a "create project folder structure" button
-
-`preprocessing`:
-- future development: prevent freezing when it runs? 
-
-`automatic scoring`:
-- aiming for these models:
-  - heuristic-based (implemented, low accuracy)
-  - CNN (implemented, generalization is not great)
-  - Pretrained embeddings
-
-*Use pre-trained models only. Pytorch grad is off in this project, and model training is out of scope, except for the **`training_testing.py`** script, which is not accessible via the GUI. If for some reason grad is needed, do `torch.set_grad_enabled(True)`*
-
-`manual labeling`:
-- add autoscale click for y
-- add scorer name to metadata and state save files correctly
-- save progress automatically every N scores? maybe add checkmark, overwrite option?
-- jump to next unscored sample
-- decide how single label, multi scorer should be handled
-
-`report`:
-- not yet started
-- maybe export json report?
-- for multilabel, add agreement/confidence 
+## Other features
+- **GUI**: PyQt5-based interface for manual labeling, featuring mouse-drag annotation, macro (10-min) and micro (4+ s) views
+- **Data loading**: `BufferedSleepDataset` handles big datasets by chunking data into RAM, while `SequenceSleepDataset` manages temporal windows
+- **OneBox support**: conversion utilities for SpikeGLX/OneBox binary formats into downsampled csvs
 
 ## Repo structure
 
+```text
 scorer/
-  - data/
-    - loaders.py          | Dataset classes
-    - preprocessing.py    | Signal processing
-    - storage.py          | Saves and loads everything
-    - *_utils.py          | Misc utilities
-  - gui/
-    - main_window.py      | Main window, tracks global state
-    - labeling_widgets.py | Manual labeling tab, display and labeling interface
-    - plots.py            | Plotting utilities to be used by labeling window
-    - preprocessing_widgets.py | Preprocessing tab
-    - settings_widgets.py | Settings tab
-    - util_widgets.py | Utilities tab
-    - report_widgets.py | Report tab (currently empty)
-    - autoscoring_widgets.py | Automatic scoring tab (currently empty)
-  - models/
-    - scoring.py | Should run selected scorers (currently empty)
-    - model1.py | Might need separate scripts for different scorers
-  - main.py | GUI entry point
+├── data/
+│   ├── loaders.py          # Buffered and Sequence dataset implementations
+│   ├── preprocessing.py    # Ephys signal filtering and resampling
+│   ├── storage.py          # Unified IO for tensors, pickles, and metadata
+│   ├── onebox_utils.py     # SpikeGLX binary conversion tools
+│   └── ML_utils.py         # Headless preprocessing for model training
+├── gui/
+│   ├── labeling_widgets.py # Main interactive labeling interface
+│   ├── plots.py            # Matplotlib backends for GUI
+│   └── settings_widgets.py # Metadata and project config
+├── models/
+│   ├── sleep_cnn.py        # SCDSSleepCNN (single channel, dual-stream CNN)
+│   ├── sequence_model.py   # ContextAwareSleepScorer (Bi-GRU + Focal Loss)
+│   ├── pretraining.py      # SimCLR and SupCon training loops
+│   ├── sequence_training.py# sequence model training and validation
+│   ├── main_pipeline.py    # full 3-stage training
+│   ├── scoring.py          # utils for GUI and actual scoring
+│   └── evaluate_model.py   # standalone model evaluation on unseen data
+└── tests/                  # Unit tests for training efficiency and sequence logic
+```
 
 ## Expected project structure
+The pipeline expects a organized project directory:
 
-**This should probably be per-recording**
+```text
+project_folder/
+├── raw/                # Downsampled .csv files
+├── processed/          # Windowed .pt tensors (X_chunk, y_chunk)
+├── scores/             # .pkl files containing manual/auto annotations
+└── quality_plots/      # QC reports for signal integrity
+```
 
-- proj_data/
-  - meta.json      | Saved metadata
-  - raw/              | Original recording
-  - quality_plots (optional)  | Recording QC report plots
-  - processed/        | Preprocessed tensors ready for scoring
-  - scores/           | Annotations
-    - scorer1.json    | Scoring report
-    - states.np
+## Project Status & Notes
 
-## model stats
-Often better than they appear, but won't generalize well to all data.
-The evaluation is not performed properly and should not be relied upon, but gives some indication. 
+### Usage Warnings
+- Models use `nn.LazyLinear`. A dummy forward pass is required before defining optimizers or loading weights. Use the provided `load_trained_sequence_model` in `scoring.py`.
+- GUI uses 2-channel data flow (ECoG/EMG). Ensure metadata channel indices are correctly mapped in `Settings`.
+- Heuristic corrections (e.g., removing REM->Wake transitions) are available in `scoring.py` but are disabled by default for raw model evaluation. They shouldn't be necessasry if all goes well.
 
-**3state_CNN_2026-01-27.pt**
+---
 
-              precision    recall  f1-score   support
+### Performance metrics
 
-           0       0.00      0.00      0.00     22077
-           1       0.79      0.88      0.83     42067
-           2       0.49      0.92      0.64     21127
-           3       0.00      0.00      0.00      6483
-           4       0.27      0.89      0.41      2270
 
-    accuracy                           0.62     94024
+Model performance is tested on unseen data from [Brodersen et al.](https://doi.org/10.5281/zenodo.10200481) Pilot dataset, with F and P channels treated as separate recordings, and EMG channel not used.
+Models are trained on our own data for unsupervised learning, and on test, sleep deprivation and optogenetic stimulation datasets from the same authors. 
 
-**3state_ephysCNN_2026-01-27.pt**
+The full citation of data used is:
+> Brodersen et al. Somnotate: A probabilistic sleep stage classifier for studying vigilance state transitions. PLoS Comput Biol. 2024. DOI: 10.1371/journal.pcbi.1011793
 
-              precision    recall  f1-score   support
+The best model to date achieved the following stats:
+> - Global Accuracy:   0.9272
+> - Macro F1-Score:    0.9070
+> - Cohen's Kappa:     0.8735
 
-           0       0.00      0.00      0.00     22077
-           1       0.83      0.90      0.86     42067
-           2       0.49      0.95      0.64     21127
-           3       0.00      0.00      0.00      6483
-           4       0.29      0.92      0.44      2270
+                  precision    recall  f1-score   support
 
-    accuracy                           0.64     94024
+            Wake       0.95      0.91      0.93     66840
+            NREM       0.95      0.94      0.94    121700
+            REM       0.79      0.91      0.84     27140
 
-**3state_fftCNN_2026-01-27.pt**
+        accuracy                           0.93    215680
+      macro avg       0.90      0.92      0.91    215680
+    weighted avg       0.93      0.93      0.93    215680
 
-              precision    recall  f1-score   support
+***Best use-case is using the F channel due to slightly higher scores**
 
-           0       0.00      0.00      0.00     22077
-           1       0.83      0.88      0.86     42067
-           2       0.49      0.93      0.64     21127
-           3       0.00      0.00      0.00      6483
-           4       0.24      0.93      0.38      2270
+F channel:
+>- Global Accuracy:   0.9161
+>- Macro F1-Score:    0.8869
+>- Cohen's Kappa:     0.8527
 
-    accuracy                           0.63     94024
+                  precision    recall  f1-score   support
 
-**4state_CNN_2026-01-27.pt**
+            Wake       0.92      0.92      0.92     33420
+            NREM       0.94      0.94      0.94     60850
+            REM       0.80      0.80      0.80     13570
 
-              precision    recall  f1-score   support
+        accuracy                           0.92    107840
+      macro avg       0.89      0.89      0.89    107840
+    weighted avg       0.92      0.92      0.92    107840
 
-           0       0.00      0.00      0.00     22077
-           1       0.80      0.84      0.82     42067
-           2       0.57      0.76      0.65     21127
-           3       0.42      0.85      0.56      6483
-           4       0.23      0.92      0.37      2270
+P channel:
+>- Global Accuracy:   0.9081
+>- Macro F1-Score:    0.8864
+>- Cohen's Kappa:     0.8440
 
-    accuracy                           0.63     94024
+                  precision    recall  f1-score   support
 
-**4state_ephysCNN_2026-01-27.pt**
+            Wake       0.90      0.93      0.92     33420
+            NREM       0.97      0.89      0.93     60850
+            REM       0.72      0.94      0.81     13570
 
-              precision    recall  f1-score   support
-
-           0       0.00      0.00      0.00     22077
-           1       0.81      0.90      0.85     42067
-           2       0.56      0.78      0.65     21127
-           3       0.43      0.82      0.57      6483
-           4       0.32      0.83      0.46      2270
-
-    accuracy                           0.65     94024
-
-**4state_fftCNN_2026-01-27.pt**
-
-              precision    recall  f1-score   support
-
-           0       0.00      0.00      0.00     22077
-           1       0.82      0.91      0.86     42067
-           2       0.58      0.71      0.64     21127
-           3       0.38      0.84      0.52      6483
-           4       0.29      0.88      0.44      2270
-
-    accuracy                           0.65     94024
+        accuracy                           0.91    107840
+      macro avg       0.86      0.92      0.89    107840
+    weighted avg       0.92      0.91      0.91    107840

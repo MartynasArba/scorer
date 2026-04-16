@@ -603,8 +603,17 @@ class BufferedSleepDataset(IterableDataset):
                 if tensor.ndim == 3:
                     tensor = tensor.permute(1, 0, 2)
                     
-                #force 2 dims for training, as I only use ephys features and others can be mismatched between datasets
-                tensor = tensor[:, :2, :]
+                # dynamically select channels from metadata
+                ecog_idx = [int(i) for i in self.params.get('ecog_channels', '0').split(',')]
+                emg_idx = [int(i) for i in self.params.get('emg_channels', '1').split(',')]
+                target_channels = ecog_idx + emg_idx
+                
+                # Safety check: ensure all requested indices exist in the loaded tensor
+                max_idx = max(target_channels)
+                if max_idx < tensor.shape[1]:
+                    tensor = tensor[:, target_channels, :]
+                else:
+                    pass # Fallback: if indices are wrong, assume the file is already a subset
                     
                 # extract only valid samples using local indexing
                 local_indices = valid_global_indices - start_idx
@@ -617,6 +626,8 @@ class BufferedSleepDataset(IterableDataset):
             # concat active samples from n_files files to one tensor            
             chunk_x_tensor = torch.cat(chunk_x, dim=0)
             chunk_y_tensor = torch.cat(chunk_y, dim=0)
+            chunk_x.clear()
+            chunk_y.clear()
             
             # Shuffle thoroughly within RAM chunk to ensure Contrastive batch diversity
             num_samples = chunk_x_tensor.size(0)
@@ -636,6 +647,7 @@ class BufferedSleepDataset(IterableDataset):
                     x = self.transform(x)
                     
                 yield x, y
+            
 
     def _load(self, data_path, n_files_to_pick):
         """basically loads only y, as x is iterable"""
@@ -833,12 +845,12 @@ class SequenceSleepDataset(Dataset):
             print(f"processing recording dir: {Path(d).name}")
             
             # load all chunks for one rec
-            rec_x_chunks = [torch.load(f, map_location='cpu', weights_only=False).float()[:2, :, :] for f in x_paths]
+            rec_x_chunks = [torch.load(f, map_location='cpu', weights_only=False).float() for f in x_paths]
             rec_y_chunks = [torch.load(f, map_location='cpu', weights_only=False).long() for f in y_paths]
             
             # now keeping only ephys to save compute, alternatively do:
-            # min_channels = min(chunk.size(0) for chunk in rec_x_chunks)
-            # rec_x_chunks = [chunk[:min_channels, :, :] for chunk in rec_x_chunks]
+            min_channels = min(chunk.size(0) for chunk in rec_x_chunks)
+            rec_x_chunks = [chunk[:min_channels, :, :] for chunk in rec_x_chunks]
         
             # concat specific rec along the sample dimension (dim=1)
             X_rec = torch.cat(rec_x_chunks, dim=1) 

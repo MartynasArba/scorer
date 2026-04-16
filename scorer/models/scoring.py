@@ -4,6 +4,7 @@
 from scorer.data.loaders import SleepSignals
 # from scorer.models.heuristic_scorer_v2 import HeuristicScorer2
 from scorer.models.sleep_cnn import SleepCNN, EphysSleepCNN, DualStreamSleepCNN, SCDSSleepCNN
+from scorer.models.sequence_model import ContextAwareSleepScorer
 from scorer.data.storage import save_pickled_states
 import numpy as np
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, accuracy_score
@@ -202,6 +203,102 @@ def apply_heuristics(states: np.ndarray, num_classes: int = 5) -> np.ndarray:
             smoothed[i] = smoothed[i-1]
 
     return smoothed
+
+def load_trained_sequence_model(weights_path, device='cuda', window_length = 1000):
+    """
+    Loads trained ContextAwareSleepScorer (CNN encoder + GRU) for inference.
+    window_length: sample length of a single window 
+    """
+    # init base encoder
+    encoder = SCDSSleepCNN(num_classes=3)
+    
+    # dummy pass to init LazyLinear layer shapes
+    # shape: [Batch, Channels, Time]
+    dummy_input = torch.randn(1, 1, window_length) 
+    encoder(dummy_input)
+    
+    # init GRU wrapper
+    model = ContextAwareSleepScorer(
+        encoder, 
+        embedding_dim=512, 
+        hidden_dim=64, 
+        num_classes=3, 
+        num_layers=2
+    )
+    
+    # load saved weights (this loads BOTH GRU and CNN weights)
+    print(f"Loading weights from {weights_path}...")
+    state_dict = torch.load(weights_path, map_location=device, weights_only=True)
+    model.load_state_dict(state_dict)
+    
+    # move to device and lock into eval mode
+    model = model.to(device)
+    model.eval() 
+    
+    print("Model successfully loaded and ready for inference!")
+    return model
+
+import torch
+
+def run_sequence_inference(model, sleep_dataset, seq_len=10, batch_size=128):
+    """
+    passes continuous data from SleepSignals through a sequence model
+    """
+    device = sleep_dataset.device
+    
+    # extract continuous tensor of all windows [Total_Windows, Channels, Win_Len] - might run out of memory, but maybe not
+    X_continuous = sleep_dataset.all_samples
+    total_windows = X_continuous.shape[0]
+    
+    if total_windows < seq_len:
+        raise ValueError(f"Recording is too short! Need at least {seq_len} windows.")
+
+    all_predictions = []
+    
+    # lock model for inference
+    model.eval()
+    
+    with torch.no_grad():
+        # iter through data, create sliding sequences on the fly
+        # loop up to (total_windows - seq_len + 1) to ensure full sequences
+        for start_idx in range(0, total_windows - seq_len + 1, batch_size):
+            batch_sequences = []
+            
+            # find end of batch
+            end_idx = min(start_idx + batch_size, total_windows - seq_len + 1)
+            
+            # build sequence batch
+            for i in range(start_idx, end_idx):
+                # slice 10 continuous windows: [10, Channels, Win_Len]
+                sequence = X_continuous[i : i + seq_len] 
+                batch_sequences.append(sequence)
+            
+            # stack into a single batch tensor: [Batch, 10, Channels, Win_Len]
+            X_batch = torch.stack(batch_sequences).to(device)
+            
+            # pass through the model
+            outputs = model(X_batch)
+            _, predicted_classes = torch.max(outputs, dim=1)
+            
+            all_predictions.append(predicted_classes)
+            
+    # combine all batches into one flat tensor
+    raw_predictions = torch.cat(all_predictions)
+    
+    # pad the beginning
+    # (missing labels for the first 9 windows on 1st label etc.)
+    # copy 1st prediction backward to fill
+    padding = raw_predictions[0].repeat(seq_len - 1)
+    aligned_predictions = torch.cat([padding, raw_predictions])
+    
+    # remap to GUI
+    gui_labels = torch.zeros_like(aligned_predictions)
+    gui_labels[aligned_predictions == 0] = 1 # Wake
+    gui_labels[aligned_predictions == 1] = 2 # NREM
+    gui_labels[aligned_predictions == 2] = 4 # REM
+    
+    print(f"Inference complete. Generated {len(gui_labels)} labels.")
+    return gui_labels
 
 if __name__ == "__main__":
     print('not implemented as a standalone script')
