@@ -12,7 +12,7 @@ class AutoScoringWidget(QWidget):
         super().__init__()
         
         self.params = meta
-        available_models = ['select model', '3state_pretrained', '3state_dual', '3state_SCDS', '5state_pretrained']
+        available_models = ['select model','3state_GRU'] # '3state_pretrained', '3state_dual', '3state_SCDS', '5state_pretrained']
         layout = QVBoxLayout(self)
         
         self.file_folder = '.'
@@ -67,5 +67,5 @@ class AutoScoringWidget(QWidget):
                      self.state_folder, 
                      meta = self.params, 
                      scorer_type = str(self.model_selection.currentText()),
-                     apply_corrections = self.correction_check.isChecked)
+                     apply_corrections = self.correction_check.isChecked())
         self.label.setText('scoring done')

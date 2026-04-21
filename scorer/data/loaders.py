@@ -32,6 +32,7 @@ class SleepSignals(Dataset):
                  device:str = 'cuda', 
                  transform:bool = None, 
                  augment:bool = False, 
+                 normalize:bool = False,
                  spectral_features:bool = None, 
                  metadata: dict = {}) -> None:
         """        
@@ -40,11 +41,14 @@ class SleepSignals(Dataset):
             device: device to use (torch), default cuda
             transform: optional transform to apply. Defaults to None.
             augment: whether to apply data augmentation, relevant when training models
+            normalize: whether to apply Z-score normalization per-channel
             spectral_features: whether to compute frequency descriptors. options: spectrogram, fourier, None.
             Applied on the 1st passed channel
             metadata is the same as everywhere else, shared between other parts of the program
         """
         self.params = metadata
+        
+        self.normalize = normalize
         
         self.all_samples = None
         self.all_labels = None
@@ -57,8 +61,8 @@ class SleepSignals(Dataset):
         self.all_samples = self.all_samples.to(device)
         self.all_labels = self.all_labels.to(device)
         
-        self.mean, self.std = self._compute_mean_std() 
-        
+        self.mean, self.std = self._compute_mean_std()
+
         self.device = device
         self.transform = transform
         self.augment = augment
@@ -124,6 +128,12 @@ class SleepSignals(Dataset):
                 raise RuntimeError(f"No valid X/y file pairs found in folder: {data_path}")
 
             x_chunks = [torch.load(f).float() for f in x_files]
+            #normalize
+            if self.normalize:
+                for i in range(len(x_chunks)):
+                    m, s = x_chunks[i].mean(dim=(1,2), keepdim=True), x_chunks[i].std(dim=(1,2), keepdim=True).clamp(min=1e-8)
+                    x_chunks[i] = (x_chunks[i] - m) / s
+            
             X = torch.cat(x_chunks, dim=1)        # concat on sample dimension
 
             if X.ndim == 3:
@@ -252,6 +262,7 @@ class SleepTraining(Dataset):
     def __init__(self, data_path, random_state = 0,
                  n_files_to_pick = 100, device = 'cuda', 
                  transform = None, augment = False,
+                 normalize: bool = False,
                  metadata: dict = {}, 
                  balance: str = "none", # "none" | "undersample" | "oversample" 
                  exclude_labels: tuple = (), 
@@ -263,6 +274,7 @@ class SleepTraining(Dataset):
         torch.manual_seed(random_state)
 
         self.params = metadata
+        self.normalize = normalize
         
         self.all_samples = None
         self.all_labels = None
@@ -349,9 +361,15 @@ class SleepTraining(Dataset):
         #skip channel in last dim if doesn't match lowest (happens due to old preprocessing)
         lowest_dim = min(chunk.size(dim=0) for chunk in x_chunks)
         print(f'lowest dim in data: {lowest_dim}')
-        x_chunks = [chunk[:lowest_dim, :, :] for chunk in x_chunks]
         
-        X = torch.cat(x_chunks, dim=1)        # concat on sample dimension
+        final_x_chunks = []
+        for chunk in x_chunks:
+            chunk = chunk[:lowest_dim, :, :]
+            if self.normalize:
+                chunk = (chunk - chunk.mean(dim=(1,2), keepdim=True)) / chunk.std(dim=(1,2), keepdim=True).clamp(min=1e-8)
+            final_x_chunks.append(chunk)
+        
+        X = torch.cat(final_x_chunks, dim=1)        # concat on sample dimension
 
         if X.ndim == 3:
             X = X.permute(1, 0, 2)            # [samples, channels, win_len]
@@ -529,10 +547,12 @@ class BufferedSleepDataset(IterableDataset):
                  balance="none",
                  exclude_labels=(),
                  merge_nrem=False,
-                 buffer_size=100): # Replaced cache_size with buffer_size
+                 buffer_size=100,
+                 normalize=False): # Replaced cache_size with buffer_size
 
         torch.manual_seed(random_state)
         self.device = device
+        self.normalize = normalize
         self.transform = transform
         self.augment = augment
         self.params = metadata or {}
@@ -615,6 +635,10 @@ class BufferedSleepDataset(IterableDataset):
                 else:
                     pass # Fallback: if indices are wrong, assume the file is already a subset
                     
+                if self.normalize:
+                    m, s = tensor.mean(dim=(1,2), keepdim=True), tensor.std(dim=(1,2), keepdim=True).clamp(min=1e-8)
+                    tensor = (tensor - m) / s
+
                 # extract only valid samples using local indexing
                 local_indices = valid_global_indices - start_idx
                 chunk_x.append(tensor[local_indices])
@@ -777,6 +801,7 @@ class SequenceSleepDataset(Dataset):
                  device='cpu', 
                  transform=None, 
                  augment=False, 
+                 normalize=False,
                  exclude_labels=(0,), 
                  merge_nrem=True):
         
@@ -784,6 +809,7 @@ class SequenceSleepDataset(Dataset):
         self.stride = stride
         self.device = device
         self.transform = transform
+        self.normalize = normalize
         self.augment = augment
         self.exclude_labels = exclude_labels
         
@@ -848,6 +874,11 @@ class SequenceSleepDataset(Dataset):
             rec_x_chunks = [torch.load(f, map_location='cpu', weights_only=False).float() for f in x_paths]
             rec_y_chunks = [torch.load(f, map_location='cpu', weights_only=False).long() for f in y_paths]
             
+            if self.normalize:
+                for i in range(len(rec_x_chunks)):
+                    m, s = rec_x_chunks[i].mean(dim=(1,2), keepdim=True), rec_x_chunks[i].std(dim=(1,2), keepdim=True).clamp(min=1e-8)
+                    rec_x_chunks[i] = (rec_x_chunks[i] - m) / s
+
             # now keeping only ephys to save compute, alternatively do:
             min_channels = min(chunk.size(0) for chunk in rec_x_chunks)
             rec_x_chunks = [chunk[:min_channels, :, :] for chunk in rec_x_chunks]

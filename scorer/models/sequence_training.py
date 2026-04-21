@@ -205,6 +205,7 @@ if __name__ == "__main__":
             stride = 1,        # slide windows by 1 step
             device = device,
             exclude_labels = (0,), 
+            normalize= True,
             merge_nrem = True,
             augment= True
         )
@@ -217,6 +218,7 @@ if __name__ == "__main__":
             stride = 1,        # slide windows by 1 step
             device = device,
             exclude_labels = (0,), 
+            normalize= True,
             merge_nrem = True,
             augment= False
         )

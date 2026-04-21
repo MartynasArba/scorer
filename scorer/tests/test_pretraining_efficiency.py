@@ -14,7 +14,7 @@ class TestPretrainingEfficiency(unittest.TestCase):
         cls.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         cls.batch_size = 32
         cls.win_len = 1000
-        cls.input_channels = 2 
+        cls.input_channels = 1
 
     def setUp(self):
         self.base_model = SCDSSleepCNN(num_classes=3).to(self.device)

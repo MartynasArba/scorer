@@ -81,6 +81,7 @@ def run_full_pipeline():
             n_files_to_pick=None,
             buffer_size=CONFIG["pretrain"]["n_files_buffer"],
             metadata=CONFIG["metadata"],
+            normalize= True,
             merge_nrem=True,
             device='cpu' # Load chunks to CPU RAM then move to GPU in loop
         )
@@ -111,6 +112,7 @@ def run_full_pipeline():
             n_files_to_pick=None,
             buffer_size=CONFIG["pretrain"]["n_files_buffer"],
             metadata=CONFIG["metadata"],
+            normalize= True,
             balance='undersample',
             merge_nrem=True,
             device='cpu'
@@ -137,6 +139,7 @@ def run_full_pipeline():
         seq_dataset = SequenceSleepDataset(
             data_path=CONFIG["paths"]["labeled_data"],
             seq_len=CONFIG["sequence"]["seq_len"],
+            normalize= True,
             stride=1,
             device=device,
             merge_nrem=True,
@@ -146,6 +149,7 @@ def run_full_pipeline():
         seq_val_dataset = SequenceSleepDataset(
             data_path=CONFIG["paths"]["val_data"],
             seq_len=CONFIG["sequence"]["seq_len"],
+            normalize= True,
             stride=1,
             device=device,
             merge_nrem=True,

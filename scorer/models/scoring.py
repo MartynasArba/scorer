@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader
 import torch.nn.functional as F
 import tqdm
 
-def score_signal(data_path, state_save_folder, meta, scorer_type = 'heuristic', apply_corrections = True):
+def score_signal(data_path, state_save_folder, meta, scorer_type = 'heuristic', apply_corrections = False, return_confidence = False):
     """
     runs scoring, launched from GUI
     saves states according to selected path
@@ -28,7 +28,7 @@ def score_signal(data_path, state_save_folder, meta, scorer_type = 'heuristic', 
     available_scorers = {
                         '3state_pretrained': EphysSleepCNN,
                         '3state_dual': DualStreamSleepCNN,
-                        '5state_pretrained': EphysSleepCNN
+                        '3state_GRU': ContextAwareSleepScorer
                          }
     
     selected_scorer = available_scorers.get(scorer_type)
@@ -38,118 +38,46 @@ def score_signal(data_path, state_save_folder, meta, scorer_type = 'heuristic', 
                         device = meta.get('device', 'cpu'),
                         transform = None,
                         augment = False,
+                        normalize = True,
                         spectral_features = None,
                         metadata = meta)
     except Exception as e:      #should be changed, but it's not filenotfounderror, but runtimeerror in loaders.py
-        print(f'whoops: {e}')
+        print(f'whoops in scoring when loading data: {e}')
         return
     
-    if scorer_type == 'heuristic':
-        print('heuristic scorer has been depreciated')
+    confidence = None
+    
+    if scorer_type != '3state_GRU':
+        print('other model types have been depreciated')
         return
+    
 
-        
-    elif scorer_type == '3state_pretrained':
-        loader = DataLoader(dataset, batch_size = 64, shuffle = False)
-        #predict 
-        try:
-            scorer = torch.load(r'C:\Users\marty\Projects\scorer\scorer\models\weights\3state_pretrained_ephys_dropout.pt', weights_only= False)
-        except FileNotFoundError:
-            print('Check weights folder - selected model not found!')
+    elif scorer_type == '3state_GRU':
+        weights_path = Path(meta.get('weights_path', r"C:\Users\marty\Projects\scorer\scorer\models\weights\3state_SCDS_GRU_weights.pt"))
+        if not weights_path.exists():
+            print(f"Weights not found at {weights_path}. Ensure main_pipeline.py has been run successfully.")
             return
-        all_preds = []
-        scorer.eval()
-        with torch.no_grad():
-            for i, data in tqdm.tqdm(enumerate(loader)):
-                sample, label = data
-                outputs = scorer(sample)
-                _, pred = torch.max(outputs.data, 1)
-                #to get final predictions
-                all_preds.extend(pred.to('cpu').numpy().tolist())
-                
-        if apply_corrections:
-            all_preds = apply_heuristics(all_preds, num_classes = 3)        
             
-        #now reset states to include 0 - shift by 1, then reset REM to 4
-        all_preds = np.array(all_preds) + 1
-        all_preds[all_preds == 3] = 4 
-    
-    elif scorer_type == '3state_dual':
-        loader = DataLoader(dataset, batch_size = 64, shuffle = False)
-        #predict 
-        try:
-            scorer = torch.load(r'C:\Users\marty\Projects\scorer\scorer\models\weights\3state_dual_fine_tuned.pt', weights_only= False)
-        except FileNotFoundError:
-            print('Check weights folder - selected model not found!')
-            return
-        all_preds = []
-        scorer.eval()
-        with torch.no_grad():
-            for i, data in tqdm.tqdm(enumerate(loader)):
-                sample, label = data
-                outputs = scorer(sample)
-                _, pred = torch.max(outputs.data, 1)
-                #to get final predictions
-                all_preds.extend(pred.to('cpu').numpy().tolist())
+        model = load_trained_sequence_model(str(weights_path), device=dataset.device)
+        # run_sequence_inference handles scoring and remapping to labels
+        if return_confidence:
+            all_preds, confidence = run_sequence_inference(model, dataset, seq_len=10, batch_size=128, 
+                                                           apply_corrections=apply_corrections, 
+                                                           return_confidence=True)
+            all_preds = all_preds.cpu().numpy()
+            confidence = confidence.cpu().numpy()
+        else:
+            all_preds = run_sequence_inference(model, dataset, seq_len=10, batch_size=128, apply_corrections=apply_corrections)
+            all_preds = all_preds.cpu().numpy()
                 
-        if apply_corrections:
-            all_preds = apply_heuristics(all_preds, num_classes = 3)        
-            
-        #now reset states to include 0 - shift by 1, then reset REM to 4
-        all_preds = np.array(all_preds) + 1
-        all_preds[all_preds == 3] = 4 
-    
-    elif scorer_type == '3state_SCDS':
-        loader = DataLoader(dataset, batch_size = 64, shuffle = False)
-        #predict 
-        try:
-            scorer = torch.load(r'C:\Users\marty\Projects\scorer\scorer\models\weights\3state_SCDS_2.pt', weights_only= False)
-        except FileNotFoundError:
-            print('Check weights folder - selected model not found!')
-            return
-        all_preds = []
-        scorer.eval()
-        with torch.no_grad():
-            for i, data in tqdm.tqdm(enumerate(loader)):
-                sample, label = data
-                outputs = scorer(sample)
-                _, pred = torch.max(outputs.data, 1)
-                #to get final predictions
-                all_preds.extend(pred.to('cpu').numpy().tolist())
-                
-        if apply_corrections:
-            all_preds = apply_heuristics(all_preds, num_classes = 3)        
-            
-        #now reset states to include 0 - shift by 1, then reset REM to 4
-        all_preds = np.array(all_preds) + 1
-        all_preds[all_preds == 3] = 4 
-        
-    elif scorer_type == '5state_pretrained':
-        loader = DataLoader(dataset, batch_size = 64, shuffle = False)
-        #predict 
-        try:
-            scorer = torch.load(r'C:\Users\marty\Projects\scorer\scorer\models\weights\5state_pretrained_ephys.pt', weights_only= False)
-        except FileNotFoundError:
-            print('Check weights folder - selected model not found!')
-            return
-        all_preds = []
-        scorer.eval()
-        with torch.no_grad():
-            for i, data in tqdm.tqdm(enumerate(loader)):
-                sample, label = data
-                outputs = scorer(sample)
-                _, pred = torch.max(outputs.data, 1)
-                #to get final predictions
-                all_preds.extend(pred.to('cpu').numpy().tolist())
-        if apply_corrections:
-            all_preds = apply_heuristics(all_preds, num_classes = 5)
-        
-    else:
-        print(f'unavailable scorer selected: {scorer_type}')
-        return
-        
     state_save_path = Path(state_save_folder) / str(meta.get('scoring_started', '') + '_' + meta.get('filename', '') + '_' + meta.get('optional_tag', '') + scorer_type + '_states.pkl')
     save_pickled_states(all_preds, state_save_path)
+    
+    if confidence is not None:
+        conf_save_path = state_save_path.parent / (state_save_path.stem + "_confidence.pkl")
+        save_pickled_states(confidence, conf_save_path)
+        print(f'confidence saved as {conf_save_path}')
+
     if apply_corrections:
         print('score corrections applied')
     print(f'scoring done, states saved as {state_save_path}')
@@ -168,7 +96,7 @@ def apply_heuristics(states: np.ndarray, num_classes: int = 5) -> np.ndarray:
     if n < 3:
         return smoothed
         
-    # Set the integer values based on your model's class mapping
+    # set int values based on model's class mapping
     if num_classes == 5:
         WAKE, REM, IS = 1, 4, 3
     elif num_classes == 3:
@@ -206,7 +134,7 @@ def apply_heuristics(states: np.ndarray, num_classes: int = 5) -> np.ndarray:
 
 def load_trained_sequence_model(weights_path, device='cuda', window_length = 1000):
     """
-    Loads trained ContextAwareSleepScorer (CNN encoder + GRU) for inference.
+    loads trained ContextAwareSleepScorer (CNN encoder + GRU) for inference.
     window_length: sample length of a single window 
     """
     # init base encoder
@@ -240,7 +168,7 @@ def load_trained_sequence_model(weights_path, device='cuda', window_length = 100
 
 import torch
 
-def run_sequence_inference(model, sleep_dataset, seq_len=10, batch_size=128):
+def run_sequence_inference(model, sleep_dataset, seq_len=10, batch_size=128, apply_corrections = False, return_confidence = False):
     """
     passes continuous data from SleepSignals through a sequence model
     """
@@ -248,12 +176,21 @@ def run_sequence_inference(model, sleep_dataset, seq_len=10, batch_size=128):
     
     # extract continuous tensor of all windows [Total_Windows, Channels, Win_Len] - might run out of memory, but maybe not
     X_continuous = sleep_dataset.all_samples
-    total_windows = X_continuous.shape[0]
     
-    if total_windows < seq_len:
+    print(f'X_continous shape: {X_continuous.size()}')
+    #select one channel
+    if X_continuous.shape[1] > 1:
+        X_continuous = X_continuous[:, 0:1, :]
+    
+    T_total = X_continuous.shape[0]
+    
+    if T_total < seq_len:
         raise ValueError(f"Recording is too short! Need at least {seq_len} windows.")
 
-    all_predictions = []
+    # Accumulators for probability-based voting
+    # Shape: [Total_Windows, Num_Classes]
+    prob_sums = torch.zeros((T_total, 3), device=device)
+    counts = torch.zeros((T_total, 1), device=device)
     
     # lock model for inference
     model.eval()
@@ -261,35 +198,42 @@ def run_sequence_inference(model, sleep_dataset, seq_len=10, batch_size=128):
     with torch.no_grad():
         # iter through data, create sliding sequences on the fly
         # loop up to (total_windows - seq_len + 1) to ensure full sequences
-        for start_idx in range(0, total_windows - seq_len + 1, batch_size):
+        for start_idx in range(0, T_total - seq_len + 1, batch_size):
             batch_sequences = []
             
             # find end of batch
-            end_idx = min(start_idx + batch_size, total_windows - seq_len + 1)
+            end_idx = min(start_idx + batch_size, T_total - seq_len + 1)
             
             # build sequence batch
             for i in range(start_idx, end_idx):
-                # slice 10 continuous windows: [10, Channels, Win_Len]
                 sequence = X_continuous[i : i + seq_len] 
                 batch_sequences.append(sequence)
             
-            # stack into a single batch tensor: [Batch, 10, Channels, Win_Len]
             X_batch = torch.stack(batch_sequences).to(device)
             
-            # pass through the model
-            outputs = model(X_batch)
-            _, predicted_classes = torch.max(outputs, dim=1)
+            # model output: [Batch, Classes, Seq_Len]
+            # print(f"GUI Batch Max: {X_batch.max().item():.4f}, Min: {X_batch.min().item():.4f}, Mean: {X_batch.mean().item():.4f}")
             
-            all_predictions.append(predicted_classes)
+            logits = model(X_batch)
+            probs = F.softmax(logits, dim=1)
             
-    # combine all batches into one flat tensor
-    raw_predictions = torch.cat(all_predictions)
+            # add probabilities to total sums for each window in the sequence
+            for t in range(seq_len):
+                # t-th element of sequence is global window start_idx + t
+                batch_indices = torch.arange(start_idx, end_idx, device=device) + t
+                prob_sums.index_add_(0, batch_indices, probs[:, :, t])
+                counts.index_add_(0, batch_indices, torch.ones((end_idx - start_idx, 1), device=device))
+
+    # compute final labels via majority (highest average probability)
+    avg_probs = prob_sums / counts.clamp(min=1)
+    confidence, final_predictions = torch.max(avg_probs, dim=1)
     
-    # pad the beginning
-    # (missing labels for the first 9 windows on 1st label etc.)
-    # copy 1st prediction backward to fill
-    padding = raw_predictions[0].repeat(seq_len - 1)
-    aligned_predictions = torch.cat([padding, raw_predictions])
+    if apply_corrections:
+        final_predictions = torch.from_numpy(apply_heuristics(final_predictions.cpu().numpy(), num_classes=3)).to(device)
+
+    # aligned predictions should cover the full recording [0 : T_total]
+    #this is here because padding was needed before
+    aligned_predictions = final_predictions
     
     # remap to GUI
     gui_labels = torch.zeros_like(aligned_predictions)
@@ -298,6 +242,8 @@ def run_sequence_inference(model, sleep_dataset, seq_len=10, batch_size=128):
     gui_labels[aligned_predictions == 2] = 4 # REM
     
     print(f"Inference complete. Generated {len(gui_labels)} labels.")
+    if return_confidence:
+        return gui_labels, confidence
     return gui_labels
 
 if __name__ == "__main__":

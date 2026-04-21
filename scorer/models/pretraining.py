@@ -256,6 +256,7 @@ if __name__ == "__main__":
         transform=None,
         augment=False,
         metadata=meta, 
+        normalize= True,
         balance='none',
         exclude_labels=(0,),
         merge_nrem=True
@@ -284,6 +285,7 @@ if __name__ == "__main__":
         transform=None,
         augment=False,
         metadata=meta, 
+        normalize= True,
         balance='undersample',  #here make sure categories are equaly represented
         exclude_labels=(0,),
         merge_nrem=True

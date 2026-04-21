@@ -347,11 +347,13 @@ def edf_to_csv(edf_path, hypnogram_path, channels = [2, 3]):
                         }).to_csv(save_name)
 
 if __name__ == "__main__":
+    for path in glob.glob(r'G:\sleep-ecog-DOWNSAMPLED\*.csv'):
+        move_into_subfolder(path)
     
-    paths = glob.glob(r'C:\Users\marty\Desktop\train_sets\final_test\*.csv')
-    for i, path in enumerate(tqdm(paths)):
-        print(i, path)
-        run_default_preprocessing(path, save_folder = r'C:\Users\marty\Desktop\train_sets\final_test', states = 4)
+    # paths = glob.glob(r'C:\Users\marty\Desktop\train_sets\final_test\*.csv')
+    # for i, path in enumerate(tqdm(paths)):
+    #     print(i, path)
+    #     run_default_preprocessing(path, save_folder = r'C:\Users\marty\Desktop\train_sets\final_test', states = 4)
 
     # edf_paths = sorted(glob.glob(r"C:\Users\marty\Desktop\train_sets\final_test\recordings\*.edf"))       
     # hypnogram_paths = sorted(glob.glob(r"C:\Users\marty\Desktop\train_sets\final_test\annotations\*_consensus.hyp"))
