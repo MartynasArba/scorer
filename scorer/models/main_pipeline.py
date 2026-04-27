@@ -6,11 +6,15 @@ import traceback
 from pathlib import Path
 import os
 
+from torch.utils.data import DataLoader
+import torch.optim as optim
+
 from scorer.data.loaders import BufferedSleepDataset, SequenceSleepDataset
 from scorer.models.pretraining import train_unsupervised, train_supcon
 from scorer.models.sequence_training import train_sequence_model
 from scorer.models.sleep_cnn import SCDSSleepCNN
 from scorer.models.contrastive_embedder import SupConSleepCNN
+from scorer.models.adversarial_training import train_adversarial_domain
 
 def setup_global_logger(save_dir: Path):
     timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -52,6 +56,12 @@ def run_full_pipeline():
             "supcon_epochs": 50,
             "n_files_buffer": 100,
         },
+        "adversarial": {
+            "batch_size": 1024,
+            "epochs": 10,
+            "n_files_buffer": 100,
+            "win_len": 1000,
+        },
         "sequence": {
             "batch_size": 128,
             "epochs": 20,
@@ -77,7 +87,7 @@ def run_full_pipeline():
         logger.info("STAGE 1: Starting Unsupervised SimCLR Pretraining")
         
         unsup_dataset = BufferedSleepDataset(
-            data_path=CONFIG["paths"]["unlabeled_data"],
+            data_path=CONFIG["paths"]["labeled_data"],
             n_files_to_pick=None,
             buffer_size=CONFIG["pretrain"]["n_files_buffer"],
             metadata=CONFIG["metadata"],
@@ -127,11 +137,57 @@ def run_full_pipeline():
             batch_size=CONFIG["pretrain"]["batch_size"]
         )
 
-        supcon_weights_path = CONFIG["paths"]["weights_dir"] / f"SupCon_final_{timestamp}.pt"
-        torch.save(final_encoder.state_dict(), supcon_weights_path)
-        logger.info(f"SupCon stage complete. Encoder saved to {supcon_weights_path}")
+        encoder_save_path = CONFIG["paths"]["weights_dir"] / f"SupCon_final_{timestamp}.pt"
+        torch.save(final_encoder.state_dict(), encoder_save_path)
+        logger.info(f"SupCon stage complete. Encoder saved to {encoder_save_path}")
 
         del sup_dataset
+        
+        # --- STEP 2.5: OOD ALIGNMENT, optional ---
+        if 'adversarial' in CONFIG.keys():
+                
+            print('adversarial training started')
+            
+            labeled_dataset = BufferedSleepDataset(
+                    data_path=CONFIG["paths"]["labeled_data"],
+                    n_files_to_pick=None,
+                    buffer_size=CONFIG["adversarial"]["n_files_buffer"],
+                    metadata=CONFIG["metadata"],
+                    normalize= True,
+                    merge_nrem=True,
+                    device='cpu'
+                )
+            
+            ood_dataset = BufferedSleepDataset(
+                    data_path=CONFIG["paths"]["unlabeled_data"],
+                    n_files_to_pick=None,
+                    buffer_size=CONFIG["adversarial"]["n_files_buffer"],
+                    metadata=CONFIG["metadata"],
+                    normalize= True,
+                    merge_nrem=True,
+                    device='cpu'
+                )
+            
+            good_loader = DataLoader(labeled_dataset, batch_size= CONFIG["adversarial"]["batch_size"], shuffle = False, drop_last=True)    #shuffle is handled by the dataset itself
+            ood_loader = DataLoader(ood_dataset, batch_size= CONFIG["adversarial"]["batch_size"], shuffle = False, drop_last=True)
+                    
+            encoder = final_encoder
+            
+            adversarial_optimizer = optim.Adam([
+                {'params': encoder.time_conv.parameters(), 'lr': 2e-6}, #got by tuning
+                {'params': encoder.freq_conv.parameters(), 'lr': 2e-6},
+                {'params': encoder.freq_flatten.parameters(), 'lr': 1e-5},
+                {'params': encoder.domain_classifier.parameters(), 'lr': 1e-3},#, 'weight_decay': 1e-3
+                {'params': encoder.state_classifier.parameters(), 'lr': 1e-3}# fast learning for new heads
+            ])
+            
+            encoder = train_adversarial_domain(encoder, good_loader, ood_loader, adversarial_optimizer, logger, epochs = CONFIG["adversarial"]["epochs"])
+            
+            encoder_save_path = CONFIG["paths"]["weights_dir"] / f"adversarial_adjusted_encoder{timestamp}.pt"
+            torch.save(encoder.state_dict(), encoder_save_path)
+            logger.info(f"Adversarial training stage complete. Encoder saved to {encoder_save_path}")
+            
+            del labeled_dataset, ood_dataset
 
         # --- STEP 3: SEQUENCE TRAINING ---
         logger.info("STAGE 3: Starting Sequence Model Training (GRU)")
@@ -159,7 +215,7 @@ def run_full_pipeline():
         train_sequence_model(
             seq_dataset, 
             seq_val_dataset,
-            str(supcon_weights_path), 
+            str(encoder_save_path), 
             logger=logger, 
             epochs=CONFIG["sequence"]["epochs"], 
             batch_size=CONFIG["sequence"]["batch_size"]

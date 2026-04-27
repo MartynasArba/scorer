@@ -73,8 +73,8 @@ def validate(model, val_loader, criterion, running_loss, steps_accumulated, epoc
         logger.info(f"New best validation accuracy ({val_acc:.4f}), saving state_dict.")
         torch.save(model.state_dict(), save_dir / "3state_SCDS_GRU_weights.pt")
         
-    # return the best accuracy so the main loop can keep track of it
-    return best_val_acc
+    # return the current accuracy so the main loop can keep track of progress
+    return val_acc
 
 
 
@@ -100,6 +100,10 @@ def train_sequence_model(dataset, val_dataset, encoder_path, logger=None, epochs
     encoder.load_state_dict(saved_weights)
     encoder = encoder.to(device)
     
+    # Freeze encoder parameters
+    for param in encoder.parameters():
+        param.requires_grad = False
+
     #init sequence model
     model = ContextAwareSleepScorer(encoder, embedding_dim = 512, hidden_dim = 64, num_classes = 3, num_layers = 2)
     model = model.to(device)
@@ -137,6 +141,8 @@ def train_sequence_model(dataset, val_dataset, encoder_path, logger=None, epochs
     # scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=2)
     
     best_val_acc = 0.0
+    patience = 3
+    counter = patience
     save_dir = Path(encoder_path).parent   
 
     # train loop
@@ -173,18 +179,27 @@ def train_sequence_model(dataset, val_dataset, encoder_path, logger=None, epochs
             
             #do micro-epoch validation 
             if step > 0 and step % 5000 == 0:
-
-                best_val_acc = validate(model, val_loader, criterion, running_loss, 
+                current_val_acc = validate(model, val_loader, criterion, running_loss, 
                                         steps_since_val, epoch, epochs, save_dir, 
                                         device, logger, best_val_acc, step = step, subset_size= 0.1)
+                best_val_acc = max(best_val_acc, current_val_acc)
                 model.train()
                 running_loss = 0.0
         #full validation per-epoch
         if steps_since_val > 0:
-            best_val_acc = validate(model, val_loader, criterion, running_loss, 
+            current_val_acc = validate(model, val_loader, criterion, running_loss, 
                                             steps_since_val, epoch, epochs, save_dir, 
                                             device, logger, best_val_acc, step = 'end of epoch', subset_size= 1)
-        
+            
+            #early stopping if val acc doesn't improve in three epochs
+            if current_val_acc > best_val_acc:
+                counter = patience
+                best_val_acc = current_val_acc
+            else:
+                counter -= 1
+                if counter < 1:
+                    break
+                
     logger.info(f"Optimization complete. Peak Validation Accuracy: {best_val_acc:.4f}")
     return model
 
@@ -194,7 +209,7 @@ if __name__ == "__main__":
     val_data_path = r'C:\Users\marty\Desktop\train_sets\val'
     
     device = 'cuda'
-    encoder_path = r"C:\Users\marty\Projects\scorer\scorer\models\weights\SupCon_final_20260415.pt"#supcon_SCDS_best_model.pt'
+    encoder_path = r"C:\Users\marty\Projects\scorer\scorer\models\weights\Aligned_Encoder_20260427.pt"#supcon_SCDS_best_model.pt'
     
     save_path = Path(encoder_path).parent
     logger = setup_logger(save_path)

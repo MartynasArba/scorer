@@ -24,6 +24,7 @@ def convert_all_files(folder: str, cages: dict = {}, return_suffix: bool = True)
     """
     suffix = []
     files = glob.glob(folder + '/MOTIONrecSLEEPECOG*.csv')
+    print(f'{len(files)} files found')
     for file in files:
         cages = load_sensor_file(file, cages = cages)
         if return_suffix:
@@ -71,4 +72,4 @@ def save_sensors(folder: str, cages: dict, suffix: str = None):
 
 if __name__ == "__main__":
     #runs everything
-    parse_sensors()
+    parse_sensors(path = r'G:\sleep-ecog-DOWNSAMPLED\motion')

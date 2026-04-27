@@ -24,6 +24,48 @@ def move_into_subfolder(csv_path: str) -> None:
     shutil.move(file_path, new_path)
     print(f'moved into subdir: {file_path.parent / file_name}')
 
+def organize_motion_files(motion_dir: str, target_dir: str) -> None:
+    """
+    Moves motion .csv files into the correct recording subfolders based on date and cage ID.
+    
+    Args:
+        motion_dir: Folder containing loose motion CSVs (e.g. G:/sleep-ecog-DOWNSAMPLED/motion)
+        target_dir: Folder containing recording subfolders (e.g. G:/sleep-ecog-DOWNSAMPLED/)
+    """
+    motion_path = Path(motion_dir)
+    target_path = Path(target_dir)
+    
+    if not motion_path.exists():
+        print(f"Source directory {motion_dir} does not exist.")
+        return
+
+    files = list(motion_path.glob("*.csv"))
+    for f in files:
+        print(f)
+        # Match cage number (box)
+        cage_match = re.search(r'cage_(\d+)', f.name)
+        date_match = re.search(r'(\d{8}-\d+)', f.name)
+        # Match date string in YYYY-MM-DD or YYYYMMDD format
+        date_match = re.search(r'(\d{4})-?(\d{2})-?(\d{2})', f.name)
+        
+        if cage_match and date_match:
+            cage_id = cage_match.group(1)
+            date_str = date_match.group(1)
+            # Convert found date to compact YYYYMMDD format to match subfolder convention
+            date_compact = f"{date_match.group(1)}{date_match.group(2)}{date_match.group(3)}"
+            
+            # Search for subfolders containing both the date string and the box number
+            pattern = f"*{date_str}*box{cage_id}*"
+            # Search for subfolders containing both the compact date and the box number
+            pattern = f"*{date_compact}*box{cage_id}*"
+            matching_dirs = [d for d in target_path.glob(pattern) if d.is_dir()]
+            
+            if matching_dirs:
+                shutil.move(str(f), str(matching_dirs[0] / f.name))
+                print(f"Moved {f.name} -> {matching_dirs[0].name}")
+            else:
+                print(f"No subfolder found for {f.name} (Date: {date_str}, Box: {cage_id})")
+
 def run_default_preprocessing(csv_path: str, save_folder =  r'G:\oslo_data', states = 4) -> None:
         """
         runs default preprocessing from raw to X, y
@@ -347,8 +389,9 @@ def edf_to_csv(edf_path, hypnogram_path, channels = [2, 3]):
                         }).to_csv(save_name)
 
 if __name__ == "__main__":
-    for path in glob.glob(r'G:\sleep-ecog-DOWNSAMPLED\*.csv'):
-        move_into_subfolder(path)
+    organize_motion_files('G:/sleep-ecog-DOWNSAMPLED/motion', 'G:/sleep-ecog-DOWNSAMPLED')
+    # for path in glob.glob(r'G:\sleep-ecog-DOWNSAMPLED\*.csv'):
+    #     move_into_subfolder(path)
     
     # paths = glob.glob(r'C:\Users\marty\Desktop\train_sets\final_test\*.csv')
     # for i, path in enumerate(tqdm(paths)):

@@ -75,6 +75,7 @@ def score_signal(data_path, state_save_folder, meta, scorer_type = 'heuristic', 
     
     if confidence is not None:
         conf_save_path = state_save_path.parent / (state_save_path.stem + "_confidence.pkl")
+        print(f'mean confidence: {confidence.mean()}')        
         save_pickled_states(confidence, conf_save_path)
         print(f'confidence saved as {conf_save_path}')
 
@@ -162,6 +163,7 @@ def load_trained_sequence_model(weights_path, device='cuda', window_length = 100
     # move to device and lock into eval mode
     model = model.to(device)
     model.eval() 
+    model.encoder.eval()
     
     print("Model successfully loaded and ready for inference!")
     return model
@@ -174,7 +176,7 @@ def run_sequence_inference(model, sleep_dataset, seq_len=10, batch_size=128, app
     """
     device = sleep_dataset.device
     
-    # extract continuous tensor of all windows [Total_Windows, Channels, Win_Len] - might run out of memory, but maybe not
+    # extract continuous tensor of all windows [Total_Windows, Channels, Win_Len]
     X_continuous = sleep_dataset.all_samples
     
     print(f'X_continous shape: {X_continuous.size()}')
@@ -194,6 +196,7 @@ def run_sequence_inference(model, sleep_dataset, seq_len=10, batch_size=128, app
     
     # lock model for inference
     model.eval()
+    model.encoder.eval()    #triple checking
     
     with torch.no_grad():
         # iter through data, create sliding sequences on the fly
@@ -213,6 +216,8 @@ def run_sequence_inference(model, sleep_dataset, seq_len=10, batch_size=128, app
             
             # model output: [Batch, Classes, Seq_Len]
             # print(f"GUI Batch Max: {X_batch.max().item():.4f}, Min: {X_batch.min().item():.4f}, Mean: {X_batch.mean().item():.4f}")
+            
+            print(f'batch size before preds: {X_batch.size()}')
             
             logits = model(X_batch)
             probs = F.softmax(logits, dim=1)
@@ -247,4 +252,5 @@ def run_sequence_inference(model, sleep_dataset, seq_len=10, batch_size=128, app
     return gui_labels
 
 if __name__ == "__main__":
-    print('not implemented as a standalone script')
+    path = r"C:\Users\marty\Desktop\train_sets\unlabeled\windowed_2026032514575020251207-1_g0_t0.obx0.obx_box3"
+    score_signal(path, path, meta = {}, scorer_type = '3state_GRU', apply_corrections = False, return_confidence = False)

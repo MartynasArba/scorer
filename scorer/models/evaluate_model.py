@@ -54,6 +54,7 @@ def evaluate_model_on_unseen(data_path: str, model_path: str, device: str = 'cud
         return
         
     model.eval()
+    model.encoder.eval()
 
     all_preds = []
     all_labels = []
@@ -112,12 +113,12 @@ def evaluate_model_on_unseen(data_path: str, model_path: str, device: str = 'cud
 
 if __name__ == "__main__":
     # Configuration
-    # print("F channel")
-    # VAL_DATA = r'C:\Users\marty\Desktop\train_sets\final_test\F'
-    # MODEL_WEIGHTS = r'C:\Users\marty\Projects\scorer\scorer\models\weights\3state_SCDS_GRU_weights.pt'
-    # # evaluate_model_on_unseen(data_path: str, model_path: str, device: str = 'cuda', batch_size: int = 128):
-    # evaluate_model_on_unseen(VAL_DATA, MODEL_WEIGHTS)
-    # print('P channel')
+    print("F channel")
+    VAL_DATA = r'C:\Users\marty\Desktop\train_sets\final_test\F'
+    MODEL_WEIGHTS = r'C:\Users\marty\Projects\scorer\scorer\models\weights\3state_SCDS_GRU_weights.pt'
+    # evaluate_model_on_unseen(data_path: str, model_path: str, device: str = 'cuda', batch_size: int = 128):
+    evaluate_model_on_unseen(VAL_DATA, MODEL_WEIGHTS)
+    print('P channel')
     VAL_DATA = r'C:\Users\marty\Desktop\train_sets\final_test\P'
     MODEL_WEIGHTS = r'C:\Users\marty\Projects\scorer\scorer\models\weights\3state_SCDS_GRU_weights.pt'
     # evaluate_model_on_unseen(data_path: str, model_path: str, device: str = 'cuda', batch_size: int = 128):

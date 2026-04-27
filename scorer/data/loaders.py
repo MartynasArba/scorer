@@ -128,19 +128,21 @@ class SleepSignals(Dataset):
                 raise RuntimeError(f"No valid X/y file pairs found in folder: {data_path}")
 
             x_chunks = [torch.load(f).float() for f in x_files]
-            #normalize
-            if self.normalize:
-                for i in range(len(x_chunks)):
-                    m, s = x_chunks[i].mean(dim=(1,2), keepdim=True), x_chunks[i].std(dim=(1,2), keepdim=True).clamp(min=1e-8)
-                    x_chunks[i] = (x_chunks[i] - m) / s
             
             X = torch.cat(x_chunks, dim=1)        # concat on sample dimension
 
             if X.ndim == 3:
                 X = X.permute(1, 0, 2)            # [samples, channels, win_len]
 
+            #normalize by last dim after  permute
+            if self.normalize:
+                m = X.mean(dim= (0, 2), keepdim=True)
+                s = X.std(dim= (0, 2), keepdim=True).clamp(min=1e-8)
+                X = (X - m) / s
+
             self.all_samples = X
             print(f"Loaded {len(x_files)} X chunks: {X.shape}")
+            
             self.channel_ylims = self.compute_ylims()
             
             y_chunks = [torch.load(f).long() for f in y_files]
@@ -163,6 +165,11 @@ class SleepSignals(Dataset):
             X = X.to(dtype=torch.float32)
             if X.ndim == 3:
                 X = X.permute(1, 0, 2)
+            if self.normalize:
+                m = X.mean(dim= (0, 2), keepdim=True)
+                s = X.std(dim= (0, 2), keepdim=True).clamp(min=1e-8)
+                X = (X - m) / s    
+            
             self.all_samples = X
             print(f"Loaded tensor: {X.shape}")
         else:
@@ -284,7 +291,7 @@ class SleepTraining(Dataset):
         if merge_nrem:
             self.all_labels[self.all_labels == 3] = 2
             #also merge 0 and W
-            self.master_labels[self.master_labels == 0] = 1
+            self.all_labels[self.all_labels == 0] = 1
         
         self._balance_labels(balance=balance, exclude_labels=exclude_labels, seed=random_state)
         self._remap_labels_to_contiguous()
@@ -365,14 +372,19 @@ class SleepTraining(Dataset):
         final_x_chunks = []
         for chunk in x_chunks:
             chunk = chunk[:lowest_dim, :, :]
+            if chunk.ndim == 3:
+                chunk = chunk.permute(1, 0, 2)            # [samples, channels, win_len]
+            
             if self.normalize:
-                chunk = (chunk - chunk.mean(dim=(1,2), keepdim=True)) / chunk.std(dim=(1,2), keepdim=True).clamp(min=1e-8)
+                    m = chunk.mean(dim= (0, 2), keepdim=True)
+                    s = chunk.std(dim= (0, 2), keepdim=True).clamp(min=1e-8)
+                    chunk = (chunk - m) / s
+                
             final_x_chunks.append(chunk)
         
-        X = torch.cat(final_x_chunks, dim=1)        # concat on sample dimension
+        X = torch.cat(final_x_chunks, dim=0)        # concat on sample dimension
 
-        if X.ndim == 3:
-            X = X.permute(1, 0, 2)            # [samples, channels, win_len]
+
 
         self.all_samples = X
         print(f"Loaded {len(x_paths)} X files: {X.shape}")
@@ -574,9 +586,11 @@ class BufferedSleepDataset(IterableDataset):
         # balance and filter labels to get global 'active_indices'
         if balance != "none" or exclude_labels:
             self._balance_labels(balance, exclude_labels, random_state)
-            self._remap_labels_to_contiguous()
         else:
             self.active_indices = torch.arange(len(self.master_labels))
+            
+        #always remap labels
+        self._remap_labels_to_contiguous()
 
         self.master_labels = self.master_labels.to(self.device)
 
@@ -633,10 +647,11 @@ class BufferedSleepDataset(IterableDataset):
                 if max_idx < tensor.shape[1]:
                     tensor = tensor[:, target_channels, :]
                 else:
-                    pass # Fallback: if indices are wrong, assume the file is already a subset
+                    pass # fallback: if indices are wrong, assume the file is already a subset
                     
                 if self.normalize:
-                    m, s = tensor.mean(dim=(1,2), keepdim=True), tensor.std(dim=(1,2), keepdim=True).clamp(min=1e-8)
+                    m = tensor.mean(dim= (0, 2), keepdim=True)
+                    s = tensor.std(dim= (0, 2), keepdim=True).clamp(min=1e-8)
                     tensor = (tensor - m) / s
 
                 # extract only valid samples using local indexing
@@ -874,11 +889,6 @@ class SequenceSleepDataset(Dataset):
             rec_x_chunks = [torch.load(f, map_location='cpu', weights_only=False).float() for f in x_paths]
             rec_y_chunks = [torch.load(f, map_location='cpu', weights_only=False).long() for f in y_paths]
             
-            if self.normalize:
-                for i in range(len(rec_x_chunks)):
-                    m, s = rec_x_chunks[i].mean(dim=(1,2), keepdim=True), rec_x_chunks[i].std(dim=(1,2), keepdim=True).clamp(min=1e-8)
-                    rec_x_chunks[i] = (rec_x_chunks[i] - m) / s
-
             # now keeping only ephys to save compute, alternatively do:
             min_channels = min(chunk.size(0) for chunk in rec_x_chunks)
             rec_x_chunks = [chunk[:min_channels, :, :] for chunk in rec_x_chunks]
@@ -890,6 +900,11 @@ class SequenceSleepDataset(Dataset):
             # permute X to [samples, channels, win_len]
             if X_rec.ndim == 3:
                 X_rec = X_rec.permute(1, 0, 2)
+                
+            if self.normalize:
+                m = X_rec.mean(dim= (0, 2), keepdim=True)
+                s = X_rec.std(dim= (0, 2), keepdim=True).clamp(min=1e-8)
+                X_rec = (X_rec - m) / s
                 
             # collapse y to 1D [samples]
             if Y_rec.ndim == 3:
@@ -936,8 +951,16 @@ class SequenceSleepDataset(Dataset):
             x_seq += torch.randn_like(x_seq) * 0.01
         #sequence blanking
         if torch.rand(1).item() < 0.3:
-            mask_idx = torch.randint(0, x_seq.shape[0], (1,)).item()
-            x_seq[mask_idx] = 0.0   
+            # Randomly drop a chunk of 1 to 3 continuous windows
+            drop_length = torch.randint(1, 4, (1,)).item()
+            
+            # Ensure the drop length doesn't exceed our actual sequence length
+            if self.seq_len >= drop_length:
+                # Pick a random starting index for the blanking
+                start_idx = torch.randint(0, self.seq_len - drop_length + 1, (1,)).item()
+                # Replace the dropped chunk with N(0,1) standard normal noise
+                noise_chunk = torch.randn_like(x_seq[start_idx : start_idx + drop_length])
+                x_seq[start_idx : start_idx + drop_length] = noise_chunk
             
         return x_seq
     

@@ -42,6 +42,14 @@ class ContextAwareSleepScorer(nn.Module):
             nn.Linear(hidden_dim, num_classes)
         )
 
+    def train(self, mode=True):
+        """
+        Override train to ensure the encoder stays in eval mode (BN/Dropout lock).
+        """
+        super().train(mode)
+        self.encoder.eval()
+        return self
+
     def forward(self, x):
         # x expected shape: [batch_size, seq_length, chs, win_len]
         batch_size, seq_len, channels, win_len = x.size()
@@ -51,6 +59,7 @@ class ContextAwareSleepScorer(nn.Module):
         
         # extract features
         with torch.no_grad(): # ensure no gradients leak into frozen encoder
+            self.encoder.eval() #locks batchnorm and dropout
             embeddings = self.encoder(x_flat) # Shape: [batch * seq, embedding_dim (128)]
             embeddings = F.normalize(embeddings, p=2, dim=1)
             

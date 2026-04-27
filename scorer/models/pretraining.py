@@ -35,7 +35,7 @@ def batch_augment(x: torch.Tensor) -> torch.Tensor:
     scales = 0.5 + torch.rand(bsz, x.shape[1], 1, device=device)
     x = x * ((1 - apply_scale) + apply_scale * scales)
 
-    # Vectorized random shift (50% chance)
+    # random time shift (50% chance)
     shift_mask = torch.rand(bsz, device=device) < 0.5
     max_shift = int(x.shape[2] * 0.02)
     shifts = torch.randint(-max_shift, max_shift + 1, (bsz,), device=device)
@@ -43,8 +43,30 @@ def batch_augment(x: torch.Tensor) -> torch.Tensor:
     for i in range(bsz):
         if shift_mask[i]:
             x[i] = torch.roll(x[i], shifts=shifts[i].item(), dims=1)
-
-    # Random channel dropout/noise (30% chance) - only if model expects >1 channel
+            
+    #frequency mask (30% chance)
+    if random.random() < 0.3:
+        # convert to frequency domain
+        fft_x = torch.fft.rfft(x, dim=-1)
+        freq_bins = fft_x.shape[-1] #usually 501 bins for a 1000-sample window
+        # create mask to zero out specific freqs
+        mask = torch.ones_like(fft_x)
+        for i in range(bsz):
+            # 50/50 chance of low pass or band stop
+            if random.random() < 0.5:
+                # at 250Hz sample rate nyquist freq is 125Hz, bin 160 is ~40Hz
+                cutoff_bin = random.randint(120, 200) 
+                mask[i, :, cutoff_bin:] = 0.0
+            else:
+                # zero out random ~10Hz band (40 bins)
+                start_bin = random.randint(10, freq_bins - 40)
+                mask[i, :, start_bin:start_bin+40] = 0.0
+                     
+        # apply mask and convert back to time domain
+        fft_x = fft_x * mask
+        x = torch.fft.irfft(fft_x, n=x.shape[-1], dim=-1)
+        
+    # random channel dropout/noise (30% chance) - only if >1 channel
     if x.shape[1] > 1:
         dropout_mask = (torch.rand(bsz, 1, 1, device=device) < 0.3).float()
         noise = torch.randn(bsz, 1, x.shape[2], device=device) * (torch.rand(bsz, 1, 1, device=device) * 1e-4)
@@ -59,7 +81,7 @@ def train_supcon(model, dataset, logger, save_dir = '.', epochs=50, batch_size=2
     base_cnn = model.encoder 
     
     optimizer = optim.Adam(model.parameters(), lr=1e-5) #low lr because should be pretrained
-    criterion = SupConLoss(temperature = 0.1) 
+    criterion = SupConLoss(temperature = 0.2)   #increased to make more generalized embeddings 
     
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
 
@@ -80,7 +102,7 @@ def train_supcon(model, dataset, logger, save_dir = '.', epochs=50, batch_size=2
         for samples, labels in dataloader:
             samples, labels = samples.to(device), labels.to(device)
             
-            # Sanity Check: Label Alignment
+            # label alignment check
             if samples.shape[0] != labels.shape[0]:
                 logger.error(f"Batch mismatch: samples({samples.shape[0]}) != labels({labels.shape[0]})")
                 raise ValueError("Input samples and labels must have the same batch size.")
@@ -299,3 +321,4 @@ if __name__ == "__main__":
     torch.save(final_cnn.state_dict(), save_path / model_name)
     
     logger.info('Pretraining pipeline complete.')
+    

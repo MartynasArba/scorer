@@ -20,7 +20,7 @@ class SupConSleepCNN(nn.Module):
 
     def forward(self, x):
             # get embeddings
-            features = self.encoder.get_features(x)
+            features = self.encoder(x)
             # project to 128d and normalize for cosine similarity
             projected = self.projection_head(features)
             return F.normalize(projected, p=2, dim=1)

@@ -377,7 +377,7 @@ def get_folder_quality_report(folder_path: str,
     if savepath is None:
         savepath = folder_path
     res_list = []
-    files = glob.glob(folder_path + '/*box*.csv')
+    files = glob.glob(folder_path + '/*/*box*.csv')
     for file in files:
         try:
             metrics, figure = generate_obx_quality_report(file, sample_size = 20, report_interval = 100, sr = 1000)

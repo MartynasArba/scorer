@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from scorer.models.domain_utils import grad_reverse
 
 class SleepCNN(nn.Module):
     """
@@ -243,8 +244,10 @@ class SCDSSleepCNN(nn.Module):
     """
     updated single channel dual stream sleep CNN
     """
-    def __init__(self, num_classes: int, sampling_rate: int = 250):
+    def __init__(self, num_classes: int = 3, sampling_rate: int = 250):
         super().__init__()             
+        
+        self.num_classes = num_classes
         
         # time series stream
         # increased 1st layer kernel to capture delta better
@@ -296,8 +299,25 @@ class SCDSSleepCNN(nn.Module):
             nn.ReLU()
         )
         
-        # fusion of streams
-        self.dropout = nn.Dropout(0.5)
+        # fusion of streams happens via torch.cat in forward pass
+        
+        #domain classifier head
+        self.domain_classifier = nn.Sequential(
+            nn.Linear(512, 128),
+            nn.BatchNorm1d(128),
+            nn.ReLU(True),
+            nn.Dropout(0.3),
+            nn.Linear(128, 1) # single output for binary crossentropy
+        )     
+        
+        self.state_classifier = nn.Sequential(  #for adversarial training
+            nn.Linear(512, 128),
+            nn.BatchNorm1d(128),
+            nn.ReLU(True),  
+            nn.Dropout(0.3),
+            nn.Linear(128, self.num_classes)  
+        
+        )
         
         # Hann window pre-computation for FFT to prevent edge artifacts
         self.register_buffer('hann_window', torch.hann_window(1000)) 
@@ -318,23 +338,16 @@ class SCDSSleepCNN(nn.Module):
         power = power[..., 1:] # Drop DC
         return torch.log1p(power)
     
-    def get_features(self, x):              
-        """probably a better idea would be to just use forward"""
-        x = x[:, :1, :] # single channel
+    def forward_domain(self, x, alpha=1.0):
+        """used for adversarial training"""
+        # extract standard features
+        features = self.forward(x)
+        # pass through gradient reversal layer
+        reversed_features = grad_reverse(features, alpha)
+        # predict domain
+        domain_logits = self.domain_classifier(reversed_features)
         
-        # time stream
-        x_time = self._robust_scale(x)
-        feat_time = self.time_conv(x_time).squeeze(-1) # [batch, 256]
-        
-        # freq stream
-        x_freq = self._freqtransform(x)
-        feat_freq = self.freq_conv(x_freq)
-        feat_freq = self.freq_flatten(feat_freq) # [batch, 256]
-        
-        # fuse and return
-        fused = torch.cat([feat_time, feat_freq], dim=1)  # [batch, 512]
-        
-        return fused
+        return features, domain_logits
         
     def forward(self, x):
         x = x[:, :1, :] # single channel
