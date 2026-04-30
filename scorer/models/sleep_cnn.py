@@ -322,13 +322,13 @@ class SCDSSleepCNN(nn.Module):
         # Hann window pre-computation for FFT to prevent edge artifacts
         self.register_buffer('hann_window', torch.hann_window(1000)) 
         
-    def _robust_scale(self, x):
-        # changed from batch scale to window scale 
-        median = torch.quantile(x, q=0.50, dim=-1, keepdim=True)
-        q75 = torch.quantile(x, q=0.75, dim=-1, keepdim=True)
-        q25 = torch.quantile(x, q=0.25, dim=-1, keepdim=True)
-        iqr = (q75 - q25) + 1e-8 
-        return (x - median) / iqr
+    # def _robust_scale(self, x):
+    #     # changed from batch scale to window scale 
+    #     median = torch.quantile(x, q=0.50, dim=-1, keepdim=True)
+    #     q75 = torch.quantile(x, q=0.75, dim=-1, keepdim=True)
+    #     q25 = torch.quantile(x, q=0.25, dim=-1, keepdim=True)
+    #     iqr = (q75 - q25) + 1e-8 
+    #     return (x - median) / iqr
         
     def _freqtransform(self, x):
         """log-power spectrum with Hann window"""
@@ -353,7 +353,8 @@ class SCDSSleepCNN(nn.Module):
         x = x[:, :1, :] # single channel
         
         # time stream
-        x_time = self._robust_scale(x)
+        # x_time = self._robust_scale(x)
+        x_time = x
         feat_time = self.time_conv(x_time).squeeze(-1) # [batch, 256]
         
         # freq stream

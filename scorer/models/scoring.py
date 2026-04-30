@@ -39,6 +39,7 @@ def score_signal(data_path, state_save_folder, meta, scorer_type = 'heuristic', 
                         transform = None,
                         augment = False,
                         normalize = True,
+                        scale = 1.0,
                         spectral_features = None,
                         metadata = meta)
     except Exception as e:      #should be changed, but it's not filenotfounderror, but runtimeerror in loaders.py
@@ -179,10 +180,12 @@ def run_sequence_inference(model, sleep_dataset, seq_len=10, batch_size=128, app
     # extract continuous tensor of all windows [Total_Windows, Channels, Win_Len]
     X_continuous = sleep_dataset.all_samples
     
-    print(f'X_continous shape: {X_continuous.size()}')
+    # print(f'X_continous shape: {X_continuous.size()}')
     #select one channel
     if X_continuous.shape[1] > 1:
         X_continuous = X_continuous[:, 0:1, :]
+        
+    # print(f"OOD Data Stats -> Max: {X_continuous.max():.2f}, Min: {X_continuous.min():.2f}, Std: {X_continuous.std():.2f}")
     
     T_total = X_continuous.shape[0]
     
@@ -217,7 +220,12 @@ def run_sequence_inference(model, sleep_dataset, seq_len=10, batch_size=128, app
             # model output: [Batch, Classes, Seq_Len]
             # print(f"GUI Batch Max: {X_batch.max().item():.4f}, Min: {X_batch.min().item():.4f}, Mean: {X_batch.mean().item():.4f}")
             
-            print(f'batch size before preds: {X_batch.size()}')
+            # print(f'batch size before preds: {X_batch.size()}')
+            
+            # if start_idx == 0:  #  plot first sequence to check
+            #     plt.plot(X_batch[0, 0, 0, :].cpu().numpy()) # plot first window, first channel
+            #     plt.title("norm input to model")
+            #     plt.show()
             
             logits = model(X_batch)
             probs = F.softmax(logits, dim=1)

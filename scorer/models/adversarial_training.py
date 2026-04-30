@@ -4,6 +4,7 @@ import numpy as np
 from pathlib import Path
 import logging
 import datetime
+import math
 
 from torch.utils.data import DataLoader
 import torch.optim as optim
@@ -31,6 +32,7 @@ def train_adversarial_domain(model, good_loader, ood_loader, optimizer, logger, 
     
     # both loaders will be reset to the same length
     min_batches = min(len(good_loader), len(ood_loader))
+    total_steps = epochs * min_batches
     
     for epoch in range(epochs):
         epoch_loss = 0.
@@ -43,8 +45,13 @@ def train_adversarial_domain(model, good_loader, ood_loader, optimizer, logger, 
             x_good, y_sleep = x_good.to(device), y_sleep.to(device)
             x_ood = x_ood.to(device)
             # alpha scheduler - increasing from 0 to 1 to keep sleep embeddings
-            p = float(i + epoch * min_batches) / (epochs * min_batches)
-            alpha = 2. / (1. + np.exp(-10 * p)) - 1
+            current_step = i + epoch * min_batches
+            p = float(current_step) / total_steps
+            warmup_fraction = 0.2
+            if p < warmup_fraction:
+                alpha = 0.0
+            else:
+                alpha = (p - warmup_fraction) / (1.0 - warmup_fraction)
             
             optimizer.zero_grad()
             
@@ -56,11 +63,11 @@ def train_adversarial_domain(model, good_loader, ood_loader, optimizer, logger, 
             # get state loss on labeled data
             loss_sleep = criterion_sleep(sleep_logits, y_sleep)
             # get domain loss
-            domain_labels_good = torch.zeros(x_good.size(0), 1).to(device)
-            domain_labels_ood = torch.ones(x_ood.size(0), 1).to(device)
+            domain_labels_good = torch.zeros(x_good.size(0), 1, device = device)
+            domain_labels_ood = torch.ones(x_ood.size(0), 1, device = device)
             loss_domain_good = criterion_domain(domain_logits_good, domain_labels_good)
             loss_domain_ood = criterion_domain(domain_logits_ood, domain_labels_ood)
-            loss_domain = loss_domain_good + loss_domain_ood
+            loss_domain = (loss_domain_good + loss_domain_ood) / 2.0
         
             # get total loss
             total_loss = loss_sleep + loss_domain

@@ -53,7 +53,7 @@ def run_full_pipeline():
         "pretrain": {
             "batch_size": 1024,
             "simclr_epochs": 50,
-            "supcon_epochs": 50,
+            "supcon_epochs": 100,
             "n_files_buffer": 100,
         },
         "adversarial": {
@@ -65,7 +65,7 @@ def run_full_pipeline():
         "sequence": {
             "batch_size": 128,
             "epochs": 20,
-            "seq_len": 10,
+            "seq_len": 20,
         },
         "metadata": {
             'ecog_channels': '0', 
@@ -87,7 +87,7 @@ def run_full_pipeline():
         logger.info("STAGE 1: Starting Unsupervised SimCLR Pretraining")
         
         unsup_dataset = BufferedSleepDataset(
-            data_path=CONFIG["paths"]["labeled_data"],
+            data_path=[CONFIG["paths"]["labeled_data"], CONFIG["paths"]["unlabeled_data"]],
             n_files_to_pick=None,
             buffer_size=CONFIG["pretrain"]["n_files_buffer"],
             metadata=CONFIG["metadata"],
@@ -98,6 +98,11 @@ def run_full_pipeline():
 
         base_cnn = SCDSSleepCNN(num_classes=3).to(device)
         contrastive_model = SupConSleepCNN(base_cnn).to(device)
+
+        # Initialize LazyLinear layers before optimizer creation in training functions
+        logger.info("Initializing Lazy layers with dummy pass...")
+        dummy_in = torch.randn(1, 1, CONFIG["adversarial"].get("win_len", 1000)).to(device)
+        contrastive_model(dummy_in)
 
         pretrained_cnn, _, _ = train_unsupervised(
             contrastive_model, 
@@ -116,7 +121,7 @@ def run_full_pipeline():
 
         # --- STEP 2: SUPCON PRETRAINING ---
         logger.info("STAGE 2: Starting Supervised SupCon Pretraining")
-        
+
         sup_dataset = BufferedSleepDataset(
             data_path=CONFIG["paths"]["labeled_data"],
             n_files_to_pick=None,
@@ -127,6 +132,7 @@ def run_full_pipeline():
             merge_nrem=True,
             device='cpu'
         )
+        
 
         final_encoder, _ = train_supcon(
             contrastive_model, 
@@ -206,7 +212,7 @@ def run_full_pipeline():
             data_path=CONFIG["paths"]["val_data"],
             seq_len=CONFIG["sequence"]["seq_len"],
             normalize= True,
-            stride=1,
+            stride=CONFIG["sequence"]["seq_len"],
             device=device,
             merge_nrem=True,
             augment=False

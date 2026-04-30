@@ -2,6 +2,7 @@ import torch
 from torch.utils.data import DataLoader, random_split
 import torch.optim as optim
 
+import math
 import logging
 import random
 from pathlib import Path
@@ -20,51 +21,77 @@ def setup_logger(save_dir: Path):
     )
     return logging.getLogger(__name__)
 
-def batch_augment(x: torch.Tensor) -> torch.Tensor:
+def batch_augment(x: torch.Tensor, sample_rate = 250.) -> torch.Tensor:
     """vectorized augmentations per-sample"""
     x = x.clone()
-    bsz = x.shape[0]
+    bsz, n_channels, seq_len = x.shape
     device = x.device
     
     # noise per sample (70% chance)
     apply_noise = (torch.rand(bsz, 1, 1, device=device) < 0.7).float()
     x = x + (apply_noise * torch.randn_like(x) * 0.01)
     
-    # scaling per sample (50% chance)
-    apply_scale = (torch.rand(bsz, 1, 1, device=device) < 0.5).float()
-    scales = 0.5 + torch.rand(bsz, x.shape[1], 1, device=device)
+    # log scaling per sample (70% chance)
+    apply_scale = (torch.rand(bsz, 1, 1, device=device) < 0.7).float()
+    #uniform -1:1
+    rand_exponents = (torch.rand(bsz, n_channels, 1, device=device) * 2.0) - 1.0
+    scales = torch.exp(rand_exponents * math.log(10.0)) #exp scale
     x = x * ((1 - apply_scale) + apply_scale * scales)
-
-    # random time shift (50% chance)
-    shift_mask = torch.rand(bsz, device=device) < 0.5
-    max_shift = int(x.shape[2] * 0.02)
-    shifts = torch.randint(-max_shift, max_shift + 1, (bsz,), device=device)
     
-    for i in range(bsz):
-        if shift_mask[i]:
-            x[i] = torch.roll(x[i], shifts=shifts[i].item(), dims=1)
-            
-    #frequency mask (30% chance)
-    if random.random() < 0.3:
-        # convert to frequency domain
+    #frequency mask, per-sample (30% chance)
+    mask_prob = 0.3
+    # choose batch samples that get masked
+    apply_mask = torch.rand(bsz, 1, 1, device=device) < mask_prob
+    
+    if apply_mask.any():
         fft_x = torch.fft.rfft(x, dim=-1)
-        freq_bins = fft_x.shape[-1] #usually 501 bins for a 1000-sample window
-        # create mask to zero out specific freqs
-        mask = torch.ones_like(fft_x)
-        for i in range(bsz):
-            # 50/50 chance of low pass or band stop
-            if random.random() < 0.5:
-                # at 250Hz sample rate nyquist freq is 125Hz, bin 160 is ~40Hz
-                cutoff_bin = random.randint(120, 200) 
-                mask[i, :, cutoff_bin:] = 0.0
-            else:
-                # zero out random ~10Hz band (40 bins)
-                start_bin = random.randint(10, freq_bins - 40)
-                mask[i, :, start_bin:start_bin+40] = 0.0
-                     
-        # apply mask and convert back to time domain
-        fft_x = fft_x * mask
-        x = torch.fft.irfft(fft_x, n=x.shape[-1], dim=-1)
+        freq_bins = fft_x.shape[-1]
+        
+        # bin array
+        freq_idx = torch.arange(freq_bins, device=device).view(1, 1, freq_bins)
+        # theta bin bounds
+        theta_start = int(6 * (seq_len / sample_rate))
+        theta_end = int(9 * (seq_len / sample_rate))
+        
+        # 50/50 choice: low-pass or band-stop for the batch
+        is_lowpass = torch.rand(bsz, 1, 1, device=device) < 0.5
+        
+        # low-pass
+        min_cutoff = min(int(30 * (seq_len / sample_rate)), freq_bins - 1)
+        cutoffs = torch.randint(min_cutoff, freq_bins, (bsz, 1, 1), device=device)
+        lp_mask = freq_idx < cutoffs
+        
+        #band stop
+        min_bs_start = theta_end + 5
+        max_bs_start = max(min_bs_start + 1, freq_bins - 40)
+        bs_starts = torch.randint(min_bs_start, max_bs_start, (bsz, 1, 1), device=device)
+        # keep everything not in [bs_starts, bs_starts + 40) range
+        bs_mask = ~((freq_idx >= bs_starts) & (freq_idx < bs_starts + 40))
+        
+        # Combine masks based on the 50/50 choice
+        action_mask = torch.where(is_lowpass, lp_mask, bs_mask)
+        
+        # ensure theta is kept
+        theta_protected = (freq_idx >= theta_start) & (freq_idx < theta_end)
+        action_mask = action_mask | theta_protected
+        
+        # apply mask for selected samples
+        final_mask = torch.where(apply_mask, action_mask, torch.ones_like(action_mask, dtype=torch.bool))
+        fft_x = fft_x * final_mask.float()
+        x = torch.fft.irfft(fft_x, n=seq_len, dim=-1)
+    
+    #time shift, 50% chance
+    shift_prob = 0.5
+    max_shift = int(seq_len * 0.02)
+    apply_shift = torch.rand(bsz, device=device) < shift_prob
+    shifts = torch.randint(-max_shift, max_shift + 1, (bsz,), device=device)
+    shifts = shifts * apply_shift.long()
+    # roll
+    rows = torch.arange(bsz, device=device).view(bsz, 1, 1)
+    chans = torch.arange(n_channels, device=device).view(1, n_channels, 1)
+    # create shifted indices
+    indices = (torch.arange(seq_len, device=device).view(1, 1, seq_len) - shifts.view(bsz, 1, 1)) % seq_len
+    x = x[rows, chans, indices]
         
     # random channel dropout/noise (30% chance) - only if >1 channel
     if x.shape[1] > 1:
@@ -77,6 +104,7 @@ def batch_augment(x: torch.Tensor) -> torch.Tensor:
 def train_supcon(model, dataset, logger, save_dir = '.', epochs=50, batch_size=256):
     """supervised contrastive training loop"""
     torch.set_grad_enabled(True)
+    save_dir = Path(save_dir)
     device = next(model.parameters()).device
     base_cnn = model.encoder 
     
@@ -180,6 +208,7 @@ def train_supcon(model, dataset, logger, save_dir = '.', epochs=50, batch_size=2
 def train_unsupervised(model, dataset, logger, save_dir = '.', epochs=50, batch_size=256):
     """unsupervised contrastive training loop (SimCLR)"""
     torch.set_grad_enabled(True)
+    save_dir = Path(save_dir)
     device = next(model.parameters()).device
     base_cnn = model.encoder
     

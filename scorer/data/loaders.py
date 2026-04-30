@@ -6,7 +6,61 @@ from pathlib import Path
 import os
 import re
 import glob
+from scipy.signal import butter, filtfilt
 
+def clean_signal(x, fs=250.0):
+    """
+    additional filtering for high-frequency motion artifacts and cable noise
+    x expected shape: [Samples, Channels, Time]
+    """
+    device = x.device
+    dtype = x.dtype
+    x_np = x.cpu().numpy()
+
+    cutoff = min(49.0, (fs / 2.0) - 1.0) / (0.5 * fs)
+    b, a = butter(4, cutoff, btype='low')
+    
+    x_clean_np = filtfilt(b, a, x_np, axis=-1)
+    x_clean = torch.tensor(x_clean_np.copy(), device=device, dtype=dtype)
+    
+    return x_clean
+
+def robust_normalize(x, clip_val = 4.0, scale = 1.0, max_samples = 100000):
+    """
+    median normalization to prevent artifacts from ruining scoring (30 sd artifacts are sometimes present)
+    x expected shape: [Samples, Channels, Time]
+    """
+    
+    x = clean_signal( x, fs = 250)
+    
+    c = x.shape[1]  #extract channel num
+    x_flat = x.transpose(0, 1).reshape(c, -1)   #flatten to get per-channel quantiles to [channels, samples*time]
+    
+    #check for efficiency, take max 100k samples
+    num_samples = x_flat.shape[1]
+    if num_samples > max_samples:
+        idx = torch.randint(0, num_samples, (max_samples,))
+        x_stats = x_flat[:, idx]
+    else:
+        x_stats = x_flat
+    
+    medians = torch.median(x_stats, dim=1).values.view(1, c, 1)
+    q1 = torch.quantile(x_stats, 0.25, dim=1).view(1, c, 1)
+    q3 = torch.quantile(x_stats, 0.75, dim=1).view(1, c, 1)
+    iqr = q3 - q1
+    s = iqr / 1.349  #in a normal distribution sd = iqr/1.349
+    
+    x_norm = (x - medians) / s.clamp(min=1e-8)
+    
+    if scale != 1.0:
+        x_norm *= scale
+        x_norm += 0.7
+    
+    x_norm = torch.clamp(x_norm, min=-clip_val, max=clip_val)
+    x_norm = clean_signal(x_norm, fs = 250) #additional filter to prevent square artifacts
+    
+    return  x_norm
+    
 def natural_sort_key(filepath):
     """
     splits a filepath string into text and numbers, ensuring that
@@ -33,9 +87,10 @@ class SleepSignals(Dataset):
                  transform:bool = None, 
                  augment:bool = False, 
                  normalize:bool = False,
+                 scale: float = 1.0,
                  spectral_features:bool = None, 
                  metadata: dict = {}) -> None:
-        """        
+        """        s
             Args:
             file_path: path to the folder where chopped data is stored. Can handle one or multiple animals, but the recordings need to be in one file. 
             device: device to use (torch), default cuda
@@ -49,6 +104,7 @@ class SleepSignals(Dataset):
         self.params = metadata
         
         self.normalize = normalize
+        self.scale = scale
         
         self.all_samples = None
         self.all_labels = None
@@ -136,9 +192,7 @@ class SleepSignals(Dataset):
 
             #normalize by last dim after  permute
             if self.normalize:
-                m = X.mean(dim= (0, 2), keepdim=True)
-                s = X.std(dim= (0, 2), keepdim=True).clamp(min=1e-8)
-                X = (X - m) / s
+                X = robust_normalize(X, scale = self.scale)
 
             self.all_samples = X
             print(f"Loaded {len(x_files)} X chunks: {X.shape}")
@@ -166,9 +220,7 @@ class SleepSignals(Dataset):
             if X.ndim == 3:
                 X = X.permute(1, 0, 2)
             if self.normalize:
-                m = X.mean(dim= (0, 2), keepdim=True)
-                s = X.std(dim= (0, 2), keepdim=True).clamp(min=1e-8)
-                X = (X - m) / s    
+                X = robust_normalize(X, scale = self.scale)
             
             self.all_samples = X
             print(f"Loaded tensor: {X.shape}")
@@ -376,9 +428,7 @@ class SleepTraining(Dataset):
                 chunk = chunk.permute(1, 0, 2)            # [samples, channels, win_len]
             
             if self.normalize:
-                    m = chunk.mean(dim= (0, 2), keepdim=True)
-                    s = chunk.std(dim= (0, 2), keepdim=True).clamp(min=1e-8)
-                    chunk = (chunk - m) / s
+                    chunk = robust_normalize(chunk)
                 
             final_x_chunks.append(chunk)
         
@@ -608,7 +658,7 @@ class BufferedSleepDataset(IterableDataset):
         # shuffle the order of files every epoch to get random batches
         random.shuffle(file_indices)
         
-        # If num_workers > 0, split the files evenly among the CPU workers
+        # if num_workers > 0, split the files evenly among the CPU workers
         if worker_info is not None:
             per_worker = int(np.ceil(len(file_indices) / float(worker_info.num_workers)))
             worker_id = worker_info.id
@@ -650,9 +700,7 @@ class BufferedSleepDataset(IterableDataset):
                     pass # fallback: if indices are wrong, assume the file is already a subset
                     
                 if self.normalize:
-                    m = tensor.mean(dim= (0, 2), keepdim=True)
-                    s = tensor.std(dim= (0, 2), keepdim=True).clamp(min=1e-8)
-                    tensor = (tensor - m) / s
+                    tensor = robust_normalize(tensor)
 
                 # extract only valid samples using local indexing
                 local_indices = valid_global_indices - start_idx
@@ -691,40 +739,73 @@ class BufferedSleepDataset(IterableDataset):
     def _load(self, data_path, n_files_to_pick):
         """basically loads only y, as x is iterable"""
         import glob
-        x_paths = sorted(glob.glob(data_path + './*/X*.pt'), key = natural_sort_key)
-        y_paths = sorted(glob.glob(data_path + './*/y*.pt'), key = natural_sort_key)
+        
+        x_paths = []
+        y_paths = []
+        
+        # convert any input to list
+        if not isinstance(data_path, list):
+            data_path = [data_path]
+            
+        # get and sort files per folder
+        for folder in data_path:
+            search_pattern_x = os.path.join(folder, '*', 'X*.pt')
+            search_pattern_y = os.path.join(folder, '*', 'y*.pt')
+            
+            folder_x = sorted(glob.glob(search_pattern_x), key=natural_sort_key)
+            folder_y = sorted(glob.glob(search_pattern_y), key=natural_sort_key)
+            
+            # sanity check
+            assert len(folder_x) == len(folder_y), f"CRITICAL MISMATCH in {folder}: found {len(folder_x)} X files but {len(folder_y)} y files."
+            
+            if len(folder_x) == 0:
+                print(f"Warning: No .pt files found in {folder}")
+                
+            x_paths.extend(folder_x)
+            y_paths.extend(folder_y)
 
+        # check if anything was found
         if not x_paths or not y_paths:
             raise RuntimeError(f"No X/y files found in {data_path}")
 
+        # handle subsetting
         if n_files_to_pick is None:
             n_files_to_pick = len(x_paths)
 
         subset = np.random.choice(len(x_paths),
-                                  size=min(n_files_to_pick, len(x_paths)),
-                                  replace=False)
+                                size=min(n_files_to_pick, len(x_paths)),
+                                replace=False)
 
         x_paths = [x_paths[i] for i in subset]
         y_paths = [y_paths[i] for i in subset]
 
+        # load labels, build map for iter
         labels_list = []
         offset = 0
 
+        self.file_map = []
+        self.file_start_indices = []
+
         for x_path, y_path in zip(x_paths, y_paths):
-            #also make sure it's all on cpu
-            y = torch.load(y_path, map_location = 'cpu').long()
+            # on CPU to prevent VRAM overflow during dataset creation
+            y = torch.load(y_path, map_location='cpu').long()
+            
             if y.ndim == 3:
                 y = y.permute(1, 0, 2) 
             if y.ndim == 3 and y.size(1) == 1:
                 y = y[..., 0].squeeze(1) 
             else:
                 raise RuntimeError(f"Unexpected label shape in {y_path}: {y.shape}")
+                
             n_samples = y.shape[0]
             labels_list.append(y)
+            
+            # Map indices to their corresponding file
             self.file_map.append((offset, offset + n_samples, x_path))
             self.file_start_indices.append(offset)
             offset += n_samples
             
+        # concat
         self.master_labels = torch.cat(labels_list, dim=0)
         print(f"Y example shape: {labels_list[0].shape}")
         print("Total samples:", len(self.master_labels))
@@ -902,9 +983,7 @@ class SequenceSleepDataset(Dataset):
                 X_rec = X_rec.permute(1, 0, 2)
                 
             if self.normalize:
-                m = X_rec.mean(dim= (0, 2), keepdim=True)
-                s = X_rec.std(dim= (0, 2), keepdim=True).clamp(min=1e-8)
-                X_rec = (X_rec - m) / s
+                X_rec = robust_normalize(X_rec)
                 
             # collapse y to 1D [samples]
             if Y_rec.ndim == 3:

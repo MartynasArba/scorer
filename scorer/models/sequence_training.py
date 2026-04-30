@@ -216,7 +216,7 @@ if __name__ == "__main__":
 
     dataset = SequenceSleepDataset(
             data_path = data_path,
-            seq_len = 10,       # 10 continuous windows per sequence
+            seq_len = 20,       # increase context to ~1.2 min
             stride = 1,        # slide windows by 1 step
             device = device,
             exclude_labels = (0,), 
@@ -229,8 +229,8 @@ if __name__ == "__main__":
     
     val_dataset = SequenceSleepDataset(
             data_path = val_data_path,
-            seq_len = 10,       # 10 continuous windows per sequence
-            stride = 1,        # slide windows by 1 step
+            seq_len = 20,       # 10 continuous windows per sequence
+            stride = 20,        # get non-overlapping windows for validation
             device = device,
             exclude_labels = (0,), 
             normalize= True,
