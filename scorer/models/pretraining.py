@@ -111,7 +111,12 @@ def train_supcon(model, dataset, logger, save_dir = '.', epochs=50, batch_size=2
     optimizer = optim.Adam(model.parameters(), lr=1e-5) #low lr because should be pretrained
     criterion = SupConLoss(temperature = 0.2)   #increased to make more generalized embeddings 
     
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+    dataloader = DataLoader(dataset, 
+                            batch_size=batch_size, 
+                            shuffle=False,
+                            num_workers=4,
+                            pin_memory = True,
+                            prefetch_factor = 2)
 
     best_loss = float('inf')
     early_stop_counter = 0
@@ -128,7 +133,7 @@ def train_supcon(model, dataset, logger, save_dir = '.', epochs=50, batch_size=2
         num_batches = 0
         
         for samples, labels in dataloader:
-            samples, labels = samples.to(device), labels.to(device)
+            samples, labels = samples.to(device, non_blocking = True), labels.to(device, non_blocking = True)
             
             # label alignment check
             if samples.shape[0] != labels.shape[0]:
@@ -215,7 +220,12 @@ def train_unsupervised(model, dataset, logger, save_dir = '.', epochs=50, batch_
     optimizer = optim.Adam(model.parameters(), lr=5e-5)
     criterion = SimCLRLoss(temperature=0.15) 
     
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+    dataloader = DataLoader(dataset, 
+                            batch_size=batch_size, 
+                            shuffle=False,
+                            num_workers=4,
+                            pin_memory = True,
+                            prefetch_factor = 2)
     
     best_loss = float('inf')
     early_stop_counter = 0
@@ -230,7 +240,7 @@ def train_unsupervised(model, dataset, logger, save_dir = '.', epochs=50, batch_
         num_batches = 0
         
         for samples, labels in dataloader:
-            samples, labels = samples.to(device), labels.to(device)
+            samples, labels = samples.to(device, non_blocking = True), labels.to(device, non_blocking = True)
             
             view1 = batch_augment(samples) 
             view2 = batch_augment(samples)

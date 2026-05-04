@@ -51,8 +51,8 @@ def run_full_pipeline():
             "val_data": r"C:\Users\marty\Desktop\train_sets\val"
         },
         "pretrain": {
-            "batch_size": 1024,
-            "simclr_epochs": 50,
+            "batch_size": 2048,
+            "simclr_epochs": 100,
             "supcon_epochs": 100,
             "n_files_buffer": 100,
         },
@@ -101,7 +101,7 @@ def run_full_pipeline():
 
         # Initialize LazyLinear layers before optimizer creation in training functions
         logger.info("Initializing Lazy layers with dummy pass...")
-        dummy_in = torch.randn(1, 1, CONFIG["adversarial"].get("win_len", 1000)).to(device)
+        dummy_in = torch.randn(2, 1, CONFIG["adversarial"].get("win_len", 1000)).to(device)
         contrastive_model(dummy_in)
 
         pretrained_cnn, _, _ = train_unsupervised(

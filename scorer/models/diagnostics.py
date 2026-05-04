@@ -96,13 +96,13 @@ def check_tensors(raw_tensor, processed_tensor):
     # "worst"
     axes[0].plot(raw_tensor[worst_idx, 0, :].cpu().numpy(), label='Raw Artifact', color='gray')
     axes[0].plot(processed_tensor[worst_idx, 0, :].cpu().numpy(), label='Filtered Attempt', color='red')
-    axes[0].set_title(f'The Poison Pill (Worst Window: Index {worst_idx})')
+    axes[0].set_title(f'Loudest Window: Index {worst_idx}')
     axes[0].legend()
     
     # "best"
     axes[1].plot(raw_tensor[best_idx, 0, :].cpu().numpy(), label='Raw Quiet', color='gray')
     axes[1].plot(processed_tensor[best_idx, 0, :].cpu().numpy(), label='Filtered', color='blue')
-    axes[1].set_title(f'The Baseline (Quietest Window: Index {best_idx})')
+    axes[1].set_title(f'Quietest Window: Index {best_idx}')
     axes[1].legend()
     
     plt.tight_layout()

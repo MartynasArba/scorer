@@ -12,7 +12,7 @@ class AutoScoringWidget(QWidget):
         super().__init__()
         
         self.params = meta
-        available_models = ['select model','3state_GRU'] # '3state_pretrained', '3state_dual', '3state_SCDS', '5state_pretrained']
+        available_models = ['select model','3state_GRU', 'random_forest'] # '3state_pretrained', '3state_dual', '3state_SCDS', '5state_pretrained']
         layout = QVBoxLayout(self)
         
         self.file_folder = '.'
@@ -28,7 +28,7 @@ class AutoScoringWidget(QWidget):
         layout.addWidget(self.model_selection)
         
         #checkbox to apply corrections
-        self.correction_check = QCheckBox('correct scores by common heuristics? (remove W->R etc.)')
+        self.correction_check = QCheckBox('correct scores by common heuristics? (remove W->R transitions,  single-window NREM or REM?)')
         layout.addWidget(self.correction_check)
         
         #button to select file folder
