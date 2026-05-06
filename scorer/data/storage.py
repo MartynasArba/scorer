@@ -68,9 +68,12 @@ def save_metadata(path: str, metadata: dict) -> None:
     """
     saves metadata to a json file
     """
-    with open(path, 'wt') as f:
-        json.dump(metadata, f)
-
+    try:
+        with open(path, 'wt') as f:
+            json.dump(metadata, f)
+    except Exception as e:
+        print(f'ERROR in save_metadata: {e}')
+    
 def load_metadata(path: str) -> dict:
     """
     loads metadata from a json file

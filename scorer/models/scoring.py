@@ -103,7 +103,7 @@ def score_signal(data_path, state_save_folder, meta, selected_ch = 0, scorer_typ
             selected_ch = selected_ch
         )
         if apply_corrections:
-            all_preds = apply_heuristics_lite(all_preds, mapping = 'gui')
+            all_preds = apply_heuristics(all_preds, mapping = 'gui')
 
     state_save_path = Path(state_save_folder) / str(meta.get('scoring_started', '') + '_' + meta.get('filename', '') + '_' + meta.get('optional_tag', '') + scorer_type + '_states.pkl')
     save_pickled_states(all_preds, state_save_path)
@@ -399,6 +399,7 @@ def apply_heuristics_lite(states: np.ndarray, mapping: str = '3_class') -> np.nd
     """
     A gentle heuristic that ONLY cleans up isolated 4-second artifacts.
     It intentionally leaves Wake->REM boundaries alone, trusting the Context RF.
+    This might be wrong in some cases. 
     """
     smoothed = states.copy()
     n = len(smoothed)
