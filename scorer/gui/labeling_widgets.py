@@ -259,13 +259,17 @@ class SleepGUI(QWidget):
         score_path, self.score_save_path = construct_paths(self.data_path)
 
         # create dataset object by passing path
-        self.dataset = SleepSignals(
-            data_path=self.data_path,
-            score_path=score_path,
-            augment=False,
-            spectral_features=self.params.get('spectral_view', None),
-            metadata=self.params
-        )
+        try:
+            self.dataset = SleepSignals(
+                data_path=self.data_path,
+                score_path=score_path,
+                augment=False,
+                spectral_features=self.params.get('spectral_view', None),
+                metadata=self.params
+            )
+        except Exception as e:
+            print(f'dataset not loaded: {e}')
+            return
         
         sample_rate = int(self.params.get("sample_rate", 250))
         sample0 = self.dataset[0][0]    #get first sample

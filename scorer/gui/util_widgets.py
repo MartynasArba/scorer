@@ -61,6 +61,9 @@ class UtilWidget(QWidget):
                                                   filter = "BIN files (*.bin)")
         if filename:
             save_folder = QFileDialog.getExistingDirectory(self,'select folder to save in', self.params.get('project_path', '.'), QFileDialog.ShowDirsOnly)
+            if not save_folder: # user cancelled save folder selection
+                self.label.setText('save folder selection cancelled')
+                return
             self.label.setText(f'selected {filename} for obx conversion') 
             run_conversion(filename, self.params, save_folder= save_folder, sr_new = int(self.params.get('sample_rate', '1000')))
             self.label.setText(f'{filename} obx file converted to csvs') 
@@ -73,6 +76,9 @@ class UtilWidget(QWidget):
         path = QFileDialog.getExistingDirectory(self,'select folder to load from', self.params.get('project_path', '.'), QFileDialog.ShowDirsOnly)
         
         if path:
+            if not save_folder: # user cancelled save folder selection
+                self.label.setText('save folder selection cancelled')
+                return
             save_folder = QFileDialog.getExistingDirectory(self,'select folder to save in', self.params.get('project_path', '.'), QFileDialog.ShowDirsOnly)
             self.label.setText(f'converting all obx files from {path}') 
             convert_multiple_recs(path, self.params, save_folder= save_folder, sr_new = int(self.params.get('sample_rate', '1000')), overwrite = self.overwrite_check.isChecked())

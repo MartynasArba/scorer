@@ -26,8 +26,7 @@ class SettingsWidget(QWidget):
                         'ecog_channels': '0,1',
                         'emg_channels': '2',
                         'time_channel': '3',
-                        'spectral_options': None,
-                        'ylim': 'infer_ephys',
+                        'ylim': 'infer',
                         'device': 'cuda',
                         'optional_tag': ''
                         }
@@ -178,7 +177,6 @@ class SettingsWidget(QWidget):
         numeric_keys = ['animal_id', 'sample_rate']
         channel_keys = ['ecog_channels', 'emg_channels']
         ylim_options = ['infer', 'infer_ephys' , 'standard']
-        spectral_options = ['fourier', 'spect', None]
         
         for key in self.params.keys():
             if not self.params[key]:
@@ -194,10 +192,7 @@ class SettingsWidget(QWidget):
             elif (key == 'ylim') & (not (self.params[key] in ylim_options)):
                 print(f'{key} is not an ylim option. select from {ylim_options}')
                 params_valid = False
-            elif (key == 'spectral_view') & (not (self.params[key] in spectral_options)):
-                print(f'{key} is not a valid spectral option. select from {spectral_options}')
-                params_valid = False
-                
+
         print(f'params valid: {params_valid}')    
         msg = QMessageBox()
         msg.setIcon(QMessageBox.Information)

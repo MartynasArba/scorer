@@ -45,7 +45,6 @@ class SleepWindow(QMainWindow):
             'ecog_channels', 
             'emg_channels',
             'ylim',
-            'spectral_view',
             'device',
             'optional_tag'
             ]

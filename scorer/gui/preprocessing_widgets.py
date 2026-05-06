@@ -54,7 +54,7 @@ class PreprocessWidget(QWidget):
     
         self.resample_check = QCheckBox("resample data? new sr:") #add option to select sample rate to resample to
         self.sr_field = QLineEdit(self)
-        self.sr_field.setText("1000")
+        self.sr_field.setText("250")
         sr_layout = QHBoxLayout()
         sr_layout.addWidget(self.resample_check)
         sr_layout.addWidget(self.sr_field)   

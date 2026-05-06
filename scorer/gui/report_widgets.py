@@ -178,7 +178,7 @@ class ReportWidget(QWidget):
                                             caption="select states file to open (B)",
                                             directory=self.params.get('project_path', '.'),
                                             filter="Pickle files (*.pkl)")
-        if (file_name_a == None) or (file_name_b == None):
+        if not file_name_a or not file_name_b: # Check for empty string as well
             print('select valid files!')
             return 
         

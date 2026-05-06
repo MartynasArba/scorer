@@ -373,10 +373,10 @@ def validate_context_rf_sequence(val_data_path, encoder_weights_path, rf_model_p
     probs = rf.predict_proba(X_context)
     
     #boost REM probs
-    probs[:, 2] = probs[:, 2] * 1.30
-    # renormalize so rows sum to 1
-    row_sums = probs.sum(axis=1, keepdims=True)
-    probs = probs / row_sums
+    # probs[:, 2] = probs[:, 2] * 1.30
+    # # renormalize so rows sum to 1
+    # row_sums = probs.sum(axis=1, keepdims=True)
+    # probs = probs / row_sums
     # argmax with no smoothing as context is included
 
     # # post processing
