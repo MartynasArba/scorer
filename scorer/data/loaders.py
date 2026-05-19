@@ -990,10 +990,6 @@ class SequenceSleepDataset(Dataset):
                 Y_rec = Y_rec.permute(1, 0, 2) #permute to the same format
                 Y_rec = Y_rec[..., 0].squeeze(1)
                 
-            if merge_nrem:
-                Y_rec[Y_rec == 3] = 2 # merge IS into NREM,
-                Y_rec[Y_rec == 0] = 1 # 0 into W
-                
             num_samples = X_rec.shape[0]
             
             # Add to our global memory lists
@@ -1015,7 +1011,11 @@ class SequenceSleepDataset(Dataset):
                     # map valid sequence back to the global flattened tensor index
                     self.valid_starts.append(global_offset + i)
             
-            # Move the pointer forward by the size of this recording
+            if merge_nrem:
+                Y_rec[Y_rec == 3] = 2 # merge IS into NREM,
+                Y_rec[Y_rec == 0] = 1 # 0 into W
+            
+            # move the pointer forward by the size of rec
             global_offset += num_samples
 
     def _augment_sequence(self, x_seq):

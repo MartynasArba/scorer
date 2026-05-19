@@ -12,10 +12,10 @@ import scipy.signal as sig
 import seaborn as sns
 import torch
 
-def plot_embeddings(x_good, x_bad):
+def plot_embeddings(x_good, x_bad, model_path):
     
     cnn = SCDSSleepCNN(num_classes=3).to('cuda')
-    cnn.load_state_dict(torch.load(r"C:\Users\marty\Projects\scorer\scorer\models\weights\adversarial_adjusted_encoder20260429.pt")) 
+    cnn.load_state_dict(torch.load(model_path))
     cnn.eval()
 
     with torch.no_grad():
@@ -107,80 +107,121 @@ def check_tensors(raw_tensor, processed_tensor):
     
     plt.tight_layout()
     plt.show()
-
-
-good_path = r"C:\Users\marty\Desktop\train_sets\final_test\F\windowed_pilot_ch0\X_pilot_ch0_chunk0.pt"
-ood_path = r"G:\sleep-ecog-DOWNSAMPLED\20251124-1_g0_t0obx0obx_box3\processed\windowed_20260303164717 20251124-1_g0_t0.obx0.obx_box3\X_chunk0.pt"
-
-
-x_val_raw = torch.load(good_path)[0:1, :, :].permute(1, 0, 2).float()
-x_ood_raw = torch.load(ood_path)[0:1, :, :].permute(1, 0, 2).float()
-
-x_good, x_bad = robust_normalize(x_val_raw), robust_normalize(x_ood_raw, scale = 1.3)
-
-plot_embeddings(x_good, x_bad)
-
-check_tensors(x_ood_raw, x_bad)
-
-
-clean_data = x_good[0, : , :].flatten()
-ood_data =  x_bad[0, : , :].flatten()
-plot_domain_diagnostics(clean_data, ood_data, fs=250.0)
-
-
-
-# #CHECK FFTS AND RAW SIGNALS
-
-# x_train = torch.load(good_path).detach().cpu().numpy()[0, :, :].ravel()
-# x_ood = torch.load(ood_path).detach().cpu().numpy()[0, :, :].ravel()
-
-# x_train = (x_train - x_train.mean())/x_train.std()
-# x_ood = (x_ood - x_ood.mean())/x_ood.std()
-
-# #clipping check
-# good_clip_pct = np.mean(x_train == np.max(x_train)) * 100
-# bad_clip_pct = np.mean(x_ood == np.max(x_ood)) * 100
-
-# print(f"Good Data Clipping: {good_clip_pct:.4f}% | Kurtosis: {kurtosis(x_train.flatten()):.2f}")
-# print(f"Bad Data Clipping:  {bad_clip_pct:.4f}% | Kurtosis: {kurtosis(x_ood.flatten()):.2f}")
-
-# f_train, pxx_train = welch(x_train[:2000], fs=250, nperseg=256)
-# f_ood, pxx_ood = welch(x_ood[:2000], fs=250, nperseg=256)
-
-# plt.figure(figsize=(10,4))
-# plt.plot(f_train, pxx_train, label='Training Data')
-# plt.plot(f_ood, pxx_ood, label='OOD Data')
-# plt.xlim(0, 20)
-# plt.legend()
-# plt.title("Frequency Distribution Mismatch Check")
-# plt.show()
-
-# plt.figure(figsize=(10,4))
-# plt.plot(x_train[:2000] - 1.5, label='Training Data')
-# plt.plot(x_ood[:2000] + 1.5, label='OOD Data')
-# plt.title("timeseries comparison")
-# plt.show()
-
-# #CHECK THETA-DELTA RATIO
-# def get_tdr(data, sr=250):
-#     f, pxx = welch(data, fs=sr, nperseg=256, axis=-1)
     
-#     delta_mask = (f >= 1) & (f <= 4)
-#     theta_mask = (f >= 6) & (f <= 9)
-    
-#     delta_power = np.sum(pxx[..., delta_mask], axis=-1)
-#     theta_power = np.sum(pxx[..., theta_mask], axis=-1)
-    
-#     return theta_power / (delta_power + 1e-9)
+def compare_ood(ood_path, good_path):
+    x_val_raw = torch.load(good_path)[0:1, :, :].permute(1, 0, 2).float()
+    x_ood_raw = torch.load(ood_path)[0:1, :, :].permute(1, 0, 2).float()
 
-# good_tdr = get_tdr(x_train)
-# bad_tdr = get_tdr(x_ood)
+    x_good, x_bad = robust_normalize(x_val_raw), robust_normalize(x_ood_raw)
 
-# plt.hist(good_tdr.flatten()[:100], bins=50, alpha=0.5, density=True, label='Good Data')
-# plt.hist(bad_tdr.flatten()[:100], bins=50, alpha=0.5, density=True, label='OOD Data')
-# plt.legend()
-# plt.title("Theta/Delta Ratio Distribution")
-# plt.show()
+    plot_embeddings(x_good, x_bad, model_path = r'C:\Users\marty\Projects\scorer\scorer\models\weights\SupCon_final_20260430.pt')
+    plot_embeddings(x_good, x_bad, model_path = r'C:\Users\marty\Projects\scorer\scorer\models\weights\adversarial_adjusted_encoder20260430.pt')
+
+
+    check_tensors(x_ood_raw, x_bad)
+
+    clean_data = x_good[0, : , :].flatten()
+    ood_data =  x_bad[0, : , :].flatten()
+
+
+    plot_domain_diagnostics(clean_data, ood_data, fs=250.0)
+
+    #CHECK FFTS AND RAW SIGNALS
+
+    x_train = torch.load(good_path).detach().cpu().numpy()[0, :, :].ravel()
+    x_ood = torch.load(ood_path).detach().cpu().numpy()[0, :, :].ravel()
+
+    x_train = (x_train - x_train.mean())/x_train.std()
+    x_ood = (x_ood - x_ood.mean())/x_ood.std()
+
+    #clipping check
+    good_clip_pct = np.mean(x_train == np.max(x_train)) * 100
+    bad_clip_pct = np.mean(x_ood == np.max(x_ood)) * 100
+
+    print(f"Good Data Clipping: {good_clip_pct:.4f}% | Kurtosis: {kurtosis(x_train.flatten()):.2f}")
+    print(f"Bad Data Clipping:  {bad_clip_pct:.4f}% | Kurtosis: {kurtosis(x_ood.flatten()):.2f}")
+
+    f_train, pxx_train = welch(x_train[:2000], fs=250, nperseg=256)
+    f_ood, pxx_ood = welch(x_ood[:2000], fs=250, nperseg=256)
+
+    plt.figure(figsize=(10,4))
+    plt.plot(f_train, pxx_train, label='Training Data')
+    plt.plot(f_ood, pxx_ood, label='OOD Data')
+    plt.xlim(0, 20)
+    plt.legend()
+    plt.title("Frequency Distribution Mismatch Check")
+    plt.show()
+
+    plt.figure(figsize=(10,4))
+    plt.plot(x_train[:2000] - 1.5, label='Training Data')
+    plt.plot(x_ood[:2000] + 1.5, label='OOD Data')
+    plt.title("timeseries comparison")
+    plt.show()
+
+    #CHECK THETA-DELTA RATIO
+    def get_tdr(data, sr=250):
+        f, pxx = welch(data, fs=sr, nperseg=256, axis=-1)
+        
+        delta_mask = (f >= 1) & (f <= 4)
+        theta_mask = (f >= 6) & (f <= 9)
+        
+        delta_power = np.sum(pxx[..., delta_mask], axis=-1)
+        theta_power = np.sum(pxx[..., theta_mask], axis=-1)
+        
+        return theta_power / (delta_power + 1e-9)
+
+    good_tdr = get_tdr(x_train)
+    bad_tdr = get_tdr(x_ood)
+
+    plt.hist(good_tdr.flatten()[:100], bins=50, alpha=0.5, density=True, label='Good Data')
+    plt.hist(bad_tdr.flatten()[:100], bins=50, alpha=0.5, density=True, label='OOD Data')
+    plt.legend()
+    plt.title("Theta/Delta Ratio Distribution")
+    plt.show()
+    
+
+def plot_trace(loader):
+    X_sample, y_sample = loader[100000] # pick a window in the dataset
+    # plot trace
+    plt.figure(figsize=(10, 3))
+    plt.plot(X_sample[0]) # assuming 0 is EEG
+    plt.title(f"signal check, label: {y_sample}")
+    plt.xlabel("samples")
+    plt.ylabel("amplitude")
+    plt.show()
+
+#GENERAL DATA CHECKS
+from scorer.data.loaders import SequenceSleepDataset
+from torch.utils.data import DataLoader
+
+data_path = 'D:/new_val'
+seq_len = 100
+device = 'cuda'
+
+dataset = SequenceSleepDataset(
+        data_path=data_path,
+        seq_len=seq_len,
+        stride=seq_len,
+        device=device,
+        normalize=True,
+        merge_nrem=True,
+        exclude_labels=(0,),
+        augment=False
+    )
+
+dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
+
+plot_trace(dataset)
+
+
+
+#OOD AND TRAINING DATA COMPARISONS
+
+# good_path = r"C:\Users\marty\Desktop\train_sets\final_test\F\windowed_pilot_ch0\X_pilot_ch0_chunk0.pt"
+# ood_path = r"C:\Users\marty\Desktop\train_sets\unlabeled\windowed_20260309152103 20260106-1_g0_t0.obx0.obx_box4\X_chunk0.pt"
+# compare_ood(ood_path, good_path)
+
+
 
 # #check for sample rate mismatch - it's probably ok
 # import pandas as pd

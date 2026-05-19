@@ -84,7 +84,7 @@ def run_default_preprocessing(csv_path: str, save_folder =  r'G:\oslo_data', sta
                         'ecog_channels':'2',
                         'emg_channels':'3',
                         'device':'cuda',
-                        'sample_rate':256
+                        'sample_rate':128
                         }
             if win_len % chunk_size != 0:
                 print('warning: window length doesn\'t fit chunk size!')
@@ -105,22 +105,22 @@ def run_default_preprocessing(csv_path: str, save_folder =  r'G:\oslo_data', sta
                 else:           
                     print('not implemented')      
         
-def _bandpass(signal: torch.Tensor, freqs: tuple, metadata: dict) -> torch.Tensor:
+def _bandpass(signal: torch.Tensor, freqs: tuple, sr: int = 250, device: str = 'cuda') -> torch.Tensor:
         """
         applies bandpass filtering func
         """
         print(f'in bandpass filter signal size: {signal.size()}')
         signal = bandpass_filter(signal,
-                        sr = int(metadata.get('sample_rate', 1000)),
+                        sr = sr,
                         freqs = freqs,
-                        device = metadata.get('device'))
+                        device = device)
         return signal        
 
 def _preprocess(ecog: torch.Tensor, emg: torch.Tensor, states: torch.Tensor, metadata: dict) -> tuple:
         """
         leftover from GUI, runs preprocessing helpers
         """
-        sample_rate = float(metadata.get('sample_rate', 256))
+        sample_rate = float(metadata.get('sample_rate', 128))
         new_rate = 250
         
         ecog = ecog.T
@@ -146,11 +146,11 @@ def _preprocess(ecog: torch.Tensor, emg: torch.Tensor, states: torch.Tensor, met
                 states = states[:, indices]
         
         freqs = (0.5, 49.0)
-        ecog = _bandpass(ecog, freqs, metadata)
+        ecog = _bandpass(ecog, freqs, sr = new_rate, device =  metadata.get('device', 'cuda'))
         print('ecog data filtered')
                 
         freqs = (10.0, 100.0)
-        emg = _bandpass(emg, freqs, metadata)
+        emg = _bandpass(emg, freqs, sr = new_rate, device =  metadata.get('device', 'cuda'))
         print('emg data filtered')
 
         return ecog, emg, states#, ecog_power, emg_power) + tuple(bands.values()
@@ -325,7 +325,8 @@ def remap_and_fix_state_files(data_dir, states_path, win_len = 1000, new_states_
     print(f"saved corrected states to {corrected_pkl_path.name}")
     
 def edf_to_csv(edf_path, hypnogram_path, channels = [2, 3]):
-    """self explanatory, used to convert open source .edf files to compatible .csv"""
+    """used to convert Oxford open access .edf files to compatible .csv
+    splits different channels into different files"""
     import pandas as pd
     
     signals, signal_headers, header = highlevel.read_edf(edf_path)
@@ -387,10 +388,107 @@ def edf_to_csv(edf_path, hypnogram_path, channels = [2, 3]):
             'emg':emg,
             'sleep_episode':scores
                         }).to_csv(save_name)
+        
+
+def MSSV_edf_to_csv(edf_path, hypnogram_path, save_dir = None):
+    """ used to convert MSSV open access .edf files to testing-ready tensors"""
+    signals, signal_headers, header = highlevel.read_edf(edf_path)
+    channels = [(i, sig['label']) for i, sig in enumerate(signal_headers)]
+    eeg_chs = [ch for ch in channels if ("EEG" in ch[1] or "eeg" in ch[1]) ]
+    edf_path = Path(edf_path)
+    try:
+        emg_chs = [ch for ch in channels if ("EMG" in ch or "emg" in ch[1]) ]
+        if len(emg_chs) > 1:
+            print(f'multiple emg channels in rec {edf_path.name}')
+        emg_ch = emg_chs[0]
+    except:
+        print(f'no emg channel in rec {edf_path.name}')
+        return
+    print(f'rec {edf_path.name}, eeg channels: {eeg_chs}, emg channel: {emg_ch}')
+    sample_rate = signal_headers[0].get('sample_frequency') # sample rate should be the same as stated in the metadata
+    if sample_rate is not None:
+        sample_rate = float(sample_rate)
+    else:
+        raise ValueError('sample rate not found in EDF header!')
+    
+    num_samples = len(signals[emg_ch[0]])
+    emg = np.array(signals[emg_ch[0]])
+    time = np.arange(0, num_samples) / sample_rate
+    scores = np.zeros_like(emg)
+    
+       # #parse state scores - inefficient, but used only once so doesn't matter
+    if hypnogram_path is not None:
+            with open(hypnogram_path, 'rt') as f:
+                current_start_idx = 0
+                for i, line in enumerate(f.readlines()):
+                    try:
+                        if i < 1:   #skip one line (onset, duration, state)
+                            continue
+                        start, duration, state = line.split('\t')
+                        end_idx = int((float(start) + float(duration) * sample_rate)) 
+                        if end_idx > num_samples:
+                            end_idx = num_samples
+                        
+                        if '1' in state:
+                            scores[current_start_idx:end_idx] = 1
+                        elif '2' in state:
+                            scores[current_start_idx:end_idx] = 2
+                        elif '3' in state:
+                            scores[current_start_idx:end_idx] = 4
+                        else:       #many artifacts?
+                            if int(state) != 4:
+                                print(f'state is {state}')
+                            scores[current_start_idx:end_idx] = 0
+                            
+                        current_start_idx = end_idx
+                        
+                        if current_start_idx >= num_samples:
+                            break
+                
+                    except:
+                        print(f'line {i} failed')     
+                             
+    print('hypnogram parsed! found states:')
+    print(np.unique(scores, return_counts= True))
+    
+    for eeg_index, eeg_name in eeg_chs:
+        ecog = np.array(signals[eeg_index])
+        
+        fname = Path(edf_path)
+        if save_dir is not None:
+            save_dir = Path(save_dir)
+        else:
+            save_dir = fname.parent
+        save_name = save_dir / f'{fname.stem}_ch{eeg_name}.csv'
+        print(f'saving csv to: {save_name}')
+        pd.DataFrame({
+            'time':time,
+            'ecog':ecog,
+            'emg':emg,
+            'sleep_episode':scores
+                        }).to_csv(save_name)
 
 if __name__ == "__main__":
-    organize_motion_files('G:/sleep-ecog-DOWNSAMPLED/motion', 'G:/sleep-ecog-DOWNSAMPLED')
-    # for path in glob.glob(r'G:\sleep-ecog-DOWNSAMPLED\*.csv'):
+    print("uncomment an util to use via running the script")
+    
+    # import pandas as pd
+
+    # edf_paths = sorted(glob.glob(r"C:\Users\marty\Desktop\train_sets\new_val\sub-*\eeg\*.edf"))
+    # hyp_paths = sorted(glob.glob(r"C:\Users\marty\Desktop\train_sets\new_val\sub-*\eeg\*events.tsv"))
+    # for edf, hyp in zip(edf_paths, hyp_paths):
+        # MSSV_edf_to_csv(edf, hyp, save_dir=r'D:\new_val')
+        
+    # csv_paths = sorted(glob.glob(r"D:\new_val\*.csv"))
+    # for path in csv_paths:
+    #     run_default_preprocessing(path, save_folder = r'D:\new_val', states = 4)
+        
+        
+    #convert generated states to y files for training
+    # states_to_yfile(states_pkl_path=r"C:\Users\marty\Desktop\train_sets\my_val\windowed_2026031916123520260106-1_g0_t0.obx0.obx_box3\noID_scores_windowed_2026031916123520260106-1_g0_t0.ob____2_frame10799.pkl",
+    #                 data_path=r"C:\Users\marty\Desktop\train_sets\my_val\windowed_2026031916123520260106-1_g0_t0.obx0.obx_box3")
+    
+    # organize_motion_files('G:/sleep-ecog-DOWNSAMPLED/motion', 'G:/sleep-ecog-DOWNSAMPLED')
+    # for path in glob.glob(r'G:\sleep-ecog-DOWNSAMPLED\*.csv')
     #     move_into_subfolder(path)
     
     # paths = glob.glob(r'C:\Users\marty\Desktop\train_sets\final_test\*.csv')

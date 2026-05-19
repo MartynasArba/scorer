@@ -9,8 +9,8 @@ def design_bandpass_hamming(fs: int, lowcut: float, highcut: float,
                             dtype = torch.float32, 
                             device = 'cuda') -> torch.Tensor:
     """
-    Design a linear-phase bandpass FIR using windowed sinc (Hamming).
-    Returns a 1D tensor of taps (odd length).
+    design a linear-phase bandpass FIR using windowed sinc (Hamming)
+    returns a 1D tensor of taps (odd length)
     """
     #checks 
     nyq = fs / 2.0

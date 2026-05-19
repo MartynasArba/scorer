@@ -4,15 +4,20 @@ Automated, manual, and mixed labeling modes are considered.
 
 ## Core architecture
 The main (automated scoring) part of this project features a three-stage pipeline designed to maximize accuracy even with limited labeled data:
-1.  **SimCLR pretraining**: Unsupervised contrastive learning on large volumes of unlabeled ECoG/EMG data to learn general physiological features
-2.  **SupCon pretraining**: Supervised contrastive learning (using labeled data) to refine embeddings for class discriminability
-3.  **Sequence training (Bi-GRU)**: A temporal model that takes frozen CNN embeddings across 10-window sequences to capture sleep stage transitions and context
+1.  **SimCLR pretraining**: Unsupervised contrastive learning on large volumes of unlabeled, distorted (augmented) ECoG/EMG data to learn general physiological features
+2.  **SupCon training**: Supervised contrastive learning (using labeled data) to refine embeddings for class discriminability
+- 2.5: **Adversarial training**: Aligns embeddings extracted from two datasets while keeping features that allow sleep classification
+3.  **Random Forest classification**: Clasifies embeddings into sleep states taking neighboring windows into account. Heuristics can be added later
+
+*An older option that did not work on OOD data was training a Bi-GRU sequence model, which used CNN embeddings across 10-window sequences to capture sleep stage transitions and context. This resulted in very high accuracy, but poor performance in unseen datasets. It could still be used if there is sufficient labeled training data from the same setup*
 
 This model relies on a single cortical channel. 
 
 ## Other features
-- **GUI**: PyQt5-based interface for manual labeling, featuring mouse-drag annotation, macro (10-min) and micro (4+ s) views
-- **Data loading**: `BufferedSleepDataset` handles big datasets by chunking data into RAM, while `SequenceSleepDataset` manages temporal windows
+- **GUI**: PyQt5-based interface for manual labeling, featuring mouse-drag annotation, multi-scorer comparison views, macro (10-min) and micro (4+ s) scales, and time-of-day synchronization.
+- **Inter-rater comparison**: Tools to calculate Cohen's Kappa, confusion matrices, and accuracy between different scorers (human vs. human or human vs. model).
+- **Sleep stats**: Automatic generation of sleep architecture reports, including bout analysis, hourly percentages, and microawakening (MA) detection.
+- **Data loading**: Efficient handling of large datasets via chunking (`SleepSignals`) and temporal sequence management (`SequenceSleepDataset`).
 - **OneBox support**: conversion utilities for SpikeGLX/OneBox binary formats into downsampled csvs
 
 ## Repo structure
@@ -23,12 +28,14 @@ scorer/
 │   ├── loaders.py          # Buffered and Sequence dataset implementations
 │   ├── preprocessing.py    # Ephys signal filtering and resampling
 │   ├── storage.py          # Unified IO for tensors, pickles, and metadata
-│   ├── onebox_utils.py     # SpikeGLX binary conversion tools
-│   └── ML_utils.py         # Headless preprocessing for model training
+│   ├── onebox_utils.py     # SpikeGLX binary conversion and quality reporting
+│   └── ML_utils.py         # Headless preprocessing and EDF conversion utilities
+│   └── report.py           # Sleep statistics, inter-rater metrics, and MA labeling
 ├── gui/
-│   ├── labeling_widgets.py # Main interactive labeling interface
+│   ├── labeling_widgets.py # Main manual labeling interface
 │   ├── plots.py            # Matplotlib backends for GUI
 │   └── settings_widgets.py # Metadata and project config
+│   └── autoscoring_widgets.py # Model execution interface
 ├── models/
 │   ├── sleep_cnn.py        # SCDSSleepCNN (single channel, dual-stream CNN)
 │   ├── sequence_model.py   # ContextAwareSleepScorer (Bi-GRU + Focal Loss)
@@ -48,6 +55,7 @@ project_folder/
 ├── raw/                # Downsampled .csv files
 ├── processed/          # Windowed .pt tensors (X_chunk, y_chunk)
 ├── scores/             # .pkl files containing manual/auto annotations
+├── metadata           # .json file for session-specific parameters
 └── quality_plots/      # QC reports for signal integrity
 ```
 

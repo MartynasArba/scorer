@@ -38,6 +38,12 @@ def batch_augment(x: torch.Tensor, sample_rate = 250.) -> torch.Tensor:
     scales = torch.exp(rand_exponents * math.log(10.0)) #exp scale
     x = x * ((1 - apply_scale) + apply_scale * scales)
     
+    # 50% chance to apply baseline shift (dynamically replicates offset)
+    apply_dc = (torch.rand(bsz, 1, 1, device=device) < 0.5).float()
+    # uniform random shift between -0.8 and 0.8 per channel
+    dc_shifts = (torch.rand(bsz, n_channels, 1, device=device) * 1.4) - 0.7
+    x = x + (apply_dc * dc_shifts)
+    
     #frequency mask, per-sample (30% chance)
     mask_prob = 0.3
     # choose batch samples that get masked
