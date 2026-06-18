@@ -45,15 +45,15 @@ def run_full_pipeline():
     # --- CONFIGURATION ---
     CONFIG = {
         "paths": {
-            "unlabeled_data": r"C:\Users\marty\Desktop\train_sets\unlabeled",
-            "labeled_data": r"C:\Users\marty\Desktop\train_sets\labeled",
+            "unlabeled_data": r"C:\Users\marty\Desktop\DATA_FINAL\unlabeled-train-local",
+            "labeled_data": r"C:\Users\marty\Desktop\DATA_FINAL\labeled-train-oxford",
             "weights_dir": Path(r"C:\Users\marty\Projects\scorer\scorer\models\weights"),
-            "val_data": r"C:\Users\marty\Desktop\train_sets\val"
+            "val_data": r"C:\Users\marty\Desktop\DATA_FINAL\labeled-val-mlsnet"
         },
         "pretrain": {
             "batch_size": 2048,
-            "simclr_epochs": 100,
-            "supcon_epochs": 100,
+            "simclr_epochs": 200,
+            "supcon_epochs": 200,
             "n_files_buffer": 100,
         },
         "adversarial": {
@@ -195,37 +195,38 @@ def run_full_pipeline():
             
             del labeled_dataset, ood_dataset
 
-        # --- STEP 3: SEQUENCE TRAINING ---
-        logger.info("STAGE 3: Starting Sequence Model Training (GRU)")
+        # # --- STEP 3: SEQUENCE TRAINING ---
+        logger.info("Sequence training is no longer supported, as it breaks down on OOD data")
+        # logger.info("STAGE 3: Starting Sequence Model Training (GRU)")
         
-        seq_dataset = SequenceSleepDataset(
-            data_path=CONFIG["paths"]["labeled_data"],
-            seq_len=CONFIG["sequence"]["seq_len"],
-            normalize= True,
-            stride=1,
-            device=device,
-            merge_nrem=True,
-            augment=True
-        )
+        # seq_dataset = SequenceSleepDataset(
+        #     data_path=CONFIG["paths"]["labeled_data"],
+        #     seq_len=CONFIG["sequence"]["seq_len"],
+        #     normalize= True,
+        #     stride=1,
+        #     device=device,
+        #     merge_nrem=True,
+        #     augment=True
+        # )
         
-        seq_val_dataset = SequenceSleepDataset(
-            data_path=CONFIG["paths"]["val_data"],
-            seq_len=CONFIG["sequence"]["seq_len"],
-            normalize= True,
-            stride=CONFIG["sequence"]["seq_len"],
-            device=device,
-            merge_nrem=True,
-            augment=False
-        )
+        # seq_val_dataset = SequenceSleepDataset(
+        #     data_path=CONFIG["paths"]["val_data"],
+        #     seq_len=CONFIG["sequence"]["seq_len"],
+        #     normalize= True,
+        #     stride=CONFIG["sequence"]["seq_len"],
+        #     device=device,
+        #     merge_nrem=True,
+        #     augment=False
+        # )
 
-        train_sequence_model(
-            seq_dataset, 
-            seq_val_dataset,
-            str(encoder_save_path), 
-            logger=logger, 
-            epochs=CONFIG["sequence"]["epochs"], 
-            batch_size=CONFIG["sequence"]["batch_size"]
-        )
+        # train_sequence_model(
+        #     seq_dataset, 
+        #     seq_val_dataset,
+        #     str(encoder_save_path), 
+        #     logger=logger, 
+        #     epochs=CONFIG["sequence"]["epochs"], 
+        #     batch_size=CONFIG["sequence"]["batch_size"]
+        # )
 
         logger.info("PIPELINE SUCCESS: All stages completed successfully.")
 

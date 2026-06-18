@@ -467,9 +467,41 @@ def MSSV_edf_to_csv(edf_path, hypnogram_path, save_dir = None):
             'emg':emg,
             'sleep_episode':scores
                         }).to_csv(save_name)
+        
+def load_mlsnet_npz(path, device = 'cuda'):
+    #load
+    obj = np.load(path)
+    
+    #handle x
+    x = obj['x'][:, :, 0:2000]     
+    #ecog is 0-2000 of the rec, kill me 
+    #tensro
+    ecog_tensor = torch.tensor(x, dtype=torch.float32, device=device).view(7, -1)
+    
+    print(f"resampingh to 250Hz ")
+    ecog_tensor = resample(ecog_tensor, 500, 250)
+    print(ecog_tensor.size())
+    print('filter ti,me')
+    ecog_tensor = bandpass_filter(ecog_tensor, sr=250, freqs=(0.5, 49.0), device=device)
+    #chop back up
+    x_processed = ecog_tensor.reshape(-1, 1, 1000)
+    print(f'after all this x size: {x_processed.size()}')    
+    y_tensor = torch.tensor(obj['y'].reshape(-1), dtype=torch.long, device=device)
 
+    return x_processed, y_tensor
+    
 if __name__ == "__main__":
-    print("uncomment an util to use via running the script")
+    # print("uncomment an util to use via running the script")
+    path = Path(r"C:\Users\marty\Desktop\DATA_FINAL\labeled-val-mlsnet\sleepnet_fea10_xy.npz")
+    x_tensor, y_tensor = load_mlsnet_npz(path)
+    #try to get a more normal mapping, here 0 is NREM, 1 is REM, 2 is W, changing to W - 1, NREM - 2, REM - 4
+    y_tensor[y_tensor == 1] = 4
+    y_tensor[y_tensor == 2] = 1
+    y_tensor[y_tensor == 0] = 2
+    
+    #save to file
+    torch.save(x_tensor, path.parent / 'converted' / 'X.pt')
+    torch.save(y_tensor, path.parent / 'converted' / 'y.pt')
     
     # import pandas as pd
 

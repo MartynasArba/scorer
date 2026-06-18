@@ -307,8 +307,8 @@ def train_context_rf_model(train_data_path, val_data_path, encoder_weights_path,
         stride=seq_len,
         device=device,
         normalize=True,
-        merge_nrem=True,
-        exclude_labels=(0,),
+        merge_nrem=False,
+        exclude_labels=(),
         augment=False
     )
 
@@ -360,8 +360,8 @@ def validate_context_rf_sequence(val_data_path, encoder_weights_path, rf_model_p
         stride=seq_len,
         device=device,
         normalize=True,
-        merge_nrem=True, 
-        exclude_labels=(0,),
+        merge_nrem=False,
+        exclude_labels=(),
         augment=False
     )
 
@@ -389,6 +389,7 @@ def validate_context_rf_sequence(val_data_path, encoder_weights_path, rf_model_p
     #heuristics basically shouldn;t be needed anymore
 
     val_acc = accuracy_score(y_true, val_preds)
+    print(np.unique(y_true, return_counts= True), np.unique(val_preds, return_counts= True))
     print(f"\nContext-Aware Sequence Validation Accuracy: {val_acc:.4f}")
     print("\nClassification Report (Context + Smoothed):")
     print(classification_report(y_true, val_preds, target_names=['Wake', 'NREM', 'REM']))
@@ -402,63 +403,24 @@ def validate_context_rf_sequence(val_data_path, encoder_weights_path, rf_model_p
 
 if __name__ == "__main__":
     # config
-    BASE_PATH = r"C:\Users\marty\Desktop\train_sets"
+    BASE_PATH = r"C:\Users\marty\Desktop\DATA_FINAL"
     WEIGHTS_DIR = r"C:\Users\marty\Projects\scorer\scorer\models\weights"
     #context model
-    # train_context_rf_model(
-    #     train_data_path = os.path.join(BASE_PATH, "labeled"),
-    #     val_data_path = os.path.join(BASE_PATH, "val"),
-    #     encoder_weights_path = os.path.join(WEIGHTS_DIR, "adversarial_adjusted_encoder20260430.pt"),
-    #     model_save_path = os.path.join(WEIGHTS_DIR, "rf_context_sleep_classifier.pkl"),
-    #     meta = {'ecog_channels': '0', 'emg_channels': '1', 'sample_rate': '250', 'seq_len': 100}
-    # )
-
-    # print('final val')
-    # print('P')
-    # validate_context_rf_sequence(
-    #     val_data_path = os.path.join(BASE_PATH, "final_test/P"), 
-    #     encoder_weights_path = os.path.join(WEIGHTS_DIR, "adversarial_adjusted_encoder20260430.pt"), 
-    #     rf_model_path = os.path.join(WEIGHTS_DIR, "rf_context_sleep_classifier.pkl"), 
-    #     meta = {'ecog_channels': '0', 'emg_channels': '1', 'sample_rate': '250', 'seq_len': 100}, 
-    #     smooth_sigma = 1.0 
-    # )
+    train_context_rf_model(
+        train_data_path = os.path.join(BASE_PATH, "labeled-train-oxford"),
+        val_data_path = os.path.join(BASE_PATH, "labeled-val-mlsnet"),
+        encoder_weights_path = os.path.join(WEIGHTS_DIR, "adversarial_adjusted_encoder20260615.pt"),
+        model_save_path = os.path.join(WEIGHTS_DIR, "rf_context_sleep_classifier_new_adjusted.pkl"),
+        meta = {'ecog_channels': '0', 'emg_channels': '1', 'sample_rate': '250', 'seq_len': 100}
+    )
     
-    # print('F')
-    # validate_context_rf_sequence(
-    #     val_data_path = os.path.join(BASE_PATH, "final_test/F"), 
-    #     encoder_weights_path = os.path.join(WEIGHTS_DIR, "adversarial_adjusted_encoder20260430.pt"), 
-    #     rf_model_path = os.path.join(WEIGHTS_DIR, "rf_context_sleep_classifier.pkl"), 
-    #     meta = {'ecog_channels': '0', 'emg_channels': '1', 'sample_rate': '250', 'seq_len': 100}, 
-    #     smooth_sigma = 1.0 
-    # )
-
-
-
-    # print('P val')
-    # validate_context_rf_sequence(
-    #     val_data_path = os.path.join(BASE_PATH, "val/P"), 
-    #     encoder_weights_path = os.path.join(WEIGHTS_DIR, "adversarial_adjusted_encoder20260430.pt"), 
-    #     rf_model_path = os.path.join(WEIGHTS_DIR, "rf_context_sleep_classifier.pkl"), 
-    #     meta = {'ecog_channels': '0', 'emg_channels': '1', 'sample_rate': '250', 'seq_len': 100}, 
-    #     smooth_sigma = 1.0 
-    # )
-    
-    # print('F val')
-    # validate_context_rf_sequence(
-    #     val_data_path = os.path.join(BASE_PATH, "val/F"), 
-    #     encoder_weights_path = os.path.join(WEIGHTS_DIR, "adversarial_adjusted_encoder20260430.pt"), 
-    #     rf_model_path = os.path.join(WEIGHTS_DIR, "rf_context_sleep_classifier.pkl"), 
-    #     meta = {'ecog_channels': '0', 'emg_channels': '1', 'sample_rate': '250', 'seq_len': 100}, 
-    #     smooth_sigma = 1.0 
-    # )
-    # print('BI val')   
-    # validate_context_rf_sequence(
-    #     val_data_path = os.path.join(BASE_PATH, "val/BI"), 
-    #     encoder_weights_path = os.path.join(WEIGHTS_DIR, "adversarial_adjusted_encoder20260430.pt"), 
-    #     rf_model_path = os.path.join(WEIGHTS_DIR, "rf_context_sleep_classifier.pkl"), 
-    #     meta = {'ecog_channels': '0', 'emg_channels': '1', 'sample_rate': '250', 'seq_len': 100}, 
-    #     smooth_sigma = 1.0 
-    # )
+    validate_context_rf_sequence(
+        val_data_path = os.path.join(BASE_PATH, "labeled-val-mlsnet"), 
+        encoder_weights_path = os.path.join(WEIGHTS_DIR, "adversarial_adjusted_encoder20260615.pt"), 
+        rf_model_path = os.path.join(WEIGHTS_DIR, "rf_context_sleep_classifier_new_adjusted.pkl"), 
+        meta = {'ecog_channels': '0', 'emg_channels': '1', 'sample_rate': '250', 'seq_len': 100}, 
+        smooth_sigma = 1.0 
+    )
     
     #original model
     # train_rf_model(

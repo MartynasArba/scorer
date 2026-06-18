@@ -898,8 +898,8 @@ class SequenceSleepDataset(Dataset):
                  transform=None, 
                  augment=False, 
                  normalize=False,
-                 exclude_labels=(0,), 
-                 merge_nrem=True):
+                 exclude_labels=(), 
+                 merge_nrem=False):
         
         self.seq_len = seq_len
         self.stride = stride
@@ -908,12 +908,13 @@ class SequenceSleepDataset(Dataset):
         self.normalize = normalize
         self.augment = augment
         self.exclude_labels = exclude_labels
+        self.merge_nrem = merge_nrem
         
         self.all_samples = []
         self.all_labels = []
         self.valid_starts = [] # starting idxs of valid sequences
         
-        self._load_sequences(data_path, merge_nrem)
+        self._load_sequences(data_path)
         
         # concat everything into tensors for RAM access
         if self.all_samples:
@@ -947,7 +948,7 @@ class SequenceSleepDataset(Dataset):
             
         return x_seq, y_seq
 
-    def _load_sequences(self, data_path, merge_nrem):
+    def _load_sequences(self, data_path):
         # find all mouse/recording dirs
         # glob to match the structure: data_path/mouse_folder/X_chunk*.pt
         dir_paths = sorted(glob.glob(os.path.join(data_path, '*')))
@@ -975,13 +976,17 @@ class SequenceSleepDataset(Dataset):
             rec_x_chunks = [chunk[:min_channels, :, :] for chunk in rec_x_chunks]
         
             # concat specific rec along the sample dimension (dim=1)
-            X_rec = torch.cat(rec_x_chunks, dim=1) 
-            Y_rec = torch.cat(rec_y_chunks, dim=1)
+            if len(rec_x_chunks) > 1: 
+                X_rec = torch.cat(rec_x_chunks, dim=1) 
+                Y_rec = torch.cat(rec_y_chunks, dim=1)
+            else:
+                X_rec = rec_x_chunks[0]
+                Y_rec = rec_y_chunks[0]
             
-            # permute X to [samples, channels, win_len]
-            if X_rec.ndim == 3:
+            # permute X to [samples, channels, win_len], but keep safeguard if this was already done in data
+            if X_rec.ndim == 3 and X_rec.size(1) > X_rec.size(0):
                 X_rec = X_rec.permute(1, 0, 2)
-                
+            
             if self.normalize:
                 X_rec = robust_normalize(X_rec)
                 
@@ -990,13 +995,24 @@ class SequenceSleepDataset(Dataset):
                 Y_rec = Y_rec.permute(1, 0, 2) #permute to the same format
                 Y_rec = Y_rec[..., 0].squeeze(1)
                 
+            print(f'DEBUG: shapes X: {X_rec.size()}, y: {Y_rec.size()}')
+        
             num_samples = X_rec.shape[0]
+            print(f"\n[DEBUG {Path(d).name}] Samples: {num_samples} | Required seq_len: {self.seq_len}")
+            print(f"[DEBUG {Path(d).name}] Raw unique labels BEFORE merge: {torch.unique(Y_rec).tolist()}")
             
-            # Add to our global memory lists
+            if self.merge_nrem == True:
+                Y_rec[Y_rec == 3] = 2 # merge IS into NREM,
+                Y_rec[Y_rec == 0] = 1 # 0 into W
+                
+            print(f"[DEBUG {Path(d).name}] Unique labels AFTER merge: {torch.unique(Y_rec).tolist()}")
+            
+            # add to global memory lists
             self.all_samples.append(X_rec)
             self.all_labels.append(Y_rec)
             
             # calculate valid sequences for rec (to prevent crossover)
+            dropped_count = 0
             for i in range(0, num_samples - self.seq_len + 1, self.stride):
                 seq_labels = Y_rec[i : i + self.seq_len]
                 
@@ -1005,16 +1021,15 @@ class SequenceSleepDataset(Dataset):
                 for ex in self.exclude_labels:
                     if (seq_labels == ex).any():
                         contains_excluded = True
+                        dropped_count += 1
                         break
                         
                 if not contains_excluded:
                     # map valid sequence back to the global flattened tensor index
                     self.valid_starts.append(global_offset + i)
             
-            if merge_nrem:
-                Y_rec[Y_rec == 3] = 2 # merge IS into NREM,
-                Y_rec[Y_rec == 0] = 1 # 0 into W
-            
+            total_windows = len(range(0, num_samples - self.seq_len + 1, self.stride))
+            print(f"[DEBUG {Path(d).name}] Dropped {dropped_count} out of {total_windows} windows due to exclude_labels={self.exclude_labels}")
             # move the pointer forward by the size of rec
             global_offset += num_samples
 
@@ -1048,7 +1063,7 @@ class SequenceSleepDataset(Dataset):
         unique_labels = torch.unique(self.all_labels).cpu().tolist()
         mapping = {old_label: new_id for new_id, old_label in enumerate(unique_labels)}
         
-        print(f"Remapping sequence labels for PyTorch: {mapping}")
+        print(f"remapping sequence labels: {mapping}")
         
         new_labels = torch.empty_like(self.all_labels)
         for old, new_id in mapping.items():
