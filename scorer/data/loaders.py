@@ -685,7 +685,8 @@ class BufferedSleepDataset(IterableDataset):
                 # load the full file
                 tensor = torch.load(x_path, map_location = 'cpu').float()
                 if tensor.ndim == 3:
-                    tensor = tensor.permute(1, 0, 2)
+                    if tensor.shape[0] < tensor.shape[1]:
+                        tensor = tensor.permute(1, 0, 2)
                     
                 # dynamically select channels from metadata
                 ecog_idx = [int(i) for i in self.params.get('ecog_channels', '0').split(',')]
@@ -756,7 +757,7 @@ class BufferedSleepDataset(IterableDataset):
             folder_y = sorted(glob.glob(search_pattern_y), key=natural_sort_key)
             
             # sanity check
-            assert len(folder_x) == len(folder_y), f"CRITICAL MISMATCH in {folder}: found {len(folder_x)} X files but {len(folder_y)} y files."
+            assert len(folder_x) == len(folder_y), f"MISMATCH in {folder}: found {len(folder_x)} X files but {len(folder_y)} y files."
             
             if len(folder_x) == 0:
                 print(f"Warning: No .pt files found in {folder}")
@@ -792,10 +793,16 @@ class BufferedSleepDataset(IterableDataset):
             
             if y.ndim == 3:
                 y = y.permute(1, 0, 2) 
-            if y.ndim == 3 and y.size(1) == 1:
-                y = y[..., 0].squeeze(1) 
-            else:
-                raise RuntimeError(f"Unexpected label shape in {y_path}: {y.shape}")
+                if y.size(1) == 1:
+                    y = y[..., 0].squeeze(1) 
+                else:
+                    raise RuntimeError(f"Unexpected 3D label shape in {y_path}: {y.shape}")
+            elif y.ndim == 2:
+                y = y.squeeze()
+            
+            if y.ndim != 1:
+                raise RuntimeError(f"unexpected labels after loading and checking dims, in {y_path} got {y.shape}")
+            
                 
             n_samples = y.shape[0]
             labels_list.append(y)

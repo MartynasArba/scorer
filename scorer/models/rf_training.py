@@ -406,18 +406,18 @@ if __name__ == "__main__":
     BASE_PATH = r"C:\Users\marty\Desktop\DATA_FINAL"
     WEIGHTS_DIR = r"C:\Users\marty\Projects\scorer\scorer\models\weights"
     #context model
-    train_context_rf_model(
-        train_data_path = os.path.join(BASE_PATH, "labeled-train-oxford"),
-        val_data_path = os.path.join(BASE_PATH, "labeled-val-mlsnet"),
-        encoder_weights_path = os.path.join(WEIGHTS_DIR, "adversarial_adjusted_encoder20260615.pt"),
-        model_save_path = os.path.join(WEIGHTS_DIR, "rf_context_sleep_classifier_new_adjusted.pkl"),
-        meta = {'ecog_channels': '0', 'emg_channels': '1', 'sample_rate': '250', 'seq_len': 100}
-    )
+    # train_context_rf_model(
+    #     train_data_path = os.path.join(BASE_PATH, "labeled-train-oxford"),
+    #     val_data_path = os.path.join(BASE_PATH, "labeled-val-mlsnet"),
+    #     encoder_weights_path = os.path.join(WEIGHTS_DIR, "adversarial_adjusted_encoder20260623_105747.pt"),
+    #     model_save_path = os.path.join(WEIGHTS_DIR, "rf_context_sleep_classifier_valadjusted.pkl"),
+    #     meta = {'ecog_channels': '0', 'emg_channels': '1', 'sample_rate': '250', 'seq_len': 100}
+    # )
     
     validate_context_rf_sequence(
         val_data_path = os.path.join(BASE_PATH, "labeled-val-mlsnet"), 
-        encoder_weights_path = os.path.join(WEIGHTS_DIR, "adversarial_adjusted_encoder20260615.pt"), 
-        rf_model_path = os.path.join(WEIGHTS_DIR, "rf_context_sleep_classifier_new_adjusted.pkl"), 
+        encoder_weights_path = os.path.join(WEIGHTS_DIR, "adversarial_adjusted_encoder20260623_105747.pt"), 
+        rf_model_path = os.path.join(WEIGHTS_DIR, "rf_context_sleep_classifier_valadjusted.pkl"), 
         meta = {'ecog_channels': '0', 'emg_channels': '1', 'sample_rate': '250', 'seq_len': 100}, 
         smooth_sigma = 1.0 
     )

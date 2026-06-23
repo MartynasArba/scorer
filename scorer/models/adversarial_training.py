@@ -84,25 +84,33 @@ def train_adversarial_domain(model, good_loader, ood_loader, optimizer, logger, 
     return model
 
 if __name__ == "__main__":
+    timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
     
     CONFIG = {
         "paths": {
-            "unlabeled_data": r"C:\Users\marty\Desktop\train_sets\unlabeled",
-            "labeled_data": r"C:\Users\marty\Desktop\train_sets\labeled",
+            "unlabeled_data": r"C:\Users\marty\Desktop\DATA_FINAL\unlabeled-train-local",###labeled-val-mlsnet
+            "labeled_data": r"C:\Users\marty\Desktop\DATA_FINAL\labeled-train-oxford",
             "weights_dir": Path(r"C:\Users\marty\Projects\scorer\scorer\models\weights"),
-            "val_data": r"C:\Users\marty\Desktop\train_sets\val",
-            "encoder_path": r"C:\Users\marty\Projects\scorer\scorer\models\weights\SupCon_final_20260424.pt"
+            "val_data": r"C:\Users\marty\Desktop\DATA_FINAL\labeled-val-mlsnet",
+            "ood_data": r"C:\Users\marty\Desktop\DATA_FINAL\labeled-val-mlsnet",
+            "encoder_path": r"C:\Users\marty\Projects\scorer\scorer\models\weights\SupCon_final_20260618.pt"
         },
         "pretrain": {
-            "batch_size": 1024,
-            "simclr_epochs": 50,
-            "supcon_epochs": 50,
+            "batch_size": 2048,
+            "simclr_epochs": 200,
+            "supcon_epochs": 200,
             "n_files_buffer": 100,
+        },
+        "adversarial": {
+            "batch_size": 1024,
+            "epochs": 10,
+            "n_files_buffer": 100,
+            "win_len": 1000,
         },
         "sequence": {
             "batch_size": 128,
             "epochs": 20,
-            "seq_len": 10,
+            "seq_len": 20,
         },
         "metadata": {
             'ecog_channels': '0', 
@@ -128,7 +136,7 @@ if __name__ == "__main__":
         )
     
     ood_dataset = BufferedSleepDataset(
-            data_path=CONFIG["paths"]["unlabeled_data"],
+            data_path=CONFIG["paths"]["ood_data"],
             n_files_to_pick=None,
             buffer_size=CONFIG["pretrain"]["n_files_buffer"],
             metadata=CONFIG["metadata"],
@@ -162,7 +170,7 @@ if __name__ == "__main__":
     
     model = train_adversarial_domain(encoder, good_loader, ood_loader, optimizer, logger, epochs = 10)
     
-    torch.save(encoder.state_dict(), CONFIG["paths"]["weights_dir"] / "Aligned_Encoder_20260427.pt")
+    torch.save(encoder.state_dict(), CONFIG["paths"]["weights_dir"] / f"adversarial_adjusted_encoder{timestamp}.pt")
     
     print("adversarial training completed, weights saved")
     

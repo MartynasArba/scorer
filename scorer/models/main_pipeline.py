@@ -45,10 +45,11 @@ def run_full_pipeline():
     # --- CONFIGURATION ---
     CONFIG = {
         "paths": {
-            "unlabeled_data": r"C:\Users\marty\Desktop\DATA_FINAL\unlabeled-train-local",
+            "unlabeled_data": r"C:\Users\marty\Desktop\DATA_FINAL\unlabeled-train-local",###labeled-val-mlsnet
             "labeled_data": r"C:\Users\marty\Desktop\DATA_FINAL\labeled-train-oxford",
             "weights_dir": Path(r"C:\Users\marty\Projects\scorer\scorer\models\weights"),
-            "val_data": r"C:\Users\marty\Desktop\DATA_FINAL\labeled-val-mlsnet"
+            "val_data": r"C:\Users\marty\Desktop\DATA_FINAL\labeled-val-mlsnet",
+            "ood_data": r"C:\Users\marty\Desktop\DATA_FINAL\labeled-val-mlsnet"
         },
         "pretrain": {
             "batch_size": 2048,
@@ -165,7 +166,7 @@ def run_full_pipeline():
                 )
             
             ood_dataset = BufferedSleepDataset(
-                    data_path=CONFIG["paths"]["unlabeled_data"],
+                    data_path=CONFIG["paths"]["ood_data"],
                     n_files_to_pick=None,
                     buffer_size=CONFIG["adversarial"]["n_files_buffer"],
                     metadata=CONFIG["metadata"],

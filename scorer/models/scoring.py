@@ -88,8 +88,8 @@ def score_signal(data_path, state_save_folder, meta, selected_ch = 0, scorer_typ
             all_preds = apply_heuristics(all_preds, mapping = 'gui')
             
     elif scorer_type == 'context_rf':
-        rf_model_path = meta.get('rf_model_path', r"C:\Users\marty\Projects\scorer\scorer\models\weights\rf_context_sleep_classifier.pkl")
-        encoder_weights_path = meta.get('weights_path', r"C:\Users\marty\Projects\scorer\scorer\models\weights\adversarial_adjusted_encoder20260430.pt")
+        rf_model_path = meta.get('rf_model_path', r"C:\Users\marty\Projects\scorer\scorer\models\weights\rf_context_sleep_classifier_new_adjusted.pkl")
+        encoder_weights_path = meta.get('weights_path', r"C:\Users\marty\Projects\scorer\scorer\models\weights\adversarial_adjusted_encoder20260615.pt")
         
         if not os.path.exists(rf_model_path):
             print(f"RF context model not found at {rf_model_path}")
@@ -428,12 +428,30 @@ def apply_heuristics_lite(states: np.ndarray, mapping: str = '3_class') -> np.nd
 
     return smoothed
 
+def score_multiple_signals(meta_df_path):
+    import pandas as pd
+    meta_df = pd.read_csv(meta_df_path)
+    
+    print(meta_df)
+    
+    # score_signal(data_path, 
+    #              state_save_folder, 
+    #              meta = {}, 
+    #              selected_ch = 0, 
+    #              scorer_type = 'context_rf', 
+    #              apply_corrections = True, 
+    #              return_confidence = False)
+
+
 if __name__ == "__main__":
+    meta_df_path = r"C:\Users\marty\Projects\2026analysis\data\meta_paths.csv"
+    score_multiple_signals(meta_df_path)
+    
     # path = r"C:\Users\marty\Desktop\train_sets\unlabeled\windowed_2026032514575020251207-1_g0_t0.obx0.obx_box3"
-    path = r"C:\Users\marty\Desktop\train_sets\final_test\F\windowed_pilot_ch0"
-    score_signal(path, path, meta = {}, scorer_type = 'context_rf', apply_corrections = True, return_confidence = False)
+    # path = r"C:\Users\marty\Desktop\train_sets\final_test\F\windowed_pilot_ch0"
+    # score_signal(path, path, meta = {}, scorer_type = 'context_rf', apply_corrections = True, return_confidence = False)
     
-    
+
     # labeled_train_path = r"C:\Users\marty\Desktop\train_sets\final_test\F\windowed_pilot_ch0"
     # ood_inference_path = r"C:\Users\marty\Desktop\train_sets\unlabeled\windowed_2026032514575020251207-1_g0_t0.obx0.obx_box3"
     # weights = r"C:\Users\marty\Projects\scorer\scorer\models\weights\adversarial_adjusted_encoder20260430.pt"
