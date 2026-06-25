@@ -88,8 +88,8 @@ def score_signal(data_path, state_save_folder, meta, selected_ch = 0, scorer_typ
             all_preds = apply_heuristics(all_preds, mapping = 'gui')
             
     elif scorer_type == 'context_rf':
-        rf_model_path = meta.get('rf_model_path', r"C:\Users\marty\Projects\scorer\scorer\models\weights\rf_context_sleep_classifier_new_adjusted.pkl")
-        encoder_weights_path = meta.get('weights_path', r"C:\Users\marty\Projects\scorer\scorer\models\weights\adversarial_adjusted_encoder20260615.pt")
+        rf_model_path = meta.get('rf_model_path', r"C:\Users\marty\Projects\scorer\scorer\models\weights\rf_context_sleep_classifier_fullpretrain_oxfordRF.pkl")#_new_adjusted
+        encoder_weights_path = meta.get('weights_path', r"C:\Users\marty\Projects\scorer\scorer\models\weights\adversarial_adjusted_encoder20260430.pt")
         
         if not os.path.exists(rf_model_path):
             print(f"RF context model not found at {rf_model_path}")
@@ -430,18 +430,50 @@ def apply_heuristics_lite(states: np.ndarray, mapping: str = '3_class') -> np.nd
 
 def score_multiple_signals(meta_df_path):
     import pandas as pd
+    import tqdm
+    import glob
+    from sklearn.metrics import cohen_kappa_score
     meta_df = pd.read_csv(meta_df_path)
-    
-    print(meta_df)
-    
-    # score_signal(data_path, 
-    #              state_save_folder, 
-    #              meta = {}, 
-    #              selected_ch = 0, 
-    #              scorer_type = 'context_rf', 
-    #              apply_corrections = True, 
-    #              return_confidence = False)
-
+    print(f'scoringf {len(meta_df)} files')
+    kappas = []
+    state_save_folder = R"C:\Users\marty\Desktop\NEW_STATES"
+    for i, row in tqdm.tqdm(meta_df.iterrows()):
+        new_path = state_save_folder + '/_' +os.path.basename(row['proj_dir']) + '_context_rf' + '_states.pkl'
+        if os.path.isfile(new_path):
+            print('not overwriting, skipping...')
+            continue
+        # 
+        data_path = max(glob.glob(os.path.join(row['proj_dir'], 'processed', '*')), key = lambda d: d[-44:-22])
+        print(f'loading data from {data_path};')
+       
+        if row['channel_selected'].lower() == 'f':
+            selected_ch = 0 
+        elif row['channel_selected'].lower() == 'p':
+            selected_ch = 1
+        else:
+            print(f'error when parsing selected channel! got value {row['channel_selected'].lower()}') 
+            continue
+        print(f'got param {row['channel_selected']}, so selected channel {selected_ch}') 
+        score_signal(data_path, 
+                    state_save_folder, 
+                    meta = {'filename': os.path.basename(row['proj_dir'])}, 
+                    selected_ch = selected_ch, 
+                    scorer_type = 'context_rf', 
+                    apply_corrections = False, 
+                    return_confidence = False)
+        old_path = row['state_file']
+        
+        if type(old_path) == str:
+            if os.path.isfile(old_path) and os.path.isfile(new_path):
+                with open(old_path, 'rb') as f:
+                    old_states = pickle.load(f)
+                with open(new_path, 'rb') as f:
+                    new_states = pickle.load(f)
+                print(f'kappa: {cohen_kappa_score(old_states, new_states)}')
+                kappas.append(cohen_kappa_score(old_states, new_states))
+    print(f"average cohen's kappa compared to previous scoring: {sum(kappas)/len(kappas)}")
+        
+# def compare_states
 
 if __name__ == "__main__":
     meta_df_path = r"C:\Users\marty\Projects\2026analysis\data\meta_paths.csv"
