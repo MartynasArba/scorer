@@ -473,11 +473,94 @@ def score_multiple_signals(meta_df_path):
                 kappas.append(cohen_kappa_score(old_states, new_states))
     print(f"average cohen's kappa compared to previous scoring: {sum(kappas)/len(kappas)}")
         
-# def compare_states
+def extract_spectral_features(data_path, selected_ch=0, fs=250):
+    """
+    extracts spectral features of one rec based on state
+    """
+    # load data
+    try:
+        dataset = SleepSignals(data_path = data_path, 
+                        score_path = data_path, 
+                        device = 'cuda',
+                        transform = None,
+                        augment = False,
+                        normalize = True,
+                        scale = 1,
+                        spectral_features = None,
+                        metadata = {})
+    except Exception as e:      #should be more specific, but it's not filenotfounderror, but runtimeerror in loaders.py
+        print(f'whoops in scoring when loading data: {e}')
+        return
+    
+    except:
+        return
+    # get continous X as standard
+    
+    X_continuous = dataset.all_samples[:, selected_ch:(selected_ch+1), :].squeeze(1)
+    # print(f'original shape of X: {dataset.all_samples.size()}, squeeze to {X_continuous.size()}')
+    # do welch transform
+    freqs, psd = welch_pytorch_batched(X_continuous.to('cuda'), fs=fs)
+    
+    # mask bands
+    delta_mask = (freqs >= 0.5) & (freqs <= 4)
+    sigma_mask = (freqs >= 10) & (freqs <= 15)
+    theta_mask = (freqs >= 5) & (freqs <= 9)
+    gamma_mask = (freqs >= 30) & (freqs <= 49)
+    total_mask = (freqs >= 0.5) & (freqs <= 49)
+    
+    # sum powers per epoch
+    delta_p = psd[:, delta_mask].sum(dim=1).cpu().numpy()
+    sigma_p = psd[:, sigma_mask].sum(dim=1).cpu().numpy()
+    theta_p = psd[:, theta_mask].sum(dim=1).cpu().numpy()
+    gamma_p = psd[:, gamma_mask].sum(dim=1).cpu().numpy()
+    total_p = psd[:, total_mask].sum(dim=1).cpu().numpy()
+    
+    all_params = np.stack([delta_p, sigma_p, theta_p, gamma_p, total_p])
+    return all_params
+
+def welch_pytorch_batched(epochs_tensor, fs=250, nperseg=250):
+    # stft -> power -> mean power
+    window = torch.hann_window(nperseg, device='cuda')
+    stft_out = torch.stft(epochs_tensor, n_fft=nperseg, hop_length=125, 
+                          win_length=nperseg, window=window, return_complex=True, center=False)
+    psd = (torch.abs(stft_out)**2).mean(dim=-1)
+    freqs = torch.fft.rfftfreq(nperseg, 1/fs).to('cuda')
+    return freqs, psd
+
+def compute_all_spectral_features(meta_df_path):
+    import pandas as pd
+    import glob
+    
+    meta_df = pd.read_csv(meta_df_path)
+    print(f'extracting spectral params for {len(meta_df)} files')
+    save_folder = r"C:\Users\marty\Desktop\SPECTRAL_DATA"
+    for i, row in tqdm.tqdm(meta_df.iterrows()):
+        data_path = max(glob.glob(os.path.join(row['proj_dir'], 'processed', '*')), key = lambda d: d[-44:-22])
+        print(f'loading data from {data_path};')
+       
+        if row['channel_selected'].lower() == 'f':
+            selected_ch = 0 
+        elif row['channel_selected'].lower() == 'p':
+            selected_ch = 1
+        else:
+            print(f'error when parsing selected channel! got value {row['channel_selected'].lower()}') 
+            continue
+        print(f'got param {row['channel_selected']}, so selected channel {selected_ch}') 
+        
+        all_params = extract_spectral_features(
+            data_path = data_path,
+            selected_ch = selected_ch,
+            fs = 250 
+        )
+        save_path = save_folder + '/' + os.path.basename(row['proj_dir']) + '_spectral_features.npz'
+        
+        with open(save_path, 'wb') as f:
+            np.save(f, all_params)
+            del all_params
 
 if __name__ == "__main__":
     meta_df_path = r"C:\Users\marty\Projects\2026analysis\data\meta_paths.csv"
-    score_multiple_signals(meta_df_path)
+    compute_all_spectral_features(meta_df_path)
     
     # path = r"C:\Users\marty\Desktop\train_sets\unlabeled\windowed_2026032514575020251207-1_g0_t0.obx0.obx_box3"
     # path = r"C:\Users\marty\Desktop\train_sets\final_test\F\windowed_pilot_ch0"
