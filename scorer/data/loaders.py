@@ -7,6 +7,8 @@ import os
 import re
 import glob
 from scipy.signal import butter, filtfilt
+    
+##this file holds dataset classes used for training and by the GUI
 
 def clean_signal(x, fs=250.0):
     """
