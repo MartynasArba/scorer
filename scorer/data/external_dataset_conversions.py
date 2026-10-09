@@ -78,7 +78,7 @@ def parse_state_tsv(path):
 
 def parse_edf(edf_path, overwrite_channels = []):
     """ used to convert one .edf file to X-tensor, emg is ignored"""
-    signals, signal_headers, header = highlevel.read_edf(edf_path)
+    signals, signal_headers, header = highlevel.read_edf(str(edf_path))
     channels = [(i, sig['label']) for i, sig in enumerate(signal_headers)]
     eeg_chs = [ch for ch in channels if ("EEG" in ch[1] or "eeg" in ch[1])]
     if len(overwrite_channels) != 0:    #if channels are supplied, overwrite
@@ -133,8 +133,10 @@ def load_mssv_rec(dir_path, **kwargs):
     
     #can contain multiple runs
     paths = parse_mssv_paths(dir_path)    
-    assert len(paths['unknown_paths']) == 0 #should not contain extra files
+    
     assert len(paths['channel_paths']) == 1 #should be one "config"
+    if len(paths['unknown_paths']) != 0:
+        print(f'found {len(paths['unknown_paths'])} unknown files!')
              
     channel_info = parse_channel_tsv(paths['channel_paths'][0])
     #probably don't even need channel info tbh
@@ -164,11 +166,15 @@ def hyp_to_tensor(hypnogram_path, **kwargs):
     duration = 0
     #extract duration
     with open(hypnogram_path) as f:
-        for line in f:
-            row = line.split('\t')
-            if 'Duration_sec' in row[0]:
-                duration = float(row[1])
+        line = f.readline()        
+        row = line.split('\t')
+        if len(row) != 2:
+            row = [val for val in line.split(' ') if val != '']
+        if 'Duration_sec' in row[0]:
+            duration = float(row[1])   
+            
     assert duration != 0
+    assert isinstance(duration, float)
     
     #init array
     time = np.linspace(0, duration, int(duration/4))
@@ -186,6 +192,8 @@ def hyp_to_tensor(hypnogram_path, **kwargs):
             states[states_str == state] = 2
         elif 'rem' in state.lower():
             states[states_str == state] = 4
+        else:
+            states[states_str == state] = 0
            
     return torch.tensor(states.astype(int), dtype = torch.long, device = device)
 
@@ -215,75 +223,77 @@ def load_oxford_rec(edf_path, hypnogram_path, **kwargs):
     print(y.size())
     
     
+def scan_and_move(initial_dir, dest_dir = '.'):
+    import os
+    #find all .pt files
+    files = [Path(f) for f in glob.glob('*.pt', root_dir = initial_dir, recursive = True)]
+    
+    # for file in files:
+    #     file = Path(file)
+        
+    print(len(files))
+    print(files[:5])
+    #get IDs
+    #move to destination/ID/file.pt
+    # pass
+    #create dest_dir if it doesn't exist
+    
+    
 if __name__ == "__main__":
     #runs all conversion funcs
-    new_sr = 128
-    device = 'cuda'
-    
-    failures = []
-    
-    print('converting mls-net data...')
-    try:
-    #converts mlsnet data
-        mlsnet_path = Path(r"G:\RAW_EXTERNAL_SLEEP_DATASETS\labeled-val-mlsnet\sleepnet_fea10_xy.npz")
-        x_tensor, y_tensor = load_mlsnet_npz(mlsnet_path, new_sr = new_sr, device = device)
-        assert x_tensor.size()[0] == y_tensor.size()[0]
-        #save to file
-        torch.save(x_tensor, mlsnet_path.parent / 'converted' / 'X.pt')
-        torch.save(y_tensor, mlsnet_path.parent / 'converted' / 'y.pt')
-    except:
-        failures.append('mls-net')
-    
-    try:
-        print('convertign mssv data...')
-        paths = glob.glob(r'G:\RAW_EXTERNAL_SLEEP_DATASETS\mssv_128hz\sub-*\eeg')
-        for path in tqdm(paths):
-            mssv_rec_path = Path(path)
-            load_mssv_rec(mssv_rec_path, device = 'cuda', new_sr = 128.)
-    except:
-        failures.append('mssv')
+    # new_sr = 128
+    # device = 'cuda'
 
-    try:
-        print('converting oxford data...')
-        #in opto experiment: scorer TY
-        edf_paths = sorted(glob.glob(r"G:\RAW_EXTERNAL_SLEEP_DATASETS\Oxford\optogenetic_stimulation\optogenetic_stimulation\recordings\*.edf"))
-        hypnogram_paths = sorted(glob.glob(r"G:\RAW_EXTERNAL_SLEEP_DATASETS\Oxford\optogenetic_stimulation\optogenetic_stimulation\annotations\*_TY.hyp"))
-        for edf_path, hyp_path in zip(edf_paths, hypnogram_paths):
-            load_oxford_rec(edf_path, hyp_path, device = device, new_sr = new_sr, channels = ['Signal 0', 'Signal 1'])
-    except:
-        failures.append('oxford-opto')
     
+    # print('converting mls-net data...')
+    # #converts mlsnet data
+    # mlsnet_path = Path(r"G:\RAW_EXTERNAL_SLEEP_DATASETS\labeled-val-mlsnet\sleepnet_fea10_xy.npz")
+    # x_tensor, y_tensor = load_mlsnet_npz(mlsnet_path, new_sr = new_sr, device = device)
+    # assert x_tensor.size()[0] == y_tensor.size()[0]
+    # #save to file
+    # torch.save(x_tensor, mlsnet_path.parent / 'converted' / 'X.pt')
+    # torch.save(y_tensor, mlsnet_path.parent / 'converted' / 'y.pt')
 
-    try:
-            #in pilot experiment: scorer consensus
-        edf_paths = sorted(glob.glob(r"G:\RAW_EXTERNAL_SLEEP_DATASETS\Oxford\pilot\pilot\recordings\*.edf"))
-        hypnogram_paths = sorted(glob.glob(r"G:\RAW_EXTERNAL_SLEEP_DATASETS\Oxford\pilot\pilot\annotations\*_consensus.hyp"))
-        for edf_path, hyp_path in zip(edf_paths, hypnogram_paths):
-            load_oxford_rec(edf_path, hyp_path, device = device, new_sr = new_sr, channels = ['Signal 0', 'Signal 1'])
-    except:
-        failures.append('oxford-pilot')
-        
-    try:
-        #in test experiment: scorer TY
-        edf_paths = sorted(glob.glob(r"G:\RAW_EXTERNAL_SLEEP_DATASETS\Oxford\test\test\recordings\*.edf"))
-        hypnogram_paths = sorted(glob.glob(r"G:\RAW_EXTERNAL_SLEEP_DATASETS\Oxford\test\test\annotations\*_consensus_state_annotation.hyp"))
-        for edf_path, hyp_path in zip(edf_paths, hypnogram_paths):
-            load_oxford_rec(edf_path, hyp_path, device = device, new_sr = new_sr, channels = ['Signal 2', 'Signal 3'])
-    except:
-        failures.append('oxford-test')
-        
-    try:
-                #in opto experiment: scorer TY
-        edf_paths = sorted(glob.glob(r"G:\RAW_EXTERNAL_SLEEP_DATASETS\Oxford\sleep_deprivation\sleep_deprivation\recordings\*.edf"))
-        hypnogram_paths = sorted(glob.glob(r"G:\RAW_EXTERNAL_SLEEP_DATASETS\Oxford\sleep_deprivation\sleep_deprivation\annotations\*_CBD.hyp"))
-        for edf_path, hyp_path in zip(edf_paths, hypnogram_paths):
-            load_oxford_rec(edf_path, hyp_path, device = device, new_sr = new_sr, channels = ['Signal 16', 'Signal 17'])
 
-    except:
-        failures.append('oxford-opto')
-    
-    print('done!')
-    print(f'failed: {failures}')
+    # print('convertign mssv data...')
+    # paths = glob.glob(r'G:\RAW_EXTERNAL_SLEEP_DATASETS\mssv_128hz\sub-*\eeg')
+    # for path in tqdm(paths):
+    #     mssv_rec_path = Path(path)
+    #     load_mssv_rec(mssv_rec_path, device = 'cuda', new_sr = 128.)
 
+    # print('converting oxford data...')
+    # converted_recs = 0
+
+    # #in opto experiment: scorer TY
+    # edf_paths = sorted(glob.glob(r"G:\RAW_EXTERNAL_SLEEP_DATASETS\Oxford\optogenetic_stimulation\optogenetic_stimulation\recordings\*.edf"))
+    # hypnogram_paths = sorted(glob.glob(r"G:\RAW_EXTERNAL_SLEEP_DATASETS\Oxford\optogenetic_stimulation\optogenetic_stimulation\annotations\*_TY.hyp"))
+    # for edf_path, hyp_path in zip(edf_paths, hypnogram_paths):
+    #     load_oxford_rec(Path(edf_path), Path(hyp_path), device = device, new_sr = new_sr, channels = ['Signal 0', 'Signal 1'])
+    #     converted_recs += 1
+
+
+    # #in pilot experiment: scorer consensus
+    # edf_paths = sorted(glob.glob(r"G:\RAW_EXTERNAL_SLEEP_DATASETS\Oxford\pilot\pilot\recordings\*.edf"))
+    # hypnogram_paths = sorted(glob.glob(r"G:\RAW_EXTERNAL_SLEEP_DATASETS\Oxford\pilot\pilot\annotations\*_consensus.hyp"))
+    # for edf_path, hyp_path in zip(edf_paths, hypnogram_paths):
+    #     load_oxford_rec(Path(edf_path), Path(hyp_path), device = device, new_sr = new_sr, channels = ['Signal 0', 'Signal 1'])
+    #     converted_recs += 1
+
+    # #in test experiment: scorer consensus
+    # edf_paths = sorted(glob.glob(r"G:\RAW_EXTERNAL_SLEEP_DATASETS\Oxford\test\test\recordings\*.edf"))
+    # hypnogram_paths = sorted(glob.glob(r"G:\RAW_EXTERNAL_SLEEP_DATASETS\Oxford\test\test\annotations\*_consensus_state_annotation.hyp"))
+    # for edf_path, hyp_path in zip(edf_paths, hypnogram_paths):
+    #     load_oxford_rec(Path(edf_path), Path(hyp_path), device = device, new_sr = new_sr, channels = ['Signal 2', 'Signal 3'])
+    #     converted_recs += 1
+
+    # #in opto experiment: scorer CBD
+    # edf_paths = sorted(glob.glob(r"G:\RAW_EXTERNAL_SLEEP_DATASETS\Oxford\sleep_deprivation\sleep_deprivation\recordings\*.edf"))
+    # hypnogram_paths = sorted(glob.glob(r"G:\RAW_EXTERNAL_SLEEP_DATASETS\Oxford\sleep_deprivation\sleep_deprivation\annotations\*_CBD.hyp"))
+    # for edf_path, hyp_path in zip(edf_paths, hypnogram_paths):
+    #     load_oxford_rec(Path(edf_path), Path(hyp_path), device = device, new_sr = new_sr, channels = ['Signal 16', 'Signal 17'])
+    #     converted_recs += 1
+
+    # print(f'done! converted {converted_recs} recs')
+    scan_and_move(initial_dir = r'G:\RAW_EXTERNAL_SLEEP_DATASETS\Oxford')
 
     #should get size datapoints x channels x 512 (4s @ 128Hz)
