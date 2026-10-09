@@ -249,6 +249,9 @@ class SCDSSleepCNN(nn.Module):
         
         self.num_classes = num_classes
         
+        self.sampling_rate = sampling_rate
+        self.window_size = int(sampling_rate * 4)
+        
         # time series stream
         # increased 1st layer kernel to capture delta better
         self.time_conv = nn.Sequential(

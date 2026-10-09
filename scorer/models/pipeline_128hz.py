@@ -15,6 +15,7 @@ from scorer.models.sequence_training import train_sequence_model
 from scorer.models.sleep_cnn import SCDSSleepCNN
 from scorer.models.contrastive_embedder import SupConSleepCNN
 from scorer.models.adversarial_training import train_adversarial_domain
+from scorer.models.rf_training import train_context_rf_model, validate_context_rf_sequence
 
 def setup_global_logger(save_dir: Path):
     timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -45,22 +46,22 @@ def run_full_pipeline():
     # --- CONFIGURATION ---
     CONFIG = {
         "paths": {
-            "unlabeled_data": r"C:\Users\marty\Desktop\DATA_FINAL\unlabeled-train-local",###labeled-val-mlsnet
-            "labeled_data": r"C:\Users\marty\Desktop\DATA_FINAL\labeled-train-oxford",
+            "unlabeled_data": r"G:\RAW_EXTERNAL_SLEEP_DATASETS\128HZ_CONVERTED\mlsnet",
+            "labeled_data": r"G:\RAW_EXTERNAL_SLEEP_DATASETS\128HZ_CONVERTED\mssv",
             "weights_dir": Path(r"C:\Users\marty\Projects\scorer\scorer\models\weights"),
-            "val_data": r"C:\Users\marty\Desktop\DATA_FINAL\labeled-val-mlsnet",
-            "ood_data": r"C:\Users\marty\Desktop\DATA_FINAL\labeled-val-mlsnet"
+            "val_data": r"G:\RAW_EXTERNAL_SLEEP_DATASETS\128HZ_CONVERTED\oxford_test",  
+            "ood_data": r"G:\RAW_EXTERNAL_SLEEP_DATASETS\128HZ_CONVERTED\oxford_test"  
         },
         "pretrain": {
             "batch_size": 2048,
             "simclr_epochs": 200,
             "supcon_epochs": 200,
-            "n_files_buffer": 100,
+            "n_files_buffer": 10,
         },
         "adversarial": {
             "batch_size": 1024,
             "epochs": 10,
-            "n_files_buffer": 100,
+            "n_files_buffer": 10,
             "win_len": 1000,
         },
         "sequence": {
@@ -71,8 +72,10 @@ def run_full_pipeline():
         "metadata": {
             'ecog_channels': '0', 
             'emg_channels': '1', 
-            'sample_rate': '250', 
-            'ylim': 'standard'
+            'sample_rate': 128, 
+            'ylim': 'standard',
+            'save_suffix': '_128hz',
+            'seq_len':100
         }
     }
 
@@ -85,7 +88,7 @@ def run_full_pipeline():
     
     try:
         # --- STEP 1: SIMCLR PRETRAINING ---
-        logger.info("STAGE 1: Starting Unsupervised SimCLR Pretraining")
+        logger.info("STAGE 1: starting SimCLR training")
         
         unsup_dataset = BufferedSleepDataset(
             data_path=[CONFIG["paths"]["labeled_data"], CONFIG["paths"]["unlabeled_data"]],
@@ -114,14 +117,14 @@ def run_full_pipeline():
             batch_size=CONFIG["pretrain"]["batch_size"]
         )
         
-        simclr_weights_path = CONFIG["paths"]["weights_dir"] / f"SimCLR_weights_{timestamp}.pt"
+        simclr_weights_path = CONFIG["paths"]["weights_dir"] / f"SimCLR_{timestamp}_{CONFIG["metadata"]["save_suffix"]}.pt"
         torch.save(pretrained_cnn.state_dict(), simclr_weights_path)
         logger.info(f"SimCLR stage complete. Weights saved to {simclr_weights_path}")
 
         del unsup_dataset # Clear RAM before next stage
 
         # --- STEP 2: SUPCON PRETRAINING ---
-        logger.info("STAGE 2: Starting Supervised SupCon Pretraining")
+        logger.info("STAGE 2: starting SupCon training")
 
         sup_dataset = BufferedSleepDataset(
             data_path=CONFIG["paths"]["labeled_data"],
@@ -144,7 +147,7 @@ def run_full_pipeline():
             batch_size=CONFIG["pretrain"]["batch_size"]
         )
 
-        encoder_save_path = CONFIG["paths"]["weights_dir"] / f"SupCon_final_{timestamp}.pt"
+        encoder_save_path = CONFIG["paths"]["weights_dir"] / f"SupCon_{timestamp}_{CONFIG["metadata"]["save_suffix"]}.pt"
         torch.save(final_encoder.state_dict(), encoder_save_path)
         logger.info(f"SupCon stage complete. Encoder saved to {encoder_save_path}")
 
@@ -153,7 +156,7 @@ def run_full_pipeline():
         # --- STEP 2.5: OOD ALIGNMENT, optional ---
         if 'adversarial' in CONFIG.keys():
                 
-            print('adversarial training started')
+            print('STAGE 2.5: adversarial training started')
             
             labeled_dataset = BufferedSleepDataset(
                     data_path=CONFIG["paths"]["labeled_data"],
@@ -190,44 +193,29 @@ def run_full_pipeline():
             
             encoder = train_adversarial_domain(encoder, good_loader, ood_loader, adversarial_optimizer, logger, epochs = CONFIG["adversarial"]["epochs"])
             
-            encoder_save_path = CONFIG["paths"]["weights_dir"] / f"adversarial_adjusted_encoder{timestamp}.pt"
+            encoder_save_path = CONFIG["paths"]["weights_dir"] / f"adversarial_adjusted_{timestamp}_{CONFIG["metadata"]["save_suffix"]}.pt"
             torch.save(encoder.state_dict(), encoder_save_path)
             logger.info(f"Adversarial training stage complete. Encoder saved to {encoder_save_path}")
             
             del labeled_dataset, ood_dataset
 
-        # # --- STEP 3: SEQUENCE TRAINING ---
-        logger.info("Sequence training is no longer supported, as it breaks down on OOD data")
-        # logger.info("STAGE 3: Starting Sequence Model Training (GRU)")
-        
-        # seq_dataset = SequenceSleepDataset(
-        #     data_path=CONFIG["paths"]["labeled_data"],
-        #     seq_len=CONFIG["sequence"]["seq_len"],
-        #     normalize= True,
-        #     stride=1,
-        #     device=device,
-        #     merge_nrem=True,
-        #     augment=True
-        # )
-        
-        # seq_val_dataset = SequenceSleepDataset(
-        #     data_path=CONFIG["paths"]["val_data"],
-        #     seq_len=CONFIG["sequence"]["seq_len"],
-        #     normalize= True,
-        #     stride=CONFIG["sequence"]["seq_len"],
-        #     device=device,
-        #     merge_nrem=True,
-        #     augment=False
-        # )
-
-        # train_sequence_model(
-        #     seq_dataset, 
-        #     seq_val_dataset,
-        #     str(encoder_save_path), 
-        #     logger=logger, 
-        #     epochs=CONFIG["sequence"]["epochs"], 
-        #     batch_size=CONFIG["sequence"]["batch_size"]
-        # )
+        # # --- STEP 3: CLASSIFICATION ---
+        #context model
+        train_context_rf_model(
+            train_data_path = CONFIG['paths']['labeled_data'],
+            val_data_path =  CONFIG['paths']['val_data'],
+            encoder_weights_path = CONFIG["paths"]["weights_dir"] / f"adversarial_adjusted_{timestamp}_{CONFIG["metadata"]["save_suffix"]}.pt",
+            model_save_path = CONFIG["paths"]["weights_dir"] / f"rf_context_classifier_{CONFIG["metadata"]["save_suffix"]}.pkl",
+            meta = CONFIG['metadata']
+        )
+               
+        validate_context_rf_sequence(
+            val_data_path = CONFIG['paths']['val_data'],
+            encoder_weights_path = CONFIG["paths"]["weights_dir"] / f"adversarial_adjusted_{timestamp}_{CONFIG["metadata"]["save_suffix"]}.pt",
+            rf_model_path = CONFIG["paths"]["weights_dir"] / f"rf_context_classifier_{CONFIG["metadata"]["save_suffix"]}.pkl",
+            meta = CONFIG['metadata'], 
+            smooth_sigma = 1.0 
+    )
 
         logger.info("PIPELINE SUCCESS: All stages completed successfully.")
 
