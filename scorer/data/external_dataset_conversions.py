@@ -7,6 +7,7 @@ import torch
 from pyedflib import highlevel
 from tqdm import tqdm
 import glob
+import os
 
 # script contains code to read, preprocess and convert data from external datasets into 4-s torch tensors for training
 #if run, does all conversions
@@ -143,7 +144,8 @@ def load_mssv_rec(dir_path, **kwargs):
     
     #then do for rec in recs
     for run in range(len(paths['state_paths'])):
-        states = parse_state_tsv(paths['state_paths'][run])
+        run_path = paths['state_paths'][run]
+        states = parse_state_tsv(run_path)
         #reset states
         states[states == 4] = 0 #reset artifacts
         states[states == 3] = 4 #reset edf
@@ -157,8 +159,12 @@ def load_mssv_rec(dir_path, **kwargs):
         #now can chop and save one by one
         for ch in range(tensor.size(1)):
             X = tensor[:, ch].reshape(-1, 1, int(new_sr*4)) 
-            torch.save(X, dir_path / f'X_ch{ch}_run{run}.pt')
-            torch.save(y, dir_path / f'y_ch{ch}_run{run}.pt')
+            run_path = Path(run_path)
+            if not os.path.isdir(run_path.parent / run_path.stem):
+                os.mkdir(run_path.parent / run_path.stem)
+
+            torch.save(X, run_path.parent / run_path.stem / f'X_ch{ch}_run{run}.pt')
+            torch.save(y,  run_path.parent / run_path.stem / f'y_ch{ch}_run{run}.pt')
             
 def hyp_to_tensor(hypnogram_path, **kwargs):
     """creates state tensor from .hyp file"""
@@ -217,32 +223,37 @@ def load_oxford_rec(edf_path, hypnogram_path, **kwargs):
     tensor = bandpass_filter(tensor, sr=new_sr, freqs=(0.5, 49.0), device=device).transpose(-1, 0) 
     for ch in range(tensor.size(1)):
         X = tensor[:, ch].reshape(-1, 1, int(new_sr*4)) 
-        torch.save(X, edf_path.parent / f'X_ch{ch}.pt')
-        torch.save(y, edf_path.parent / f'y_ch{ch}.pt')
-    print(X.size())
-    print(y.size())
-    
-    
+        if not os.path.isdir(edf_path.parent / edf_path.stem):
+            os.mkdir(edf_path.parent / edf_path.stem)
+        torch.save(X, edf_path.parent / edf_path.stem / f'X_ch{ch}.pt')
+        torch.save(y, edf_path.parent / edf_path.stem / f'y_ch{ch}.pt')
+
 def scan_and_move(initial_dir, dest_dir = '.'):
-    import os
+    
+    dest_dir = Path(dest_dir)
     #find all .pt files
-    files = [Path(f) for f in glob.glob('*.pt', root_dir = initial_dir, recursive = True)]
+    files = [Path(f) for f in Path(initial_dir).rglob('*.pt')]
     
-    # for file in files:
-    #     file = Path(file)
+    for file in files:
+        name_to_save = str(file.name) + '.pt' 
+        id_string = file.parent.stem    #id strings must be unique, could add hash? or could do 
+        save_path = dest_dir / id_string / name_to_save
+        if os.path.exists(save_path):
+            i = 0
+            while os.path.exists(save_path):
+                id_string= str(file.parent.stem) + str(i) 
+                save_path = dest_dir / id_string / name_to_save
+                i += 1
+        elif not os.path.isdir(dest_dir / id_string):
+            os.makedirs(dest_dir / id_string)
+        os.rename(file, save_path)
         
-    print(len(files))
-    print(files[:5])
-    #get IDs
-    #move to destination/ID/file.pt
-    # pass
-    #create dest_dir if it doesn't exist
-    
+    print(f'done, moved {len(files)} files')  
     
 if __name__ == "__main__":
     #runs all conversion funcs
-    # new_sr = 128
-    # device = 'cuda'
+    new_sr = 128
+    device = 'cuda'
 
     
     # print('converting mls-net data...')
@@ -251,8 +262,10 @@ if __name__ == "__main__":
     # x_tensor, y_tensor = load_mlsnet_npz(mlsnet_path, new_sr = new_sr, device = device)
     # assert x_tensor.size()[0] == y_tensor.size()[0]
     # #save to file
-    # torch.save(x_tensor, mlsnet_path.parent / 'converted' / 'X.pt')
-    # torch.save(y_tensor, mlsnet_path.parent / 'converted' / 'y.pt')
+    # if not os.path.isdir(mlsnet_path.parent / mlsnet_path.stem):
+    #     os.mkdir(mlsnet_path.parent / mlsnet_path.stem)
+    # torch.save(x_tensor, mlsnet_path.parent / mlsnet_path.stem / 'X.pt')
+    # torch.save(y_tensor, mlsnet_path.parent / mlsnet_path.stem / 'y.pt')
 
 
     # print('convertign mssv data...')
@@ -294,6 +307,20 @@ if __name__ == "__main__":
     #     converted_recs += 1
 
     # print(f'done! converted {converted_recs} recs')
-    scan_and_move(initial_dir = r'G:\RAW_EXTERNAL_SLEEP_DATASETS\Oxford')
+    dirs_to_move = [r'G:\RAW_EXTERNAL_SLEEP_DATASETS\Oxford\optogenetic_stimulation', 
+                    r'G:\RAW_EXTERNAL_SLEEP_DATASETS\Oxford\pilot', 
+                    r'G:\RAW_EXTERNAL_SLEEP_DATASETS\Oxford\sleep_deprivation', 
+                    r'G:\RAW_EXTERNAL_SLEEP_DATASETS\Oxford\test', 
+                    r'G:\RAW_EXTERNAL_SLEEP_DATASETS\mssv_128hz', 
+                    r'G:\RAW_EXTERNAL_SLEEP_DATASETS\labeled-val-mlsnet']
+    dirs_to_move_to = [r'G:\RAW_EXTERNAL_SLEEP_DATASETS\128HZ_CONVERTED\oxford_opto',
+                       r'G:\RAW_EXTERNAL_SLEEP_DATASETS\128HZ_CONVERTED\oxford_pilot',
+                       r'G:\RAW_EXTERNAL_SLEEP_DATASETS\128HZ_CONVERTED\oxford_deprivation',
+                       r'G:\RAW_EXTERNAL_SLEEP_DATASETS\128HZ_CONVERTED\oxford_test',
+                       r'G:\RAW_EXTERNAL_SLEEP_DATASETS\128HZ_CONVERTED\mssv',
+                       r'G:\RAW_EXTERNAL_SLEEP_DATASETS\128HZ_CONVERTED\mlsnet']
+    
+    for from_dir, to_dir in zip(dirs_to_move, dirs_to_move_to):
+        scan_and_move(initial_dir = from_dir, dest_dir = to_dir)
 
     #should get size datapoints x channels x 512 (4s @ 128Hz)
