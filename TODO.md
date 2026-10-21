@@ -1,7 +1,5 @@
-- Clean up (and implement) dataset format conversion functions
-- Add proper headless support for training and eval
-- Write code to process datasets into a common format
-- Write code for training: downsample to 128 Hz, do 4s windows, do modular train/eval datasets
+- Fix datasets so they have the correct number of channels, then, undo retarded change in loaders (MIGHT CAUSE PROBLEMS LATER etc)
+- Add proper headless support for training and eval // kinda done by pipeline codes, but should export them to a separate folder (or similar)
 - Train on 1, test on 2; do the same again
 - Compare zero-shot performance to other methods
 - Do dataset alignment

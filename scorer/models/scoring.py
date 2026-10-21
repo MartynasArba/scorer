@@ -119,9 +119,9 @@ def score_signal(data_path, state_save_folder, meta, selected_ch = 0, scorer_typ
     print(f'scoring done, states saved as {state_save_path}')
     print(f'found unique states: {np.unique(all_preds, return_counts = True)}')
 
-def init_encoder(weights_path=None, device='cpu', win_len=1000):
+def init_encoder(weights_path=None, device='cpu', win_len=1000, sample_rate = 250):
     """helper for encoder init dummy pass and weight cleaning"""
-    encoder = SCDSSleepCNN(num_classes=3).to(device)
+    encoder = SCDSSleepCNN(num_classes=3, sampling_rate= sample_rate).to(device)
     dummy_input = torch.randn(1, 1, int(win_len)).to(device)
     encoder(dummy_input)
     if weights_path:

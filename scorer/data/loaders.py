@@ -341,13 +341,14 @@ class SleepTraining(Dataset):
         self.all_labels = None
         
         self._load(data_path, n_files_to_pick)
+               
+        self._balance_labels(balance=balance, exclude_labels=exclude_labels, seed=random_state)
         
         if merge_nrem:
             self.all_labels[self.all_labels == 3] = 2
             #also merge 0 and W
             self.all_labels[self.all_labels == 0] = 1
         
-        self._balance_labels(balance=balance, exclude_labels=exclude_labels, seed=random_state)
         self._remap_labels_to_contiguous()
             
         #move to device after loading        
@@ -630,16 +631,17 @@ class BufferedSleepDataset(IterableDataset):
         # load label metadata 
         self._load(data_path, n_files_to_pick)
 
-        if merge_nrem:
-            self.master_labels[self.master_labels == 3] = 2
-            #also merge 0 and W
-            self.master_labels[self.master_labels == 0] = 1
 
         # balance and filter labels to get global 'active_indices'
         if balance != "none" or exclude_labels:
             self._balance_labels(balance, exclude_labels, random_state)
         else:
             self.active_indices = torch.arange(len(self.master_labels))
+            
+        if merge_nrem:
+            self.master_labels[self.master_labels == 3] = 2
+            #also merge 0 and W
+            self.master_labels[self.master_labels == 0] = 1
             
         #always remap labels
         self._remap_labels_to_contiguous()
@@ -929,6 +931,15 @@ class SequenceSleepDataset(Dataset):
         if self.all_samples:
             self.all_samples = torch.cat(self.all_samples, dim=0).to(self.device)
             self.all_labels = torch.cat(self.all_labels, dim=0).to(self.device)
+            
+            if self.exclude_labels: #add here to prevent major whoopsies
+                keep_mask = torch.ones_like(self.all_labels, dtype=torch.bool)
+                for label in self.exclude_labels:
+                    keep_mask &= (self.all_labels != label)
+                
+                self.all_samples = self.all_samples[keep_mask]
+                self.all_labels = self.all_labels[keep_mask]
+            
             self._remap_labels_to_contiguous()
         else:
             raise RuntimeError("No valid sequences found! Check data paths or exclusion rules.")
@@ -980,42 +991,67 @@ class SequenceSleepDataset(Dataset):
             rec_x_chunks = [torch.load(f, map_location='cpu', weights_only=False).float() for f in x_paths]
             rec_y_chunks = [torch.load(f, map_location='cpu', weights_only=False).long() for f in y_paths]
             
-            # now keeping only ephys to save compute, alternatively do:
-            min_channels = min(chunk.size(0) for chunk in rec_x_chunks)
-            rec_x_chunks = [chunk[:min_channels, :, :] for chunk in rec_x_chunks]
-        
-            # concat specific rec along the sample dimension (dim=1)
-            if len(rec_x_chunks) > 1: 
-                X_rec = torch.cat(rec_x_chunks, dim=1) 
-                Y_rec = torch.cat(rec_y_chunks, dim=1)
-            else:
-                X_rec = rec_x_chunks[0]
-                Y_rec = rec_y_chunks[0]
+            # convert X chunks to [samples, channels, win_len]
+            formatted_x_chunks = []
+            for chunk in rec_x_chunks:
+                if chunk.ndim == 3 and chunk.size(0) < chunk.size(1):
+                    chunk = chunk.permute(1, 0, 2)
+                formatted_x_chunks.append(chunk)
+
+            # standardize y chunks to 1D [samples]
+            formatted_y_chunks = []
+            for y_chunk in rec_y_chunks:
+                if y_chunk.ndim == 3:
+                    y_chunk = y_chunk.permute(1, 0, 2)[..., 0].squeeze(1)
+                elif y_chunk.ndim == 2:
+                    y_chunk = y_chunk.squeeze()
+                formatted_y_chunks.append(y_chunk)
             
-            # permute X to [samples, channels, win_len], but keep safeguard if this was already done in data
-            if X_rec.ndim == 3 and X_rec.size(1) > X_rec.size(0):
-                X_rec = X_rec.permute(1, 0, 2)
+            X_rec = torch.cat(formatted_x_chunks, dim=0)
+            Y_rec = torch.cat(formatted_y_chunks, dim=0)
+
+            # force single channel input
+            X_rec = X_rec[:, :1, :]
+            
+            #OLD implementation below:
+            
+            # # now keeping only ephys to save compute, alternatively do:
+            # min_channels = min(chunk.size(0) for chunk in rec_x_chunks)
+            # rec_x_chunks = [chunk[:min_channels, :, :] for chunk in rec_x_chunks]
+        
+            # # concat specific rec along the sample dimension
+            # if len(rec_x_chunks) > 1: 
+            #     X_rec = torch.cat(rec_x_chunks, dim=1) 
+            #     # handle both 1d and multi-d tensors
+            #     if rec_y_chunks[0].ndim == 1:
+            #         Y_rec = torch.cat(rec_y_chunks, dim=0)
+            #     else:
+            #         Y_rec = torch.cat(rec_y_chunks, dim=1)
+            # else:
+            #     X_rec = rec_x_chunks[0]
+            #     Y_rec = rec_y_chunks[0]
+            
+            # # permute X to [samples, channels, win_len], but keep safeguard if this was already done in data
+            # if X_rec.ndim == 3 and X_rec.size(1) > X_rec.size(0):
+            #     X_rec = X_rec.permute(1, 0, 2)
+                
+            # # force 1 channel to ensure uniform dimensions across all recordings - MIGHT CAUSE PROBLEMS LATER, should fix dataset instead
+            # X_rec = X_rec[:, :1, :]
             
             if self.normalize:
                 X_rec = robust_normalize(X_rec)
                 
-            # collapse y to 1D [samples]
-            if Y_rec.ndim == 3:
-                Y_rec = Y_rec.permute(1, 0, 2) #permute to the same format
-                Y_rec = Y_rec[..., 0].squeeze(1)
+            # # collapse y to 1D [samples]
+            # if Y_rec.ndim == 3:
+            #     Y_rec = Y_rec.permute(1, 0, 2) #permute to the same format
+            #     Y_rec = Y_rec[..., 0].squeeze(1)
                 
             print(f'DEBUG: shapes X: {X_rec.size()}, y: {Y_rec.size()}')
         
             num_samples = X_rec.shape[0]
             print(f"\n[DEBUG {Path(d).name}] Samples: {num_samples} | Required seq_len: {self.seq_len}")
-            print(f"[DEBUG {Path(d).name}] Raw unique labels BEFORE merge: {torch.unique(Y_rec).tolist()}")
-            
-            if self.merge_nrem == True:
-                Y_rec[Y_rec == 3] = 2 # merge IS into NREM,
-                Y_rec[Y_rec == 0] = 1 # 0 into W
-                
-            print(f"[DEBUG {Path(d).name}] Unique labels AFTER merge: {torch.unique(Y_rec).tolist()}")
-            
+            print(f"[DEBUG {Path(d).name}] Raw unique labels BEFORE merge and validation: {torch.unique(Y_rec).tolist()}")
+                        
             # add to global memory lists
             self.all_samples.append(X_rec)
             self.all_labels.append(Y_rec)
@@ -1036,6 +1072,12 @@ class SequenceSleepDataset(Dataset):
                 if not contains_excluded:
                     # map valid sequence back to the global flattened tensor index
                     self.valid_starts.append(global_offset + i)
+                    
+            if self.merge_nrem == True: #merge here instead
+                Y_rec[Y_rec == 3] = 2 # merge IS into NREM,
+                Y_rec[Y_rec == 0] = 1 # 0 into W
+                
+            print(f"[DEBUG {Path(d).name}] Unique labels AFTER merge: {torch.unique(Y_rec).tolist()}")
             
             total_windows = len(range(0, num_samples - self.seq_len + 1, self.stride))
             print(f"[DEBUG {Path(d).name}] Dropped {dropped_count} out of {total_windows} windows due to exclude_labels={self.exclude_labels}")

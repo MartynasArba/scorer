@@ -323,7 +323,7 @@ class SCDSSleepCNN(nn.Module):
         )
         
         # Hann window pre-computation for FFT to prevent edge artifacts
-        self.register_buffer('hann_window', torch.hann_window(1000)) 
+        self.register_buffer('hann_window', torch.hann_window(self.window_size)) 
         
     # def _robust_scale(self, x):
     #     # changed from batch scale to window scale 
@@ -335,7 +335,15 @@ class SCDSSleepCNN(nn.Module):
         
     def _freqtransform(self, x):
         """log-power spectrum with Hann window"""
-        x_windowed = x * self.hann_window
+        
+        #fallback
+        if x.shape[-1] != self.hann_window.shape[0]:
+            window = torch.hann_window(x.shape[-1], device=x.device)
+        else:
+            window = self.hann_window
+            
+        x_windowed = x * window
+        
         X = torch.fft.rfft(x_windowed, dim=-1)
         power = X.real.square() + X.imag.square()
         power = power[..., 1:] # Drop DC

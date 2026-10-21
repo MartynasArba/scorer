@@ -22,7 +22,10 @@ def train_rf_model(train_data_path, val_data_path, encoder_weights_path, model_s
     print(f"Using device: {device}")
 
     print("init encoder and loading weights")
-    encoder = init_encoder(encoder_weights_path, device=device, win_len=meta.get('win_len', 1000))
+    encoder = init_encoder(encoder_weights_path, 
+                           device=device, 
+                           win_len=meta.get('win_len', 1000),
+                           sample_rate = meta.get('sample_rate', 250))
 
     # load data
     print("\n loading training data")
@@ -97,7 +100,10 @@ def validate_rf_model(val_data_path, encoder_weights_path, rf_model_path, meta={
     print(f"Validating RF model using device: {device}")
 
     print("init encoder for validation")
-    encoder = init_encoder(encoder_weights_path, device=device, win_len=meta.get('win_len', 1000))
+    encoder = init_encoder(encoder_weights_path, 
+                           device=device, 
+                           win_len=meta.get('win_len', 1000),
+                           sample_rate = meta.get('sample_rate', 250))
 
     # load model
     print(f"Loading RF model from {rf_model_path}...")
@@ -178,7 +184,10 @@ def validate_rf_sequence(val_data_path, encoder_weights_path, rf_model_path, met
     print(f"Validating RF on sequences (sigma={smooth_sigma}) using device: {device}")
 
     # load encoder, load rf
-    encoder = init_encoder(encoder_weights_path, device=device, win_len=meta.get('win_len', 1000))
+    encoder = init_encoder(encoder_weights_path, 
+                           device=device, 
+                           win_len=meta.get('win_len', 1000),
+                           sample_rate = meta.get('sample_rate', 250))
     with open(rf_model_path, 'rb') as f:
         rf = pickle.load(f)
 
@@ -284,7 +293,10 @@ def train_context_rf_model(train_data_path, val_data_path, encoder_weights_path,
     print(f"Using device: {device}")
 
     print("Initializing encoder and loading weights...")
-    encoder = init_encoder(encoder_weights_path, device=device, win_len=meta.get('win_len', 1000))
+    encoder = init_encoder(encoder_weights_path, 
+                           device=device, 
+                           win_len=meta.get('win_len', 1000),
+                           sample_rate = meta.get('sample_rate', 250))
     seq_len = meta.get('seq_len', 100)
     
     # load data
@@ -307,8 +319,8 @@ def train_context_rf_model(train_data_path, val_data_path, encoder_weights_path,
         stride=seq_len,
         device=device,
         normalize=True,
-        merge_nrem=False,
-        exclude_labels=(),
+        merge_nrem=True,
+        exclude_labels=(0,),
         augment=False
     )
 
@@ -349,7 +361,10 @@ def validate_context_rf_sequence(val_data_path, encoder_weights_path, rf_model_p
     device = meta.get('device', 'cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Validating Context RF (sigma={smooth_sigma}) using device: {device}")
 
-    encoder = init_encoder(encoder_weights_path, device=device, win_len=meta.get('win_len', 1000))
+    encoder = init_encoder(encoder_weights_path, 
+                           device=device, 
+                           win_len=meta.get('win_len', 1000),
+                           sample_rate = meta.get('sample_rate', 250))
     with open(rf_model_path, 'rb') as f:
         rf = pickle.load(f)
 
@@ -360,8 +375,8 @@ def validate_context_rf_sequence(val_data_path, encoder_weights_path, rf_model_p
         stride=seq_len,
         device=device,
         normalize=True,
-        merge_nrem=False,
-        exclude_labels=(),
+        merge_nrem=True,
+        exclude_labels=(0,),
         augment=False
     )
 
@@ -403,24 +418,32 @@ def validate_context_rf_sequence(val_data_path, encoder_weights_path, rf_model_p
 
 if __name__ == "__main__":
     # config
-    BASE_PATH = r"C:\Users\marty\Desktop\DATA_FINAL"
+    BASE_PATH = r"G:\RAW_EXTERNAL_SLEEP_DATASETS\128HZ_CONVERTED"
     WEIGHTS_DIR = r"C:\Users\marty\Projects\scorer\scorer\models\weights"
     #context model
     train_context_rf_model(
-        train_data_path = os.path.join(BASE_PATH, "labeled-train-oxford"),
-        val_data_path = os.path.join(BASE_PATH, "labeled-val-mlsnet"),
-        encoder_weights_path = os.path.join(WEIGHTS_DIR, "adversarial_adjusted_encoder20260430.pt"),
-        model_save_path = os.path.join(WEIGHTS_DIR, "rf_context_sleep_classifier_fullpretrain_oxfordRF.pkl"),
-        meta = {'ecog_channels': '0', 'emg_channels': '1', 'sample_rate': '250', 'seq_len': 100}
+        train_data_path = os.path.join(BASE_PATH, "mssv"),
+        val_data_path = os.path.join(BASE_PATH, "oxford_test"),
+        encoder_weights_path = os.path.join(WEIGHTS_DIR, "adversarial_adjusted_20261009__128hz.pt"),
+        model_save_path = os.path.join(WEIGHTS_DIR, "rf_context_classifier_128hz.pkl"),
+        meta = {'ecog_channels': '0', 'emg_channels': '1', 'sample_rate': 128, 'seq_len': 100, 'win_len' : 512}
     )
     
     validate_context_rf_sequence(
-        val_data_path = os.path.join(BASE_PATH, "labeled-val-mlsnet"), 
-        encoder_weights_path = os.path.join(WEIGHTS_DIR, "adversarial_adjusted_encoder20260430.pt"), 
-        rf_model_path = os.path.join(WEIGHTS_DIR, "rf_context_sleep_classifier_fullpretrain_oxfordRF.pkl"), 
-        meta = {'ecog_channels': '0', 'emg_channels': '1', 'sample_rate': '250', 'seq_len': 100}, 
+        val_data_path = os.path.join(BASE_PATH, "oxford_test"), 
+        encoder_weights_path = os.path.join(WEIGHTS_DIR, "adversarial_adjusted_20261009__128hz.pt"), 
+        rf_model_path = os.path.join(WEIGHTS_DIR, "rf_context_classifier_128hz.pkl"), 
+        meta = {'ecog_channels': '0', 'emg_channels': '1', 'sample_rate': 128, 'seq_len': 100, 'win_len' : 512}, 
         smooth_sigma = 1.0 
     )
+    
+        #     "paths": {
+        #     "unlabeled_data": r"G:\RAW_EXTERNAL_SLEEP_DATASETS\128HZ_CONVERTED\mlsnet",
+        #     "labeled_data": r"G:\RAW_EXTERNAL_SLEEP_DATASETS\128HZ_CONVERTED\mssv",
+        #     "weights_dir": Path(r"C:\Users\marty\Projects\scorer\scorer\models\weights"),
+        #     "val_data": r"G:\RAW_EXTERNAL_SLEEP_DATASETS\128HZ_CONVERTED\oxford_test",  
+        #     "ood_data": r"G:\RAW_EXTERNAL_SLEEP_DATASETS\128HZ_CONVERTED\oxford_test"  
+        # },
     
     #original model
     # train_rf_model(

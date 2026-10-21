@@ -16,6 +16,7 @@ from scorer.models.sleep_cnn import SCDSSleepCNN
 from scorer.models.contrastive_embedder import SupConSleepCNN
 from scorer.models.adversarial_training import train_adversarial_domain
 from scorer.models.rf_training import train_context_rf_model, validate_context_rf_sequence
+from scorer.data.external_dataset_conversions import run as run_data_conversions
 
 def setup_global_logger(save_dir: Path):
     timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -56,13 +57,13 @@ def run_full_pipeline():
             "batch_size": 2048,
             "simclr_epochs": 200,
             "supcon_epochs": 200,
-            "n_files_buffer": 10,
+            "n_files_buffer": 50,
         },
         "adversarial": {
             "batch_size": 1024,
             "epochs": 10,
-            "n_files_buffer": 10,
-            "win_len": 1000,
+            "n_files_buffer": 50,
+            "win_len": 512,
         },
         "sequence": {
             "batch_size": 128,
@@ -75,7 +76,8 @@ def run_full_pipeline():
             'sample_rate': 128, 
             'ylim': 'standard',
             'save_suffix': '_128hz',
-            'seq_len':100
+            'seq_len':100,
+            'win_len':512
         }
     }
 
@@ -85,8 +87,12 @@ def run_full_pipeline():
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     timestamp = datetime.datetime.now().strftime('%Y%m%d')
+       
     
     try:
+        logger.info('starting dataset conversions')
+        run_data_conversions()
+            
         # --- STEP 1: SIMCLR PRETRAINING ---
         logger.info("STAGE 1: starting SimCLR training")
         
@@ -100,7 +106,7 @@ def run_full_pipeline():
             device='cpu' # Load chunks to CPU RAM then move to GPU in loop
         )
 
-        base_cnn = SCDSSleepCNN(num_classes=3).to(device)
+        base_cnn = SCDSSleepCNN(num_classes=3, sampling_rate=CONFIG["metadata"]["sample_rate"]).to(device)
         contrastive_model = SupConSleepCNN(base_cnn).to(device)
 
         # Initialize LazyLinear layers before optimizer creation in training functions
@@ -199,7 +205,7 @@ def run_full_pipeline():
             
             del labeled_dataset, ood_dataset
 
-        # # --- STEP 3: CLASSIFICATION ---
+        # --- STEP 3: CLASSIFICATION ---
         #context model
         train_context_rf_model(
             train_data_path = CONFIG['paths']['labeled_data'],
