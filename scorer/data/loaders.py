@@ -910,7 +910,8 @@ class SequenceSleepDataset(Dataset):
                  augment=False, 
                  normalize=False,
                  exclude_labels=(), 
-                 merge_nrem=False):
+                 merge_nrem=False,
+                 single_channel = True):
         
         self.seq_len = seq_len
         self.stride = stride
@@ -920,6 +921,7 @@ class SequenceSleepDataset(Dataset):
         self.augment = augment
         self.exclude_labels = exclude_labels
         self.merge_nrem = merge_nrem
+        self.single_channel = single_channel
         
         self.all_samples = []
         self.all_labels = []
@@ -1011,40 +1013,12 @@ class SequenceSleepDataset(Dataset):
             Y_rec = torch.cat(formatted_y_chunks, dim=0)
 
             # force single channel input
-            X_rec = X_rec[:, :1, :]
+            if self.single_channel:
+                X_rec = X_rec[:, :1, :]
             
-            #OLD implementation below:
-            
-            # # now keeping only ephys to save compute, alternatively do:
-            # min_channels = min(chunk.size(0) for chunk in rec_x_chunks)
-            # rec_x_chunks = [chunk[:min_channels, :, :] for chunk in rec_x_chunks]
-        
-            # # concat specific rec along the sample dimension
-            # if len(rec_x_chunks) > 1: 
-            #     X_rec = torch.cat(rec_x_chunks, dim=1) 
-            #     # handle both 1d and multi-d tensors
-            #     if rec_y_chunks[0].ndim == 1:
-            #         Y_rec = torch.cat(rec_y_chunks, dim=0)
-            #     else:
-            #         Y_rec = torch.cat(rec_y_chunks, dim=1)
-            # else:
-            #     X_rec = rec_x_chunks[0]
-            #     Y_rec = rec_y_chunks[0]
-            
-            # # permute X to [samples, channels, win_len], but keep safeguard if this was already done in data
-            # if X_rec.ndim == 3 and X_rec.size(1) > X_rec.size(0):
-            #     X_rec = X_rec.permute(1, 0, 2)
-                
-            # # force 1 channel to ensure uniform dimensions across all recordings - MIGHT CAUSE PROBLEMS LATER, should fix dataset instead
-            # X_rec = X_rec[:, :1, :]
-            
+
             if self.normalize:
                 X_rec = robust_normalize(X_rec)
-                
-            # # collapse y to 1D [samples]
-            # if Y_rec.ndim == 3:
-            #     Y_rec = Y_rec.permute(1, 0, 2) #permute to the same format
-            #     Y_rec = Y_rec[..., 0].squeeze(1)
                 
             print(f'DEBUG: shapes X: {X_rec.size()}, y: {Y_rec.size()}')
         
@@ -1122,3 +1096,32 @@ class SequenceSleepDataset(Dataset):
             
         self.label_mapping = mapping
         self.all_labels = new_labels
+        
+        
+class ContextEmbeddingDataset(Dataset):
+    """
+    Converts 2D embedding arrays [N, embedding_dim] into context-expanded tensors [N, (2k+1) * embedding_dim].
+    """
+    def __init__(self, embeddings: np.ndarray, labels: np.ndarray = None, context_k: int = 1):
+        self.context_k = context_k
+        N, D = embeddings.shape
+        
+        # pad edges
+        pad_head = np.repeat(embeddings[:1], context_k, axis=0)
+        pad_tail = np.repeat(embeddings[-1:], context_k, axis=0)
+        padded_emb = np.vstack([pad_head, embeddings, pad_tail])
+        
+        #build tensor windows
+        contexts = [padded_emb[i : i + N] for i in range(2 * context_k + 1)]
+        X_context = np.concatenate(contexts, axis=1) # [N, (2k+1)*D]
+        
+        self.X = torch.tensor(X_context, dtype=torch.float32)
+        self.y = torch.tensor(labels, dtype=torch.long) if labels is not None else None
+
+    def __len__(self):
+        return len(self.X)
+
+    def __getitem__(self, idx):
+        if self.y is not None:
+            return self.X[idx], self.y[idx]
+        return self.X[idx]

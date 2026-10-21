@@ -4,6 +4,8 @@ import torch
 from scipy.stats import kurtosis
 import numpy as np
 from sklearn.decomposition import PCA
+from sklearn.metrics import ConfusionMatrixDisplay
+
 from scorer.models.sleep_cnn import SCDSSleepCNN
 
 from scorer.data.loaders import robust_normalize
@@ -189,29 +191,111 @@ def plot_trace(loader):
     plt.xlabel("samples")
     plt.ylabel("amplitude")
     plt.show()
+    
 
-#GENERAL DATA CHECKS
-from scorer.data.loaders import SequenceSleepDataset
-from torch.utils.data import DataLoader
+def plot_classification_results(y_true: np.ndarray, y_pred: np.ndarray, target_names = None, title: str = "model performance"):
+    """
+    Plots a normalized confusion matrix alongside a hypnogram comparison over time.
+    """
+    if target_names is None:
+        target_names = ['Wake', 'NREM', 'REM']
 
-data_path = 'D:/new_val'
-seq_len = 100
-device = 'cuda'
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
 
-dataset = SequenceSleepDataset(
-        data_path=data_path,
-        seq_len=seq_len,
-        stride=seq_len,
-        device=device,
-        normalize=True,
-        merge_nrem=True,
-        exclude_labels=(0,),
-        augment=False
+    # confusion matrix
+    ConfusionMatrixDisplay.from_predictions(
+        y_true, 
+        y_pred, 
+        display_labels=target_names, 
+        cmap='Blues', 
+        normalize='true', 
+        ax=axes[0]
     )
+    axes[0].set_title(f"{title} - Confusion Matrix")
 
-dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
+    # 500 epochs or len data
+    #hypnogram
+    max_epochs = min(500, len(y_true))
+    time_axis = np.arange(max_epochs)
 
-plot_trace(dataset)
+    axes[1].plot(time_axis, y_true[:max_epochs], label='val label', color='black', alpha=0.7, linewidth=1.5)
+    axes[1].plot(time_axis, y_pred[:max_epochs], label='predicted label', color='crimson', linestyle='--', alpha=0.8, linewidth=1.2)
+    axes[1].set_yticks(range(len(target_names)))
+    axes[1].set_yticklabels(target_names)
+    axes[1].set_xlabel("epoch idx")
+    axes[1].set_ylabel("state")
+    axes[1].set_title(f"{title} hypnogram")
+    axes[1].legend(loc='upper right')
+    axes[1].grid(True, linestyle=':', alpha=0.6)
+
+    plt.tight_layout()
+    plt.show()
+    
+def plot_embedding_by_class(embeddings: np.ndarray, labels: np.ndarray, target_names=None, sample_size: int = 1500, title: str = "embedding space"):
+    """
+    Samples embeddings, projects them to 2D via PCA, and plots clusters by label.
+    """
+    if target_names is None:
+        target_names = ['Wake', 'NREM', 'REM']
+
+    # Subsample if dataset is large
+    if len(embeddings) > sample_size:
+        idx = np.random.choice(len(embeddings), size=sample_size, replace=False)
+        embeddings = embeddings[idx]
+        labels = labels[idx]
+
+    reducer = PCA(n_components=2, random_state=42)
+    coords_2d = reducer.fit_transform(embeddings)
+
+
+    plt.figure(figsize=(9, 7))
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c'] # Distinct palette for Wake, NREM, REM
+
+    for class_idx, class_name in enumerate(target_names):
+        mask = (labels == class_idx)
+        plt.scatter(
+            coords_2d[mask, 0], 
+            coords_2d[mask, 1], 
+            c=colors[class_idx % len(colors)], 
+            label=class_name, 
+            alpha=0.6, 
+            edgecolors='none', 
+            s=25
+        )
+
+    plt.title(f"{title} PCA")
+    plt.xlabel(f"PCA 0")
+    plt.ylabel(f"PCA 1")
+    plt.legend(title="state")
+    plt.grid(True, linestyle=':', alpha=0.5)
+    plt.tight_layout()
+    plt.show()
+    
+if __name__ == "__main__":
+    print('not implemented')
+
+# #GENERAL DATA CHECKS
+# from scorer.data.loaders import SequenceSleepDataset
+# from torch.utils.data import DataLoader
+
+# data_path = 'D:/new_val'
+# seq_len = 100
+# device = 'cuda'
+
+# dataset = SequenceSleepDataset(
+#         data_path=data_path,
+#         seq_len=seq_len,
+#         stride=seq_len,
+#         device=device,
+#         normalize=True,
+#         merge_nrem=True,
+#         exclude_labels=(0,),
+#         augment=False
+#     )
+
+# dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
+
+# plot_trace(dataset)
 
 
 

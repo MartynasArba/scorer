@@ -16,6 +16,8 @@ from scorer.models.sleep_cnn import SCDSSleepCNN
 from scorer.models.contrastive_embedder import SupConSleepCNN
 from scorer.models.adversarial_training import train_adversarial_domain
 from scorer.models.rf_training import train_context_rf_model, validate_context_rf_sequence
+from scorer.models.classifier_training import run_training, run_validation
+
 from scorer.data.external_dataset_conversions import run as run_data_conversions
 
 def setup_global_logger(save_dir: Path):
@@ -159,7 +161,6 @@ def run_full_pipeline():
 
         del sup_dataset
         
-        # --- STEP 2.5: OOD ALIGNMENT, optional ---
         if 'adversarial' in CONFIG.keys():
                 
             print('STAGE 2.5: adversarial training started')
@@ -205,23 +206,45 @@ def run_full_pipeline():
             
             del labeled_dataset, ood_dataset
 
-        # --- STEP 3: CLASSIFICATION ---
-        #context model
-        train_context_rf_model(
-            train_data_path = CONFIG['paths']['labeled_data'],
-            val_data_path =  CONFIG['paths']['val_data'],
-            encoder_weights_path = CONFIG["paths"]["weights_dir"] / f"adversarial_adjusted_{timestamp}_{CONFIG["metadata"]["save_suffix"]}.pt",
-            model_save_path = CONFIG["paths"]["weights_dir"] / f"rf_context_classifier_{CONFIG["metadata"]["save_suffix"]}.pkl",
-            meta = CONFIG['metadata']
-        )
+    #     #context model
+    #     train_context_rf_model(
+    #         train_data_path = CONFIG['paths']['labeled_data'],
+    #         val_data_path =  CONFIG['paths']['val_data'],
+    #         encoder_weights_path = CONFIG["paths"]["weights_dir"] / f"adversarial_adjusted_{timestamp}_{CONFIG["metadata"]["save_suffix"]}.pt",
+    #         model_save_path = CONFIG["paths"]["weights_dir"] / f"rf_context_classifier_{CONFIG["metadata"]["save_suffix"]}.pkl",
+    #         meta = CONFIG['metadata']
+    #     )
                
-        validate_context_rf_sequence(
-            val_data_path = CONFIG['paths']['val_data'],
-            encoder_weights_path = CONFIG["paths"]["weights_dir"] / f"adversarial_adjusted_{timestamp}_{CONFIG["metadata"]["save_suffix"]}.pt",
-            rf_model_path = CONFIG["paths"]["weights_dir"] / f"rf_context_classifier_{CONFIG["metadata"]["save_suffix"]}.pkl",
-            meta = CONFIG['metadata'], 
-            smooth_sigma = 1.0 
-    )
+    #     validate_context_rf_sequence(
+    #         val_data_path = CONFIG['paths']['val_data'],
+    #         encoder_weights_path = CONFIG["paths"]["weights_dir"] / f"adversarial_adjusted_{timestamp}_{CONFIG["metadata"]["save_suffix"]}.pt",
+    #         rf_model_path = CONFIG["paths"]["weights_dir"] / f"rf_context_classifier_{CONFIG["metadata"]["save_suffix"]}.pkl",
+    #         meta = CONFIG['metadata'], 
+    #         smooth_sigma = 1.0 
+    # )
+
+        logger.info("Starting classifier training")
+
+        encoder_weights = CONFIG["paths"]["weights_dir"] / f"adversarial_adjusted_{timestamp}_{CONFIG['metadata']['save_suffix']}.pt"
+        nn_weights_save = CONFIG["paths"]["weights_dir"] / f"nn_context_classifier_{CONFIG['metadata']['save_suffix']}.pt"
+
+        run_training(
+            train_data_path=CONFIG['paths']['labeled_data'],
+            val_data_path=CONFIG['paths']['val_data'],
+            encoder_weights_path=encoder_weights,
+            model_save_path=nn_weights_save,
+            meta=CONFIG['metadata'],
+            epochs=25,
+            batch_size=512,
+            lr=1e-3
+        )
+
+        run_validation(
+            val_data_path=CONFIG['paths']['val_data'],
+            encoder_weights_path=encoder_weights,
+            nn_model_path=nn_weights_save,
+            meta=CONFIG['metadata']
+        )
 
         logger.info("PIPELINE SUCCESS: All stages completed successfully.")
 

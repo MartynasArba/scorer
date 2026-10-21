@@ -326,7 +326,7 @@ class SCDSSleepCNN(nn.Module):
         self.register_buffer('hann_window', torch.hann_window(self.window_size)) 
         
     # def _robust_scale(self, x):
-    #     # changed from batch scale to window scale 
+    #     # changed from batch scale to window scale  // NORMALIZING MAKES SENSE PER-BATCH/CHUNK, IN CLEAN DATA, WHEN ALL STATES ARE PRESENT, so not doing it here.
     #     median = torch.quantile(x, q=0.50, dim=-1, keepdim=True)
     #     q75 = torch.quantile(x, q=0.75, dim=-1, keepdim=True)
     #     q25 = torch.quantile(x, q=0.25, dim=-1, keepdim=True)
@@ -336,18 +336,14 @@ class SCDSSleepCNN(nn.Module):
     def _freqtransform(self, x):
         """log-power spectrum with Hann window"""
         
-        #fallback
-        if x.shape[-1] != self.hann_window.shape[0]:
-            window = torch.hann_window(x.shape[-1], device=x.device)
-        else:
-            window = self.hann_window
+        T = x.shape[-1]
+        if not hasattr(self, 'hann_window') or self.hann_window.shape[0] != T or self.hann_window.device != x.device:
+            self.register_buffer('hann_window', torch.hann_window(T, device=x.device), persistent=False)
             
-        x_windowed = x * window
-        
-        X = torch.fft.rfft(x_windowed, dim=-1)
+        x_windowed = x * self.hann_window
+        X = torch.fft.rfft(x_windowed, dim=-1, norm='ortho') # norm='ortho' ensures length invariance
         power = X.real.square() + X.imag.square()
-        power = power[..., 1:] # Drop DC
-        return torch.log1p(power)
+        return torch.log1p(power[..., 1:]) # Drop DC
     
     def forward_domain(self, x, alpha=1.0):
         """used for adversarial training"""
