@@ -142,7 +142,7 @@ class SleepSignals(Dataset):
         label = self.all_labels[idx]
         
         if self.augment:
-            sample = self._augment(sample)
+            sample = self._augment(sample, label)
         if self.transform:
             sample = self.transform(sample)
         return sample, label
@@ -327,7 +327,8 @@ class SleepTraining(Dataset):
                  metadata: dict = {}, 
                  balance: str = "none", # "none" | "undersample" | "oversample" 
                  exclude_labels: tuple = (), 
-                 merge_nrem: bool = False):  
+                 merge_nrem: bool = False,
+                 merge_unknown_into_wake = False):  
         """
         Initializes the dataset
         """
@@ -346,6 +347,8 @@ class SleepTraining(Dataset):
         
         if merge_nrem:
             self.all_labels[self.all_labels == 3] = 2
+            
+        if merge_unknown_into_wake:
             #also merge 0 and W
             self.all_labels[self.all_labels == 0] = 1
         
@@ -373,7 +376,7 @@ class SleepTraining(Dataset):
         label = self.all_labels[idx]
         
         if self.augment:
-            sample = self._augment(sample)
+            sample = self._augment(sample, label)
         if self.transform:
             sample = self.transform(sample)
         
@@ -456,7 +459,7 @@ class SleepTraining(Dataset):
         print(f"Loaded y files, final y shape: {Y.shape}")        
         return
     
-    def _augment(self, x: torch.Tensor) -> torch.Tensor:
+    def _augment(self, x: torch.Tensor, y) -> torch.Tensor:
         """randomly apply time series augmentations - noise, scale, time shift"""
         x = x.clone()
         
@@ -480,6 +483,13 @@ class SleepTraining(Dataset):
             max_shift = int(x.shape[1] * 0.02)  # 2% of sequence length
             shift = random.randint(-max_shift, max_shift)
             x = torch.roll(x, shifts=shift, dims=2 if x.ndim == 3 else 1)
+            
+        try:
+            #wake only augmentation
+            if y == 0 and random.random() < 0.1:
+                x += torch.randn_like(x) * 0.5
+        except:
+            print('wake only augmentation failed')
             
         return x
     
@@ -612,6 +622,7 @@ class BufferedSleepDataset(IterableDataset):
                  balance="none",
                  exclude_labels=(),
                  merge_nrem=False,
+                 merge_unknown_into_wake = False,
                  buffer_size=100,
                  normalize=False): # Replaced cache_size with buffer_size
 
@@ -640,8 +651,10 @@ class BufferedSleepDataset(IterableDataset):
             
         if merge_nrem:
             self.master_labels[self.master_labels == 3] = 2
+        if merge_unknown_into_wake:
             #also merge 0 and W
-            self.master_labels[self.master_labels == 0] = 1
+            self.all_labels[self.all_labels == 0] = 1
+        
             
         #always remap labels
         self._remap_labels_to_contiguous()
@@ -734,7 +747,7 @@ class BufferedSleepDataset(IterableDataset):
                 y = chunk_y_tensor[j]
                 
                 if self.augment:
-                    x = self._augment(x)
+                    x = self._augment(x, y)
                 if self.transform:
                     x = self.transform(x)
                     
@@ -882,7 +895,7 @@ class BufferedSleepDataset(IterableDataset):
         self.master_labels = new.to(self.device)
         print("label remap:", self.label_mapping)
 
-    def _augment(self, x):
+    def _augment(self, x, y):
         x = x.clone()
         if random.random() < 0.7:
             x += torch.randn_like(x) * 0.01
@@ -893,6 +906,14 @@ class BufferedSleepDataset(IterableDataset):
             max_shift = int(x.shape[1] * 0.02)
             shift = random.randint(-max_shift, max_shift)
             x = torch.roll(x, shifts=shift, dims=1)
+            
+        try:
+            #adding big noise to wake sometimes
+            if y == 0 and random.random() < 0.1:
+                x += torch.randn_like(x) * 0.5
+        except:
+            print('wake only augmentation failed')
+            
         return x
 
 class SequenceSleepDataset(Dataset):
@@ -911,6 +932,7 @@ class SequenceSleepDataset(Dataset):
                  normalize=False,
                  exclude_labels=(), 
                  merge_nrem=False,
+                 merge_unknown_into_wake = False,
                  single_channel = True):
         
         self.seq_len = seq_len
@@ -921,6 +943,7 @@ class SequenceSleepDataset(Dataset):
         self.augment = augment
         self.exclude_labels = exclude_labels
         self.merge_nrem = merge_nrem
+        self.merge_unknown_into_wake = merge_unknown_into_wake
         self.single_channel = single_channel
         
         self.all_samples = []
@@ -933,14 +956,14 @@ class SequenceSleepDataset(Dataset):
         if self.all_samples:
             self.all_samples = torch.cat(self.all_samples, dim=0).to(self.device)
             self.all_labels = torch.cat(self.all_labels, dim=0).to(self.device)
-            
-            if self.exclude_labels: #add here to prevent major whoopsies
-                keep_mask = torch.ones_like(self.all_labels, dtype=torch.bool)
-                for label in self.exclude_labels:
-                    keep_mask &= (self.all_labels != label)
+                        
+            # if self.exclude_labels: #add here to prevent major whoopsies
+            #     keep_mask = torch.ones_like(self.all_labels, dtype=torch.bool)
+            #     for label in self.exclude_labels:
+            #         keep_mask &= (self.all_labels != label)
                 
-                self.all_samples = self.all_samples[keep_mask]
-                self.all_labels = self.all_labels[keep_mask]
+            #     self.all_samples = self.all_samples[keep_mask]
+            #     self.all_labels = self.all_labels[keep_mask]
             
             self._remap_labels_to_contiguous()
         else:
@@ -964,7 +987,7 @@ class SequenceSleepDataset(Dataset):
         
         # apply augmentations to the sequence if needed, but augmentations were already done in pretraining, might not need here
         if self.augment:
-            x_seq = self._augment_sequence(x_seq)
+            x_seq = self._augment_sequence(x_seq, y_seq)
         if self.transform:
             x_seq = self.transform(x_seq)
             
@@ -1049,6 +1072,7 @@ class SequenceSleepDataset(Dataset):
                     
             if self.merge_nrem == True: #merge here instead
                 Y_rec[Y_rec == 3] = 2 # merge IS into NREM,
+            if self.merge_unknown_into_wake:
                 Y_rec[Y_rec == 0] = 1 # 0 into W
                 
             print(f"[DEBUG {Path(d).name}] Unique labels AFTER merge: {torch.unique(Y_rec).tolist()}")
@@ -1058,7 +1082,7 @@ class SequenceSleepDataset(Dataset):
             # move the pointer forward by the size of rec
             global_offset += num_samples
 
-    def _augment_sequence(self, x_seq):
+    def _augment_sequence(self, x_seq, y_seq):
         """applies augmentations coherently across the sequence"""
         x_seq = x_seq.clone()
         # random scale applied to whole sequence uniformly
@@ -1068,6 +1092,17 @@ class SequenceSleepDataset(Dataset):
         # random noise per window
         if torch.rand(1).item() < 0.7:
             x_seq += torch.randn_like(x_seq) * 0.01
+        #wake-targetted: try to add big noise to wake
+        try:
+            wake_mask = (y_seq == 0).view(-1, 1, 1) # shape to match sequence // wake is already labeled 0 here
+            if torch.rand(1).item() < 0.1:
+                # generate noise spikes
+                big_noise = torch.randn_like(x_seq) * 0.5 
+                # apply only to wake
+                x_seq = torch.where(wake_mask, x_seq + big_noise, x_seq)    
+        except:
+            print('wake augmentation failed')
+        
         #sequence blanking
         if torch.rand(1).item() < 0.3:
             # Randomly drop a chunk of 1 to 3 continuous windows
@@ -1099,29 +1134,38 @@ class SequenceSleepDataset(Dataset):
         
         
 class ContextEmbeddingDataset(Dataset):
-    """
-    Converts 2D embedding arrays [N, embedding_dim] into context-expanded tensors [N, (2k+1) * embedding_dim].
-    """
-    def __init__(self, embeddings: np.ndarray, labels: np.ndarray = None, context_k: int = 1):
-        self.context_k = context_k
-        N, D = embeddings.shape
-        
-        # pad edges
-        pad_head = np.repeat(embeddings[:1], context_k, axis=0)
-        pad_tail = np.repeat(embeddings[-1:], context_k, axis=0)
-        padded_emb = np.vstack([pad_head, embeddings, pad_tail])
-        
-        #build tensor windows
-        contexts = [padded_emb[i : i + N] for i in range(2 * context_k + 1)]
-        X_context = np.concatenate(contexts, axis=1) # [N, (2k+1)*D]
-        
-        self.X = torch.tensor(X_context, dtype=torch.float32)
-        self.y = torch.tensor(labels, dtype=torch.long) if labels is not None else None
+    """Dataset wrapper that constructs tensors with context [N, (2k+1)*Emb_Dim] on the fly without allocating any additional system memory to prevent OOM crashes"""
+    def __init__(self, embeddings, labels = None, context_k: int = 1):
+            self.context_k = context_k
+            
+            # check if tensor, else make tensor
+            if isinstance(embeddings, torch.Tensor):
+                self.embeddings = embeddings.float()
+            else:
+                self.embeddings = torch.from_numpy(embeddings).float()
+                
+            if labels is not None:
+                if isinstance(labels, torch.Tensor):
+                    self.labels = labels.long()
+                else:
+                    self.labels = torch.from_numpy(labels).long()
+            else:
+                self.labels = None
 
     def __len__(self):
-        return len(self.X)
+        # skip padding to preserve memory, only drop first and last windows from the dataset
+        return len(self.embeddings) - 2 * self.context_k
 
     def __getitem__(self, idx):
-        if self.y is not None:
-            return self.X[idx], self.y[idx]
-        return self.X[idx]
+        # shift idx by context_k to avoid boundary violations
+        center_idx = idx + self.context_k
+        
+        # get window with neighbors
+        window = self.embeddings[center_idx - self.context_k : center_idx + self.context_k + 1]
+
+        x_context = window.flatten()
+        
+        if self.labels is not None:
+            return x_context, self.labels[center_idx]
+        
+        return x_context

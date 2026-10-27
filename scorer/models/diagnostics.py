@@ -183,11 +183,12 @@ def compare_ood(ood_path, good_path):
     
 
 def plot_trace(loader):
-    X_sample, y_sample = loader[100000] # pick a window in the dataset
+    X_sample, y_sample = loader[np.random.randint(0, len(loader))] # pick a random window in the dataset
+    print(X_sample.size(), y_sample.size())
     # plot trace
-    plt.figure(figsize=(10, 3))
-    plt.plot(X_sample[0]) # assuming 0 is EEG
-    plt.title(f"signal check, label: {y_sample}")
+    plt.figure(figsize=(5, 1))
+    plt.plot(X_sample[0].cpu().numpy().flatten()) # taking window 0
+    plt.title(f"signal check, label: {y_sample[0].cpu().numpy()}")
     plt.xlabel("samples")
     plt.ylabel("amplitude")
     plt.show()
@@ -272,6 +273,7 @@ def plot_embedding_by_class(embeddings: np.ndarray, labels: np.ndarray, target_n
     plt.show()
     
 if __name__ == "__main__":
+
     print('not implemented')
 
 # #GENERAL DATA CHECKS

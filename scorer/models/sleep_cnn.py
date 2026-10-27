@@ -297,6 +297,7 @@ class SCDSSleepCNN(nn.Module):
         
         # 62 bins should be left with window 1000
         self.freq_flatten = nn.Sequential(
+            nn.AdaptiveAvgPool1d(16), #enforce 16 bins
             nn.Flatten(),
             nn.LazyLinear(256), # LazyLinear automatically calculates input size
             nn.ReLU()

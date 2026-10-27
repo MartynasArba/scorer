@@ -5,15 +5,49 @@ import torch.optim as optim
 import torch.nn.functional as F
 
 from pathlib import Path
+import tqdm
 import numpy as np
 from torch.utils.data import DataLoader
 from sklearn.metrics import accuracy_score, classification_report, f1_score
 
 from scorer.data.loaders import SequenceSleepDataset, SleepSignals, ContextEmbeddingDataset
 from scorer.models.scoring import init_encoder, extract_embeddings
-from scorer.models.rf_training import extract_sequence_features
 from scorer.models.context_classifiers import ContextResMLP
+from scorer.models.diagnostics import plot_embedding_by_class, plot_trace, plot_classification_results
 
+def extract_sequence_feature_tensors(encoder, dataset, batch_size=64):
+    """
+    helper to handle embedding extraction from SequenceSleepDataset 
+    flattens [Batch, Seq, Chan, Time] into [Batch*Seq, Chan, Time]
+    for encoder. Returns PyTorch tensors natively.
+    """
+    device = next(encoder.parameters()).device
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+    encoder.eval()
+    
+    all_embeddings = []
+    all_labels = []
+    
+    with torch.no_grad():
+        for x, y in tqdm.tqdm(dataloader, desc="Extracting Sequence Embeddings"):
+            # x: [Batch, Seq, Chan, Time]
+            # y: [Batch, Seq]
+            b, s, c, t = x.shape
+            x_flat = x.view(b * s, c, t).to(device)
+            
+            # SCDSSleepCNN is single channel
+            if x_flat.shape[1] > 1:
+                x_flat = x_flat[:, 0:1, :]
+            
+            emb = encoder(x_flat) # [B*S, 512]
+            
+            # keep as tensors, but move to RAM to avoid GPU OOM
+            all_embeddings.append(emb.cpu())
+            # flatten
+            all_labels.append(y.flatten().cpu())
+            
+    # concat tensors along batch
+    return torch.cat(all_embeddings, dim=0), torch.cat(all_labels, dim=0)
 
 def train_context_net(
     train_embeddings: np.ndarray,
@@ -36,15 +70,16 @@ def train_context_net(
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
 
-    input_dim = train_ds.X.shape[1]
+    input_dim = train_ds.embeddings.shape[1] * (2 * context_k + 1)
     num_classes = len(np.unique(train_labels))
 
     model = ContextResMLP(input_dim=input_dim, num_classes=num_classes).to(device)
 
     # weigh classes to account for imbalance
     class_counts = np.bincount(train_labels)
-    class_weights = torch.tensor(1.0 / (class_counts + 1e-6), dtype=torch.float32).to(device)
-    class_weights = class_weights / class_weights.sum()
+    # class_weights = torch.tensor(1.0 / (class_counts + 1e-6), dtype=torch.float32).to(device)
+    # class_weights = class_weights / class_weights.sum()
+    class_weights = torch.tensor(1.0 / np.sqrt(class_counts + 1e-6), dtype=torch.float32).to(device) #less aggressive weigth adjustment
 
     criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.05)
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
@@ -150,15 +185,15 @@ def run_training(train_data_path, val_data_path, encoder_weights_path, model_sav
         seq_len=seq_len,
         stride=seq_len,
         device=device,
-        normalize=False,
+        normalize=True,
         merge_nrem=True,
         exclude_labels=(0,),
         augment=False
     )
 
     print("extracting base embeddings from CNN")
-    X_train_base, y_train = extract_sequence_features(encoder, train_dataset)
-    X_val_base, y_val = extract_sequence_features(encoder, val_dataset)
+    X_train_base, y_train = extract_sequence_feature_tensors(encoder, train_dataset)
+    X_val_base, y_val = extract_sequence_feature_tensors(encoder, val_dataset)
 
     print(f"extracted train shape: {X_train_base.shape} | val shape: {X_val_base.shape}")
 
@@ -168,7 +203,7 @@ def run_training(train_data_path, val_data_path, encoder_weights_path, model_sav
         train_labels=y_train,
         val_embeddings=X_val_base,
         val_labels=y_val,
-        context_k=1, # 1 window past + current + 1 window future = 1536-D
+        context_k=3, # CHANGED, was k=1 initially
         epochs=epochs,
         batch_size=batch_size,
         lr=lr,
@@ -180,7 +215,7 @@ def run_training(train_data_path, val_data_path, encoder_weights_path, model_sav
     print(f"ContextResMLP weights saved to: {model_save_path}")
 
 
-def run_validation(val_data_path, encoder_weights_path, nn_model_path, meta={}):
+def run_validation(val_data_path, encoder_weights_path, nn_model_path, meta={}, extended = True):
     """
     Validates trained ContextResMLP over SequenceSleepDataset sequences.
     """
@@ -202,18 +237,30 @@ def run_validation(val_data_path, encoder_weights_path, nn_model_path, meta={}):
         augment=False
     )
 
-    X_val_base, y_val = extract_sequence_features(encoder, val_dataset)
-
+    X_val_base, y_val = extract_sequence_feature_tensors(encoder, val_dataset)
+    
     # Wrap embeddings into 1536-D context dataset
-    val_ds = ContextEmbeddingDataset(X_val_base, labels=y_val, context_k=1)
+    val_ds = ContextEmbeddingDataset(X_val_base, labels=y_val, context_k=3)
     val_loader = DataLoader(val_ds, batch_size=512, shuffle=False)
 
     num_classes = len(np.unique(y_val))
-    nn_model = ContextResMLP(input_dim=val_ds.X.shape[1], num_classes=num_classes).to(device)
+    
+    input_dim = val_ds.embeddings.shape[1] * (2 * val_ds.context_k + 1)
+    nn_model = ContextResMLP(input_dim=input_dim, num_classes=num_classes).to(device)
     nn_model.load_state_dict(torch.load(nn_model_path, map_location=device))
 
     acc, f1, val_preds, val_probs = validate_context_net(nn_model, val_loader, device=device)
+    
+    if len(y_val) != len(val_preds):
+        y_val = y_val[val_ds.context_k : -val_ds.context_k]
 
     print(f"\nContext NN Validation Accuracy: {acc:.4f} | Macro F1: {f1:.4f}")
     print("\nClassification Report:")
     print(classification_report(y_val, val_preds, target_names=['Wake', 'NREM', 'REM']))
+    
+    if extended:
+        plot_embedding_by_class(embeddings=X_val_base, labels=y_val)
+        for _ in range(10):
+            plot_trace(val_dataset)
+        plot_classification_results(val_preds, y_val)
+

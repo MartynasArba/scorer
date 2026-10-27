@@ -1,11 +1,11 @@
-- Fix datasets so they have the correct number of channels, then, undo retarded change in loaders (MIGHT CAUSE PROBLEMS LATER etc)
-- Add proper headless support for training and eval // kinda done by pipeline codes, but should export them to a separate folder (or similar)
-- Redo my data with chunks that are larger, as I only use one channel. entire recording might fit in RAM now
+- Design good validation suite
 - Train on 1, test on 2; do the same again
-- Compare zero-shot performance to other methods
-- Do dataset alignment
-- Compare again
+- Implement in GUI
+- See if it still works on my data
+- Make dataset alignment modular and optional (where one version should have labeled data, the other skips the step entirely)
+- Compare zero-shot and aligned performance to other methods
 - Clean up repo
 - Write up the process
 - Write up the "product"
+- Coud redo adn retest my data with chunks that are larger, as I only use one channel. entire recording might fit in RAM now
 - Make public

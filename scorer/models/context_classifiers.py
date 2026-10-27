@@ -28,7 +28,7 @@ class ContextResMLP(nn.Module):
     MLP classifier to replace context-random forest
     takes stacked embeddings [t-k, ..., t, ..., t+k] and outputs class logits
     """
-    def __init__(self, input_dim: int = 1536, hidden_dim: int = 512, num_classes: int = 3, num_blocks: int = 2, dropout: float = 0.35):
+    def __init__(self, input_dim: int = 1536, hidden_dim: int = 1024, num_classes: int = 3, num_blocks: int = 2, dropout: float = 0.2):
         super().__init__()
         self.input_proj = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),   #compresses embeddings immediatelly
