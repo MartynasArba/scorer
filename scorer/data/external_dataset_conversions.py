@@ -1,330 +1,304 @@
+"""
+Convert external datasets into 4-s windowed tensors (X [N, 1, win], y [N] raw codes 0/1/2/4).
 
-from scorer.data.preprocessing import bandpass_filter
-from torchaudio.functional import resample
+Fixes vs. the previous version (re-run the conversion, then `prepare --force-prepare`):
+  * Oxford .hyp: epoch starts were np.linspace(0, duration, n) -> spacing duration/(n-1) > 4 s,
+    so labels drifted up to one epoch late by the end of the file. Now start_i = 4 * i.
+  * Oxford .hyp: 'sleep' -> NREM was tested BEFORE 'rem', so a REM label containing the word
+    'sleep' (e.g. "REM sleep", "paradoxical sleep") became NREM. Matching is now ordered
+    NREM-patterns -> REM -> Wake -> generic sleep, and every distinct annotation string is
+    logged with the code it received (check this table once!). An explicit label_map overrides.
+  * MSSV events.tsv: the duration assert indexed a ROW (states[1]) instead of the duration column.
+  * X and y lengths are reconciled (trimmed to the shorter, logged) instead of crashing on
+    reshape or silently misaligning; tensors are saved on the CPU.
+Paths are no longer hard-coded inside functions: edit CONVERSIONS / run(...) arguments.
+"""
+from __future__ import annotations
+
+import glob
+import logging
+import os
+import re
 from pathlib import Path
+
 import numpy as np
 import torch
-from pyedflib import highlevel
-from tqdm import tqdm
-import glob
-import os
 
-# script contains code to read, preprocess and convert data from external datasets into 4-s torch tensors for training
-#if run, does all conversions
+log = logging.getLogger(__name__)
 
-def load_mlsnet_npz(path, **kwargs) -> tuple[torch.Tensor, torch.Tensor]:
+EPOCH_S = 4.0
+
+
+# ---------------------------------------------------------------------------------------------
+# shared helpers
+# ---------------------------------------------------------------------------------------------
+def _window_and_align(signal_1d: torch.Tensor, y: torch.Tensor, win: int, name: str) -> tuple[torch.Tensor, torch.Tensor]:
+    n_x = signal_1d.numel() // win
+    n = min(n_x, int(y.numel()))
+    if n_x != y.numel():
+        log.warning("%s: %d signal windows vs %d labels -> keeping %d", name, n_x, y.numel(), n)
+    return signal_1d[: n * win].reshape(n, 1, win).cpu().contiguous(), y[:n].cpu().long()
+
+
+def _resample_filter(x: torch.Tensor, fs_in: float, fs_out: float, device: str) -> torch.Tensor:
+    """x [C, T] -> resampled + 0.5-49 Hz band-passed [C, T']"""
+    from torchaudio.functional import resample
+
+    from scorer.data.preprocessing import bandpass_filter
+
+    x = resample(x.to(device), int(round(fs_in)), int(round(fs_out)))
+    return bandpass_filter(x, sr=fs_out, freqs=(0.5, 49.0), device=device)
+
+
+# ---------------------------------------------------------------------------------------------
+# MLS-Net (https://doi.org/10.3390/bios14080406)
+# ---------------------------------------------------------------------------------------------
+def load_mlsnet_npz(path, new_sr: float = 128.0, device: str = "cuda", n_rows: int = 7):
     """
-    loads data from mls-net publication, 
-    https://doi.org/10.3390/bios14080406
-    Params:
-    - path, str: path to dataset file, which is .npz for some reason
-    - sr is the new resampling rate
-    - device, str: device for cuda
-    Returns:
-    - x_processed, torch.Tensor: ECoG/EEG signals, SHAPE, CODING
-    - y_processed, torch.Tensor: label tensor, SHAPE, CODING
+    x: obj['x'][:, :, 0:2000] are 4-s ECoG epochs at 500 Hz. The stream is cut into `n_rows`
+    contiguous rows before resampling (as before; the row count's meaning is not documented -
+    check it). Labels 0=NREM, 1=REM, 2=Wake -> raw codes 2, 4, 1.
     """
-    
-    device = kwargs.get('device', 'cuda')
-    new_sr = kwargs.get('new_sr', 128.)
-    
-    try:
-        obj = np.load(path)
-    except:
-        print('failed to load object in load_mlsnet_npz')
-        return None
-    
-    #handle x according to dataset "description"
-    #ecog is 0-2000 of the rec, kill me 
-    x = obj['x'][:, :, 0:2000]     
-    #get raw tensor
-    ecog_tensor = torch.tensor(x, dtype=torch.float32, device=device).view(7, -1)
-    print(f"resamping to {new_sr} and preprocessing")
-    ecog_tensor = resample(ecog_tensor, 500, new_sr)    #initial sr is 500
-    ecog_tensor = bandpass_filter(ecog_tensor, sr=new_sr, freqs=(0.5, 49.0), device=device)
-    #chop back up
-    x_processed = ecog_tensor.reshape(-1, 1, int(new_sr*4))  #should dynamically calculate window size, was 1000 points/4 seconds, now 512
-    
-    print(f'after all this x size: {x_processed.size()}')    
-    
-    #convert y to tensor
-    y_tensor = torch.tensor(obj['y'].reshape(-1), dtype=torch.long, device=device)
-    #changes state mapping from initial insanity (0 is NREM, 1 is REM, 2 is W) to my brand of braindead (W - 1, NREM - 2, REM - 4)
-    y_tensor[y_tensor == 1] = 4
-    y_tensor[y_tensor == 2] = 1
-    y_tensor[y_tensor == 0] = 2
+    obj = np.load(path)
+    x = obj["x"][:, :, 0:2000]
+    log.info("mlsnet x %s, y %s", obj["x"].shape, obj["y"].shape)
+    n_epochs = x.shape[0] * x.shape[1]
+    if (n_epochs * 2000) % n_rows:
+        raise ValueError(f"{n_epochs} epochs x 2000 samples is not divisible into {n_rows} rows")
+    sig = torch.tensor(x, dtype=torch.float32).reshape(n_rows, -1)
+    sig = _resample_filter(sig, 500, new_sr, device).reshape(-1)
+    y_src = torch.tensor(obj["y"].reshape(-1), dtype=torch.long)
+    y = torch.zeros_like(y_src)
+    y[y_src == 0] = 2
+    y[y_src == 1] = 4
+    y[y_src == 2] = 1
+    return _window_and_align(sig, y, int(new_sr * EPOCH_S), str(path))
 
-    return x_processed, y_tensor
 
+# ---------------------------------------------------------------------------------------------
+# MSSV (OpenNeuro ds006366)
+# ---------------------------------------------------------------------------------------------
 def parse_channel_tsv(path) -> dict:
-    """parses tsv file into dict, made for loading mssv recs, returns dict with 'name', 'type', 'units' and lists"""
     with open(path) as f:
-        lines = [line.strip().split('\t') for line in f.readlines()]
-        channel_info = {key:[] for key in lines[0]}
-        for line in lines[1:]:
-            for i in range(len(channel_info.keys())):
-                channel_info[lines[0][i]].append(line[i])  
-    return channel_info
+        lines = [line.rstrip("\n").split("\t") for line in f if line.strip()]
+    header = lines[0]
+    return {key: [row[i] for row in lines[1:]] for i, key in enumerate(header)}
 
-def parse_state_tsv(path):
-    """parses sleep state tsv, returns numpy array, ignores onset and window size (because the dataset is already formatted as 4s, and onset starts from 0s)
-    last state is assumed to be the same even if it's shorter"""
-    
-    states = np.loadtxt(path, skiprows = 1, delimiter = '\t')
-    assert (np.sum(states[1] != 4) < 2) and (len(states[np.nonzero(states[1] != 4)]) < 4)   #assert only last duration is different and it's not more than expected
-    assert (states[0, 0] == 0)  #assert onset is at 0
-    
-    #if asserts pass, we can safely return stage only
-    return states[:, -1].copy()    
 
-def parse_edf(edf_path, overwrite_channels = []):
-    """ used to convert one .edf file to X-tensor, emg is ignored"""
-    signals, signal_headers, header = highlevel.read_edf(str(edf_path))
-    channels = [(i, sig['label']) for i, sig in enumerate(signal_headers)]
-    eeg_chs = [ch for ch in channels if ("EEG" in ch[1] or "eeg" in ch[1])]
-    if len(overwrite_channels) != 0:    #if channels are supplied, overwrite
-        eeg_chs =  [ch for ch in channels if any(overwrite in ch[1] for overwrite in overwrite_channels)]
-    
-    sample_rate = signal_headers[0].get('sample_frequency') # sample rate should be the same as stated in the metadata, but will be more accurate from here
-    if sample_rate is not None:
-        sample_rate = float(sample_rate)
+def parse_state_tsv(path) -> np.ndarray:
+    """onset, duration, stage. All epochs must be 4 s except possibly the last; onsets start at 0."""
+    states = np.loadtxt(path, skiprows=1, delimiter="\t", ndmin=2)
+    durations = states[:, 1]
+    if np.any(durations[:-1] != EPOCH_S):
+        raise ValueError(f"{path}: {int(np.sum(durations[:-1] != EPOCH_S))} non-4-s epochs before the last one")
+    if states[0, 0] != 0:
+        raise ValueError(f"{path}: first onset is {states[0, 0]}, expected 0")
+    if not np.allclose(states[:, 0], np.arange(len(states)) * EPOCH_S):
+        raise ValueError(f"{path}: onsets are not contiguous 4-s steps")
+    return states[:, -1].copy()
+
+
+def parse_edf(edf_path, channel_names: list[str] | None = None):
+    """returns ([T, C] tensor of EEG channels, sample rate)"""
+    from pyedflib import highlevel
+
+    signals, headers, _ = highlevel.read_edf(str(edf_path))
+    chans = [(i, h["label"]) for i, h in enumerate(headers)]
+    if channel_names:
+        picked = [c for c in chans if any(n in c[1] for n in channel_names)]
     else:
-        raise ValueError('sample rate not found in EDF header!')
-    
-    return_tensors = []
+        picked = [c for c in chans if "eeg" in c[1].lower()]
+    if not picked:
+        raise ValueError(f"{edf_path}: no channels matched {channel_names or 'EEG'}; available {[c[1] for c in chans]}")
+    rates = {float(headers[i]["sample_frequency"]) for i, _ in picked}
+    if len(rates) != 1:
+        raise ValueError(f"{edf_path}: selected channels have different sample rates {rates}")
+    log.info("%s: channels %s @ %s Hz", Path(edf_path).name, [c[1] for c in picked], rates)
+    return torch.stack([torch.tensor(signals[i], dtype=torch.float32) for i, _ in picked], dim=1), rates.pop()
 
-    for eeg_index, eeg_name in eeg_chs:
-        return_tensors.append(torch.Tensor(signals[eeg_index]))
 
-    return torch.stack(return_tensors, axis = 1), sample_rate
-        
-
-def parse_mssv_paths(dir_path):
-    """parses paths, returns a nice dict, made for mssv structure"""
-    filepaths = glob.glob(f'{dir_path}/*')
-    paths = {
-        'eeg_paths': [],
-        'state_paths': [],
-        'channel_paths': [],
-        'unknown_paths': []
-        }
-    for path in filepaths:
-        if '.edf' in path:
-            paths['eeg_paths'].append(path)
-        elif ('.tsv' in path) and ('channels' in path):
-            paths['channel_paths'].append(path)
-        elif ('.tsv' in path) and ('events' in path):
-            paths['state_paths'].append(path)
+def parse_mssv_paths(dir_path) -> dict:
+    paths = {"eeg_paths": [], "state_paths": [], "channel_paths": [], "unknown_paths": []}
+    for p in sorted(glob.glob(f"{dir_path}/*")):
+        if p.endswith(".edf"):
+            paths["eeg_paths"].append(p)
+        elif p.endswith(".tsv") and "channels" in p:
+            paths["channel_paths"].append(p)
+        elif p.endswith(".tsv") and "events" in p:
+            paths["state_paths"].append(p)
         else:
-            paths['unknown_paths'].append(path)
+            paths["unknown_paths"].append(p)
     return paths
 
-def load_mssv_rec(dir_path, **kwargs):
-    """
-    loads mssv dataset dwonloaded from https://openneuro.org/datasets/ds006366/versions/1.0.1/download#
-    
-    Args:
-        path (Path-like): path to dataset folder
-        
-    Returns:
-        None, but saves X in folder
-    """
-    device = kwargs.get('device', 'cuda')
-    new_sr = kwargs.get('new_sr', 128.)
-    
-    #can contain multiple runs
-    paths = parse_mssv_paths(dir_path)    
-    
-    assert len(paths['channel_paths']) == 1 #should be one "config"
-    if len(paths['unknown_paths']) != 0:
-        print(f'found {len(paths['unknown_paths'])} unknown files!')
-             
-    channel_info = parse_channel_tsv(paths['channel_paths'][0])
-    #probably don't even need channel info tbh
-    
-    #then do for rec in recs
-    for run in range(len(paths['state_paths'])):
-        run_path = paths['state_paths'][run]
-        states = parse_state_tsv(run_path)
-        #reset states
-        states[states == 4] = 0 #reset artifacts
-        states[states == 3] = 4 #reset edf
-        y = torch.tensor(states, dtype = torch.long, device = device)
-        
-        #read single edf
-        tensor, sample_rate = parse_edf(paths['eeg_paths'][run])
-        tensor = resample(tensor.transpose(1, 0).to(device = device), sample_rate, new_sr)
-        tensor = bandpass_filter(tensor, sr=new_sr, freqs=(0.5, 49.0), device=device).transpose(-1, 0) 
-        #bandpass filter accepts channel, time so transpose, do, transpose
-        #now can chop and save one by one
-        for ch in range(tensor.size(1)):
-            X = tensor[:, ch].reshape(-1, 1, int(new_sr*4)) 
-            run_path = Path(run_path)
-            if not os.path.isdir(run_path.parent /  f"{run_path.stem}_ch{ch}"):
-                os.mkdir(run_path.parent / f"{run_path.stem}_ch{ch}")
 
-            torch.save(X, run_path.parent / f"{run_path.stem}_ch{ch}" / f'X_ch{ch}_run{run}.pt')
-            torch.save(y,  run_path.parent / f"{run_path.stem}_ch{ch}" / f'y_ch{ch}_run{run}.pt')
-            
-def hyp_to_tensor(hypnogram_path, **kwargs):
-    """creates state tensor from .hyp file"""
-    device = kwargs.get('device', 'cuda')
-    duration = 0
-    #extract duration
+def load_mssv_rec(dir_path, new_sr: float = 128.0, device: str = "cuda") -> None:
+    """MSSV stages: 1 Wake, 2 NREM, 3 REM, 4 artifact -> raw codes 1, 2, 4, 0. Saves one folder per run x channel."""
+    paths = parse_mssv_paths(dir_path)
+    if len(paths["state_paths"]) != len(paths["eeg_paths"]):
+        raise RuntimeError(f"{dir_path}: {len(paths['state_paths'])} event files vs {len(paths['eeg_paths'])} EDFs")
+    if paths["unknown_paths"]:
+        log.info("%s: ignoring %d unknown files", dir_path, len(paths["unknown_paths"]))
+    win = int(new_sr * EPOCH_S)
+    for run, (state_path, edf_path) in enumerate(zip(paths["state_paths"], paths["eeg_paths"])):
+        # make sure events and EDF belong to the same run (sorted lists could otherwise pair wrongly)
+        key = lambda p: re.sub(r"_(events|eeg)\.(tsv|edf)$", "", Path(p).name)  # noqa: E731
+        if key(state_path) != key(edf_path):
+            log.warning("CHECK PAIRING: events %s paired with %s by sort order", Path(state_path).name,
+                        Path(edf_path).name)
+        stages = parse_state_tsv(state_path)
+        raw = np.zeros_like(stages, dtype=np.int64)
+        raw[stages == 1] = 1
+        raw[stages == 2] = 2
+        raw[stages == 3] = 4
+        y = torch.tensor(raw)
+        sig, fs = parse_edf(edf_path)
+        sig = _resample_filter(sig.T, fs, new_sr, device)  # [C, T]
+        state_path = Path(state_path)
+        for ch in range(sig.shape[0]):
+            x_ch, y_ch = _window_and_align(sig[ch], y, win, f"{state_path.name} ch{ch}")
+            out = state_path.parent / f"{state_path.stem}_ch{ch}"
+            out.mkdir(exist_ok=True)
+            torch.save(x_ch, out / f"X_ch{ch}_run{run}.pt")
+            torch.save(y_ch, out / f"y_ch{ch}_run{run}.pt")
+
+
+# ---------------------------------------------------------------------------------------------
+# Oxford (https://doi.org/10.5281/zenodo.10200482)
+# ---------------------------------------------------------------------------------------------
+_NREM_PAT = re.compile(r"\b(n[\s_-]?rem|non[\s_-]?rem|sws|slow[\s_-]?wave)\b")
+_REM_PAT = re.compile(r"\b(rem|paradox\w*)\b")
+_WAKE_PAT = re.compile(r"\b(wake|awake|w)\b")
+
+
+def annotation_to_code(text: str, label_map: dict[str, int] | None = None) -> int:
+    t = text.strip().lower()
+    if label_map and text.strip() in label_map:
+        return int(label_map[text.strip()])
+    if _NREM_PAT.search(t) or t in ("nr", "n"):
+        return 2
+    if _REM_PAT.search(t) or t == "r":
+        return 4
+    if _WAKE_PAT.search(t):
+        return 1
+    if "sleep" in t:  # generic 'sleep' that is not REM
+        return 2
+    return 0
+
+
+def hyp_to_tensor(hypnogram_path, label_map: dict[str, int] | None = None) -> tuple[torch.Tensor, dict]:
+    """returns (raw codes per 4-s epoch, {annotation string: (code, n_segments)})"""
+    duration = None
     with open(hypnogram_path) as f:
-        line = f.readline()        
-        row = line.split('\t')
-        if len(row) != 2:
-            row = [val for val in line.split(' ') if val != '']
-        if 'Duration_sec' in row[0]:
-            duration = float(row[1])   
-            
-    assert duration != 0
-    assert isinstance(duration, float)
-    
-    #init array
-    time = np.linspace(0, duration, int(duration/4))
-    #read and do
-    annotations = np.loadtxt(hypnogram_path, skiprows = 2, usecols= 0, dtype= str, delimiter= '\t')
-    timestamps =  np.loadtxt(hypnogram_path, skiprows = 2, usecols= 1, dtype= float, delimiter= '\t')
-    #state changes are where time == timestamp, searchsorted gives indices in time where timestamps should be
-    indices = np.searchsorted(timestamps, time, side = 'right') - 1
-    states_str = annotations[indices]   #fill indices with annotations
-    states = np.zeros_like(states_str)
-    for state in np.unique(states_str):
-        if 'wake' in state.lower():
-            states[states_str == state] = 1
-        elif (('non' in state.lower()) or ('nrem' in state.lower())) or ('sleep' in state.lower()):
-            states[states_str == state] = 2
-        elif 'rem' in state.lower():
-            states[states_str == state] = 4
-        else:
-            states[states_str == state] = 0
-           
-    return torch.tensor(states.astype(int), dtype = torch.long, device = device)
+        row = [v for v in re.split(r"[\t ]+", f.readline().strip()) if v]
+        if row and "Duration_sec" in row[0]:
+            duration = float(row[1])
+    if not duration:
+        raise ValueError(f"{hypnogram_path}: no Duration_sec header")
+    annotations = np.loadtxt(hypnogram_path, skiprows=2, usecols=0, dtype=str, delimiter="\t", ndmin=1)
+    onsets = np.loadtxt(hypnogram_path, skiprows=2, usecols=1, dtype=float, delimiter="\t", ndmin=1)
+    if np.any(np.diff(onsets) < 0):
+        raise ValueError(f"{hypnogram_path}: onsets are not sorted")
+    n_epochs = int(duration // EPOCH_S)
+    starts = np.arange(n_epochs) * EPOCH_S  # FIX: was np.linspace(0, duration, n) -> drifting epochs
+    seg = np.searchsorted(onsets, starts, side="right") - 1
+    codes_per_segment = np.array([annotation_to_code(a, label_map) for a in annotations])
+    codes = np.where(seg >= 0, codes_per_segment[np.clip(seg, 0, None)], 0)
+    table = {}
+    for a, c in zip(annotations, codes_per_segment):
+        code, n = table.get(str(a), (int(c), 0))
+        table[str(a)] = (code, n + 1)
+    return torch.tensor(codes, dtype=torch.long), table
 
-            
-def load_oxford_rec(edf_path, hypnogram_path, **kwargs):
-    """used to convert Oxford open access .edf files to tensors
-    data available at https://doi.org/10.5281/zenodo.10200482"""
-    
-    device = kwargs.get('device', 'cuda')
-    new_sr = kwargs.get('new_sr', 128.)
-    overwrite_channels = kwargs.get('channels')
-    
-    #handle hypnograms
-    y = hyp_to_tensor(hypnogram_path, device = device)
-    
-    #handle data
-    tensor, sample_rate = parse_edf(edf_path, overwrite_channels = overwrite_channels )
-    print(tensor.size(), sample_rate)
-    tensor = resample(tensor.transpose(1, 0).to(device = device), sample_rate, new_sr)
-    print(tensor.size())
-    tensor = bandpass_filter(tensor, sr=new_sr, freqs=(0.5, 49.0), device=device).transpose(-1, 0) 
-    for ch in range(tensor.size(1)):
-        X = tensor[:, ch].reshape(-1, 1, int(new_sr*4)) 
-        if not os.path.isdir(edf_path.parent / f"{edf_path.stem}_ch{ch}"):
-            os.mkdir(edf_path.parent / f"{edf_path.stem}_ch{ch}")
-        torch.save(X, edf_path.parent / f"{edf_path.stem}_ch{ch}" / f'X_ch{ch}.pt')
-        torch.save(y, edf_path.parent / f"{edf_path.stem}_ch{ch}" / f'y_ch{ch}.pt')
 
-def scan_and_move(initial_dir, dest_dir = '.'):
-    
+def load_oxford_rec(edf_path, hypnogram_path, new_sr: float = 128.0, device: str = "cuda",
+                    channels: list[str] | None = None, label_map: dict[str, int] | None = None) -> dict:
+    edf_path, hypnogram_path = Path(edf_path), Path(hypnogram_path)
+    y, table = hyp_to_tensor(hypnogram_path, label_map)
+    log.info("%s annotation -> code: %s", hypnogram_path.name, table)
+    sig, fs = parse_edf(edf_path, channels)
+    sig = _resample_filter(sig.T, fs, new_sr, device)
+    win = int(new_sr * EPOCH_S)
+    for ch in range(sig.shape[0]):
+        x_ch, y_ch = _window_and_align(sig[ch], y, win, f"{edf_path.name} ch{ch}")
+        out = edf_path.parent / f"{edf_path.stem}_ch{ch}"
+        out.mkdir(exist_ok=True)
+        torch.save(x_ch, out / f"X_ch{ch}.pt")
+        torch.save(y_ch, out / f"y_ch{ch}.pt")
+    return table
+
+
+def _pair_by_stem(edf_paths, hyp_paths) -> list[tuple[str, str]]:
+    """pair EDF and hypnogram files by recording name; falls back to sort order (old behaviour) with a warning"""
+    if len(edf_paths) != len(hyp_paths):
+        raise RuntimeError(f"{len(edf_paths)} EDF files but {len(hyp_paths)} hypnograms")
+    pairs = []
+    for e in edf_paths:
+        match = [h for h in hyp_paths if Path(h).name.startswith(Path(e).stem)]
+        if len(match) != 1:
+            pairs = list(zip(edf_paths, hyp_paths))
+            log.warning("could not pair files by name; using sort order - CHECK: %s",
+                        [(Path(a).name, Path(b).name) for a, b in pairs])
+            return pairs
+        pairs.append((e, match[0]))
+    return pairs
+
+
+def scan_and_move(initial_dir, dest_dir=".") -> None:
     dest_dir = Path(dest_dir)
-    #find all .pt files
-    files = [Path(f) for f in Path(initial_dir).rglob('*.pt')]
-    
+    files = [Path(f) for f in Path(initial_dir).rglob("*.pt")]
     for file in files:
-        name_to_save = str(file.name)
-        id_string = file.parent.stem    #id strings must be unique, could add hash? or could do 
-        save_path = dest_dir / id_string / name_to_save
-        if os.path.exists(save_path):
-            i = 0
-            while os.path.exists(save_path):
-                id_string= str(file.parent.stem) + str(i) 
-                save_path = dest_dir / id_string / name_to_save
-                i += 1
-        elif not os.path.isdir(dest_dir / id_string):
-            os.makedirs(dest_dir / id_string)
-        os.rename(file, save_path)
-        
-    print(f'done, moved {len(files)} files')  
-    
-def run():
-    new_sr = 128
-    device = 'cuda'
-
-    
-    print('converting mls-net data...')
-    #converts mlsnet data
-    mlsnet_path = Path(r"G:\RAW_EXTERNAL_SLEEP_DATASETS\labeled-val-mlsnet\sleepnet_fea10_xy.npz")
-    x_tensor, y_tensor = load_mlsnet_npz(mlsnet_path, new_sr = new_sr, device = device)
-    assert x_tensor.size()[0] == y_tensor.size()[0]
-    #save to file
-    if not os.path.isdir(mlsnet_path.parent / mlsnet_path.stem):
-        os.mkdir(mlsnet_path.parent / mlsnet_path.stem)
-    torch.save(x_tensor, mlsnet_path.parent / mlsnet_path.stem / 'X.pt')
-    torch.save(y_tensor, mlsnet_path.parent / mlsnet_path.stem / 'y.pt')
+        rec_id = file.parent.stem
+        target = dest_dir / rec_id / file.name
+        i = 0
+        while target.exists():
+            target = dest_dir / f"{rec_id}{i}" / file.name
+            i += 1
+        target.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(file, target)
+    log.info("moved %d files from %s to %s", len(files), initial_dir, dest_dir)
 
 
-    print('convertign mssv data...')
-    paths = glob.glob(r'G:\RAW_EXTERNAL_SLEEP_DATASETS\mssv_128hz\sub-*\eeg')
-    for path in tqdm(paths):
-        mssv_rec_path = Path(path)
-        load_mssv_rec(mssv_rec_path, device = 'cuda', new_sr = 128.)
-
-    print('converting oxford data...')
-    converted_recs = 0
-
-    #in opto experiment: scorer TY
-    edf_paths = sorted(glob.glob(r"G:\RAW_EXTERNAL_SLEEP_DATASETS\Oxford\optogenetic_stimulation\optogenetic_stimulation\recordings\*.edf"))
-    hypnogram_paths = sorted(glob.glob(r"G:\RAW_EXTERNAL_SLEEP_DATASETS\Oxford\optogenetic_stimulation\optogenetic_stimulation\annotations\*_TY.hyp"))
-    for edf_path, hyp_path in zip(edf_paths, hypnogram_paths):
-        load_oxford_rec(Path(edf_path), Path(hyp_path), device = device, new_sr = new_sr, channels = ['Signal 0', 'Signal 1'])
-        converted_recs += 1
+# ---------------------------------------------------------------------------------------------
+RAW_ROOT = r"G:\RAW_EXTERNAL_SLEEP_DATASETS"
+OXFORD_SETS = [  # (sub-folder, hypnogram glob suffix, EDF channel names, output name)
+    ("optogenetic_stimulation", "*_TY.hyp", ["Signal 0", "Signal 1"], "oxford_opto"),
+    ("pilot", "*_consensus.hyp", ["Signal 0", "Signal 1"], "oxford_pilot"),
+    ("test", "*_consensus_state_annotation.hyp", ["Signal 2", "Signal 3"], "oxford_test"),
+    ("sleep_deprivation", "*_CBD.hyp", ["Signal 16", "Signal 17"], "oxford_deprivation"),
+]
 
 
-    #in pilot experiment: scorer consensus
-    edf_paths = sorted(glob.glob(r"G:\RAW_EXTERNAL_SLEEP_DATASETS\Oxford\pilot\pilot\recordings\*.edf"))
-    hypnogram_paths = sorted(glob.glob(r"G:\RAW_EXTERNAL_SLEEP_DATASETS\Oxford\pilot\pilot\annotations\*_consensus.hyp"))
-    for edf_path, hyp_path in zip(edf_paths, hypnogram_paths):
-        load_oxford_rec(Path(edf_path), Path(hyp_path), device = device, new_sr = new_sr, channels = ['Signal 0', 'Signal 1'])
-        converted_recs += 1
+def run(raw_root: str = RAW_ROOT, new_sr: float = 128.0, device: str = "cuda", out_name: str = "128HZ_CONVERTED",
+        label_map: dict[str, int] | None = None) -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+    raw_root = Path(raw_root)
+    out_root = raw_root / out_name
 
-    #in test experiment: scorer consensus
-    edf_paths = sorted(glob.glob(r"G:\RAW_EXTERNAL_SLEEP_DATASETS\Oxford\test\test\recordings\*.edf"))
-    hypnogram_paths = sorted(glob.glob(r"G:\RAW_EXTERNAL_SLEEP_DATASETS\Oxford\test\test\annotations\*_consensus_state_annotation.hyp"))
-    for edf_path, hyp_path in zip(edf_paths, hypnogram_paths):
-        load_oxford_rec(Path(edf_path), Path(hyp_path), device = device, new_sr = new_sr, channels = ['Signal 2', 'Signal 3'])
-        converted_recs += 1
+    mls = raw_root / "labeled-val-mlsnet" / "sleepnet_fea10_xy.npz"
+    x, y = load_mlsnet_npz(mls, new_sr, device)
+    (mls.parent / mls.stem).mkdir(exist_ok=True)
+    torch.save(x, mls.parent / mls.stem / "X.pt")
+    torch.save(y, mls.parent / mls.stem / "y.pt")
 
-    #in opto experiment: scorer CBD
-    edf_paths = sorted(glob.glob(r"G:\RAW_EXTERNAL_SLEEP_DATASETS\Oxford\sleep_deprivation\sleep_deprivation\recordings\*.edf"))
-    hypnogram_paths = sorted(glob.glob(r"G:\RAW_EXTERNAL_SLEEP_DATASETS\Oxford\sleep_deprivation\sleep_deprivation\annotations\*_CBD.hyp"))
-    for edf_path, hyp_path in zip(edf_paths, hypnogram_paths):
-        load_oxford_rec(Path(edf_path), Path(hyp_path), device = device, new_sr = new_sr, channels = ['Signal 16', 'Signal 17'])
-        converted_recs += 1
+    for p in sorted(glob.glob(str(raw_root / "mssv_128hz" / "sub-*" / "eeg"))):
+        load_mssv_rec(p, new_sr, device)
 
-    # print(f'done! converted {converted_recs} recs')
-    dirs_to_move = [r'G:\RAW_EXTERNAL_SLEEP_DATASETS\Oxford\optogenetic_stimulation', 
-                    r'G:\RAW_EXTERNAL_SLEEP_DATASETS\Oxford\pilot', 
-                    r'G:\RAW_EXTERNAL_SLEEP_DATASETS\Oxford\sleep_deprivation', 
-                    r'G:\RAW_EXTERNAL_SLEEP_DATASETS\Oxford\test', 
-                    r'G:\RAW_EXTERNAL_SLEEP_DATASETS\mssv_128hz', 
-                    r'G:\RAW_EXTERNAL_SLEEP_DATASETS\labeled-val-mlsnet']
-    dirs_to_move_to = [r'G:\RAW_EXTERNAL_SLEEP_DATASETS\128HZ_CONVERTED\oxford_opto',
-                        r'G:\RAW_EXTERNAL_SLEEP_DATASETS\128HZ_CONVERTED\oxford_pilot',
-                        r'G:\RAW_EXTERNAL_SLEEP_DATASETS\128HZ_CONVERTED\oxford_deprivation',
-                        r'G:\RAW_EXTERNAL_SLEEP_DATASETS\128HZ_CONVERTED\oxford_test',
-                        r'G:\RAW_EXTERNAL_SLEEP_DATASETS\128HZ_CONVERTED\mssv',
-                        r'G:\RAW_EXTERNAL_SLEEP_DATASETS\128HZ_CONVERTED\mlsnet']
-    
-    for from_dir, to_dir in zip(dirs_to_move, dirs_to_move_to):
-        scan_and_move(initial_dir = from_dir, dest_dir = to_dir)
+    all_tables = {}
+    for sub, hyp_glob, chans, _ in OXFORD_SETS:
+        base = raw_root / "Oxford" / sub / sub
+        edfs = sorted(glob.glob(str(base / "recordings" / "*.edf")))
+        hyps = sorted(glob.glob(str(base / "annotations" / hyp_glob)))
+        for edf, hyp in _pair_by_stem(edfs, hyps):
+            for k, v in load_oxford_rec(edf, hyp, new_sr, device, chans, label_map).items():
+                code, n = all_tables.get(k, (v[0], 0))
+                all_tables[k] = (code, n + v[1])
+    log.info("ALL Oxford annotation strings -> raw code (count of segments): %s", all_tables)
 
-    #should get size datapoints x channels x 512 (4s @ 128Hz)
+    moves = [(raw_root / "Oxford" / sub, out_root / name) for sub, _, _, name in OXFORD_SETS]
+    moves += [(raw_root / "mssv_128hz", out_root / "mssv"), (raw_root / "labeled-val-mlsnet", out_root / "mlsnet")]
+    for src, dst in moves:
+        scan_and_move(src, dst)
 
-    
+
 if __name__ == "__main__":
-    #runs all conversion funcs
     run()

@@ -1,0 +1,67 @@
+# 250 Hz pipeline (replaces main_pipeline.py). Same code as the 128 Hz pipeline, different inputs.
+# The old main_pipeline stopped after the adversarial stage ("sequence training is no longer supported");
+# here the heads are available too - disable what you don't need.
+
+[run]
+name = "250hz"
+runs_dir = 'C:\Users\marty\Projects\scorer\runs'
+label_scheme = "3state"
+
+[signal]
+sample_rate = 250
+win_len = 1000
+channels = [0]
+lowpass_hz = 49.0         # identical to the old code at 250 Hz
+clip = 4.0
+
+[cache]
+root = 'C:\Users\marty\Desktop\DATA_FINAL\CACHE_250HZ'
+
+[datasets]
+unlabeled_local = 'C:\Users\marty\Desktop\DATA_FINAL\unlabeled-train-local'
+oxford_train = 'C:\Users\marty\Desktop\DATA_FINAL\labeled-train-oxford'
+mlsnet_val = 'C:\Users\marty\Desktop\DATA_FINAL\labeled-val-mlsnet'
+
+[simclr]
+datasets = ["oxford_train", "unlabeled_local"]
+drop_unlabeled = false    # the local set is unlabeled; old main_pipeline did not exclude label 0 here
+loader_augment = false
+buffer_windows = 50000
+
+[supcon]
+datasets = ["oxford_train"]
+init = "simclr"
+balance = "undersample"
+drop_unlabeled = true
+
+[adversarial]
+source = ["oxford_train"]
+target = ["mlsnet_val"]       # as in main_pipeline.py; WARNING: also the validation set -> not zero-shot
+init = "supcon"
+
+[embed]
+encoder = "auto"
+
+[context_rf]
+train = ["oxford_train"]
+
+[context_mlp]
+train = ["oxford_train"]
+val = ["mlsnet_val"]
+
+[gru]
+enabled = true            # the GRU sequence head, ported (seq_len 20 as in sequence_training.py)
+train = ["oxford_train"]
+val = ["mlsnet_val"]
+seq_len = 20
+lr = 1e-5
+
+[linear_probe]
+enabled = true
+train = ["oxford_train"]
+val = ["mlsnet_val"]
+class_weighting = [1.0, 1.5, 6.0]   # weights used by the old linear_train_eval
+
+[evaluate]
+datasets = ["mlsnet_val"]
+heads = ["context_mlp", "context_rf", "gru", "linear_probe"]

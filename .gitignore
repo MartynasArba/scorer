@@ -13,6 +13,7 @@ quality_plots/
 *.json
 *.txt
 *.csv
+*.zip
 
 #coding env
 .vscode

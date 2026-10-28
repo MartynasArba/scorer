@@ -1,0 +1,93 @@
+# 128 Hz single-channel pipeline (replaces pipeline_128hz.py).
+# Run:  python -m scorer.pipeline.run --config scorer/config/pipeline_128hz.toml
+# Paths use TOML literal strings ('...') so Windows backslashes need no escaping.
+
+[run]
+name = "128hz"                                   # outputs go to <runs_dir>/<name>/; same name = resume
+runs_dir = 'C:\Users\marty\Projects\scorer\runs'
+seed = 0
+device = "auto"                                  # auto | cuda | cpu
+label_scheme = "3state"                          # Wake / NREM(+IS) / REM, unlabeled ignored
+num_workers = 2                                  # DataLoader workers for the window streams
+
+[signal]
+sample_rate = 128
+win_len = 512
+channels = [0]
+lowpass_hz = 49.0       # the old code effectively used 25.088 Hz at 128 Hz; set that to reproduce old inputs
+clip = 4.0
+cache_dtype = "float16" # normalised values are within +-4, float16 keeps ~1e-3 precision at half the RAM/disk
+max_len_mismatch = 1    # tolerated X/y length difference per chunk (partial last epoch); larger raises
+
+[cache]
+root = 'G:\RAW_EXTERNAL_SLEEP_DATASETS\128HZ_CACHE'
+
+[datasets]              # name = folder containing one sub-folder per recording (X*.pt / y*.pt)
+mlsnet = 'G:\RAW_EXTERNAL_SLEEP_DATASETS\128HZ_CONVERTED\mlsnet'
+mssv = 'G:\RAW_EXTERNAL_SLEEP_DATASETS\128HZ_CONVERTED\mssv'
+oxford_test = 'G:\RAW_EXTERNAL_SLEEP_DATASETS\128HZ_CONVERTED\oxford_test'
+# oxford_opto = 'G:\RAW_EXTERNAL_SLEEP_DATASETS\128HZ_CONVERTED\oxford_opto'
+# oxford_pilot = 'G:\RAW_EXTERNAL_SLEEP_DATASETS\128HZ_CONVERTED\oxford_pilot'
+# oxford_deprivation = 'G:\RAW_EXTERNAL_SLEEP_DATASETS\128HZ_CONVERTED\oxford_deprivation'
+
+[simclr]
+datasets = ["mssv", "mlsnet"]
+epochs = 200
+batch_size = 2048
+lr = 5e-5
+temperature = 0.15
+drop_unlabeled = true     # old behaviour: label-0 windows excluded
+loader_augment = true     # old behaviour: per-window CPU augmentation before the two GPU views
+buffer_windows = 100000   # RAM per worker ~ buffer_windows x 512 x 4 B (= 205 MB)
+
+[supcon]
+datasets = ["mssv"]
+init = "simclr"           # continue from this run's SimCLR encoder (+ projection head)
+balance = "undersample"
+epochs = 200
+batch_size = 2048
+lr = 1e-5
+temperature = 0.2
+
+[adversarial]
+source = ["mssv"]
+target = ["oxford_test"]  # WARNING: also evaluated below -> not zero-shot. Prefer an unlabeled set you don't report on.
+init = "supcon"
+epochs = 10
+batch_size = 1024
+lr_encoder = 2e-6
+lr_freq_flatten = 1e-5
+lr_heads = 1e-3
+
+[embed]
+encoder = "auto"          # adversarial -> supcon -> simclr output of this run, or a checkpoint path
+batch_size = 2048
+
+[context_rf]
+train = ["mssv"]
+k = 1
+max_train_windows = 300000   # RF RAM ~ windows x (2k+1) x 512 x 4 B (300k -> 1.8 GB)
+
+[context_mlp]
+train = ["mssv"]
+val = ["oxford_test"]
+k = 3
+epochs = 20
+batch_size = 4096
+lr = 1e-3
+
+[gru]
+enabled = false
+train = ["mssv"]
+val = ["oxford_test"]
+
+[linear_probe]
+enabled = false
+train = ["mssv"]
+val = ["oxford_test"]
+
+[evaluate]
+datasets = ["oxford_test"]
+heads = ["context_mlp", "context_rf"]
+smooth_sigma = 0.0
+heuristics = "lite"       # none | lite | full
