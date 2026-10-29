@@ -23,6 +23,22 @@ log = logging.getLogger(__name__)
 
 
 def class_weight_vector(classes: np.ndarray, n_classes: int, mode: str | list | None) -> np.ndarray | None:
+    """Build per-class loss weights from the labeled windows.
+
+    Args:
+        classes: Class index per window (``IGNORE`` rows are skipped).
+        n_classes: Number of classes; counts use ``bincount(minlength=n_classes)``, so a
+            class missing from the data cannot shift the others.
+        mode: None or "none" for no weights; "inv_sqrt" or "inv" for 1/sqrt(count) or
+            1/count; or an explicit list of ``n_classes`` weights.
+
+    Returns:
+        float32 weights normalised to mean 1 over present classes (0 for absent ones),
+        or None.
+
+    Raises:
+        ValueError: For an unknown mode or a list of the wrong length.
+    """
     if mode in (None, "none"):
         return None
     if isinstance(mode, (list, tuple)):
@@ -43,7 +59,7 @@ def class_weight_vector(classes: np.ndarray, n_classes: int, mode: str | list | 
 
 
 def subsample_stratified(idx: np.ndarray, classes: np.ndarray, max_n: int | None, seed: int) -> np.ndarray:
-    """keep at most max_n indices, preserving class proportions"""
+    """Keep at most ``max_n`` of ``idx`` with class proportions preserved (seeded); None keeps all."""
     if not max_n or len(idx) <= max_n:
         return idx
     rng = np.random.default_rng(seed)
@@ -60,7 +76,16 @@ def subsample_stratified(idx: np.ndarray, classes: np.ndarray, max_n: int | None
 # ---------------------------------------------------------------------------------------------
 def predict_window_head(model, store: EmbeddingStore, k: int, device, centers: np.ndarray | None = None,
                         batch_size: int = 8192) -> np.ndarray:
-    """softmax probabilities [len(centers), C]; all windows when centers is None"""
+    """Return softmax probabilities [len(centers), C] of an MLP or linear head.
+
+    Args:
+        model: Trained head.
+        store: Embeddings to score.
+        k: Context half-width the head was trained with.
+        device: Device to run on.
+        centers: Rows to score; None scores every window.
+        batch_size: Windows per forward pass.
+    """
     import torch
 
     centers = np.arange(len(store)) if centers is None else np.asarray(centers)
@@ -77,7 +102,33 @@ def fit_window_head(model, train: EmbeddingStore, val: EmbeddingStore | None, sc
                     epochs: int, batch_size: int, lr: float, weight_decay: float, label_smoothing: float,
                     class_weighting, device, optimizer: str = "adamw", max_train_windows: int | None = None,
                     seed: int = 0, tag: str = "head") -> dict:
-    """generic training loop; restores the best-val-macro-F1 weights (deep copy) at the end"""
+    """Train a window-level head on context features; shared by the MLP and the linear probe.
+
+    Each epoch shuffles the labeled windows and trains with cross-entropy (optionally
+    class-weighted and label-smoothed) under a cosine learning-rate schedule. After each
+    epoch the head is scored on ``val`` (macro F1); at the end the best epoch's weights
+    are restored.
+
+    Args:
+        model: Head to train (modified in place).
+        train: Training embeddings.
+        val: Validation embeddings, or None to select by training loss.
+        scheme: Label scheme.
+        k: Context half-width.
+        epochs, batch_size, lr, weight_decay, label_smoothing: Optimisation settings.
+        class_weighting: See ``class_weight_vector``.
+        device: Training device.
+        optimizer: "adamw" or "adam".
+        max_train_windows: Stratified cap on training windows.
+        seed: Seed for subsampling and shuffling.
+        tag: Name used in log lines.
+
+    Returns:
+        ``{"history", "best_epoch", "best_score"}``.
+
+    Raises:
+        RuntimeError: If the training store has no labeled windows.
+    """
     import torch
     import torch.nn as nn
     from sklearn.metrics import f1_score
@@ -143,6 +194,14 @@ def train_context_mlp(train: EmbeddingStore, val: EmbeddingStore | None, scheme:
                       batch_size: int, lr: float, weight_decay: float, label_smoothing: float, hidden_dim: int,
                       num_blocks: int, dropout: float, class_weighting, device, out_path: Path, meta: dict,
                       max_train_windows: int | None = None, seed: int = 0):
+    """Train a ``ContextResMLP`` on windows t-k .. t+k and save it as ``out_path``.
+
+    Arguments are passed to ``ContextResMLP`` and ``fit_window_head``; ``meta`` is stored
+    in the checkpoint together with the architecture and context size.
+
+    Returns:
+        ``(model, info)`` with the best weights loaded.
+    """
     from scorer.models.checkpoints import save_checkpoint
     from scorer.models.heads import ContextResMLP
 
@@ -160,6 +219,11 @@ def train_context_mlp(train: EmbeddingStore, val: EmbeddingStore | None, scheme:
 def train_linear_probe(train: EmbeddingStore, val: EmbeddingStore | None, scheme: LabelScheme, *, epochs: int,
                        batch_size: int, lr: float, weight_decay: float, class_weighting, device, out_path: Path,
                        meta: dict, seed: int = 0):
+    """Train a ``LinearProbe`` on single-window embeddings (k = 0) and save it as ``out_path``.
+
+    Returns:
+        ``(model, info)`` with the best weights loaded.
+    """
     from scorer.models.checkpoints import save_checkpoint
     from scorer.models.heads import LinearProbe
 
@@ -178,6 +242,22 @@ def train_linear_probe(train: EmbeddingStore, val: EmbeddingStore | None, scheme
 # ---------------------------------------------------------------------------------------------
 def train_context_rf(train: EmbeddingStore, scheme: LabelScheme, *, k: int, n_estimators: int, max_depth: int | None,
                      max_features, class_weight: str | None, max_train_windows: int | None, n_jobs: int, seed: int = 0):
+    """Fit a random forest on flattened context features of the labeled windows.
+
+    Args:
+        train: Training embeddings.
+        scheme: Label scheme (labels are already class indices).
+        k: Context half-width.
+        n_estimators, max_depth, max_features, class_weight: Passed to
+            ``RandomForestClassifier``.
+        max_train_windows: Stratified cap; the feature matrix is held in RAM, so this
+            bounds memory.
+        n_jobs: CPU cores to use.
+        seed: Seed for subsampling and the forest.
+
+    Returns:
+        The fitted forest.
+    """
     from sklearn.ensemble import RandomForestClassifier
 
     centers = subsample_stratified(train.labeled_indices(), train.classes, max_train_windows, seed)
@@ -193,7 +273,11 @@ def train_context_rf(train: EmbeddingStore, scheme: LabelScheme, *, k: int, n_es
 
 def predict_rf(rf, store: EmbeddingStore, k: int, n_classes: int, centers: np.ndarray | None = None,
                chunk: int = 50_000) -> np.ndarray:
-    """probabilities with columns for ALL classes (rf.classes_ may miss a class absent from training)"""
+    """Return random-forest probabilities [len(centers), n_classes].
+
+    Columns cover every class of the scheme, even if a class was absent from training
+    (``rf.classes_`` then lacks it and its column stays 0). Rows are scored in chunks.
+    """
     centers = np.arange(len(store)) if centers is None else np.asarray(centers)
     cols = np.asarray(rf.classes_, dtype=np.int64)
     out = np.zeros((len(centers), n_classes), dtype=np.float32)

@@ -1,6 +1,18 @@
+"""
+Sleep-state reports.
+
+Fixed in this revision: generate_sleep_report used np.unique(..., sorted=False), which only exists
+in NumPy >= 2.3 and does not promise any order - so "[:-1]" dropped an arbitrary hour instead of
+the last (partial) one; a state code missing from state_mapping (e.g. MA labelled 6) raised
+KeyError; an hour without windows crashed; a list of states crashed on `.size`.
+compare_scorers can infer the codes from the data (num_classes=None); the GUI uses
+scorer.gui.core.agreement instead.
+"""
 import numpy as np
 import pandas as pd
 from sklearn.metrics import accuracy_score, cohen_kappa_score, confusion_matrix, classification_report
+
+DEFAULT_MAPPING = {0: 'Unknown', 1: 'Wake', 2: 'NREM', 3: 'IS', 4: 'REM', 5: 'MA'}
 
 def label_microawakenings(states: np.ndarray, 
                           w_label: int = 1, 
@@ -8,11 +20,21 @@ def label_microawakenings(states: np.ndarray,
                           max_windows: int = 3, 
                           ma_label: int = 5
                           ) -> np.ndarray:
-    """ 
-    label MA instead of W if
-      - length <= max_windows
-      - surounded by NREM
-    """        
+    """Relabel short Wake bouts inside NREM as micro-awakenings (MA).
+
+    A Wake run becomes ``ma_label`` when it lasts at most ``max_windows`` windows and has
+    NREM directly before and after it. The input is not modified.
+
+    Args:
+        states: State code per window.
+        w_label: Wake code.
+        nrem_label: NREM code.
+        max_windows: Longest Wake run (in windows) that still counts as MA.
+        ma_label: Code written for MA windows.
+
+    Returns:
+        A relabelled copy.
+    """
     states = np.asarray(states)
     n = states.size
     if n == 0:
@@ -49,20 +71,22 @@ def label_microawakenings(states: np.ndarray,
         out[start:end] = ma_label
     return out
 
-def _subset_report(states: np.ndarray, win_len_s: int, state_mapping: dict = {0:'Unknown', 1:'Wake', 2:'NREM', 3:'IS', 4:'REM', 5: 'MA'}):
-    """
-    generates a report for passed states
-    returns a dict with:
-        - number of states
-        - total time in states
-        - percentage of time in states
-        - median, IQR state duration
+def _subset_report(states: np.ndarray, win_len_s: float, state_mapping: dict = DEFAULT_MAPPING):
+    """Summarise a state sequence.
+
+    Returns:
+        A dict with, per state name: ``<name>_duration`` (s), ``<name>_percentage``,
+        ``<name>_bouts`` (number of runs) and ``<name>_bout_mean_s`` / ``_bout_std_s``.
+        Empty for an empty input. Codes missing from ``state_mapping`` use the code as name.
     """
     result = {}
-    
-    for state, duration in zip(np.unique(states, return_counts = True)[0], np.unique(states, return_counts = True)[1]):
-        result[state_mapping[state] + '_duration'] = duration * win_len_s
-        result[state_mapping[state] + '_percentage'] = (duration / len(states))* 100
+    states = np.asarray(states)
+    if states.size == 0:
+        return result
+    for state, duration in zip(*np.unique(states, return_counts=True)):
+        name = state_mapping.get(int(state), str(state))
+        result[name + '_duration'] = duration * win_len_s
+        result[name + '_percentage'] = (duration / len(states)) * 100
         
     #get individual state number
     run_starts = np.empty(states.size, dtype=bool)  #create a state change array
@@ -87,28 +111,42 @@ def _subset_report(states: np.ndarray, win_len_s: int, state_mapping: dict = {0:
     return result
     
 
-def generate_sleep_report(states: str, time_array: np.ndarray, get_by_hour = True, win_len = 1000, save_csv = None, 
-                            state_mapping: dict = {0:'Unknown', 1:'Wake', 2:'NREM', 3:'IS', 4:'REM', 5: 'MA'}, 
+def generate_sleep_report(states, time_array, get_by_hour = True, win_len = 1000, save_csv = None, 
+                            state_mapping: dict = DEFAULT_MAPPING, 
                             metadata: dict = {}):
-    """
-    generates a report, complete or by hour
-    uses a helper to get state numbers, percentages and durations
+    """Build a sleep report for the whole recording and, optionally, per clock hour.
+
+    Args:
+        states: State code per window.
+        time_array: One timestamp per window (``storage.get_timearray_for_states``).
+        get_by_hour: Add one entry per hour, in the order the hours occur ("22-23",
+            "23-0", ...); the last, usually partial, hour is left out.
+        win_len: Window length in samples.
+        save_csv: CSV path for the table, or None.
+        state_mapping: Code -> state name.
+        metadata: Used for ``sample_rate`` (default 250 Hz).
+
+    Returns:
+        ``{"overall": {...}, "<h>-<h+1>": {...}, ...}``, or None for empty input.
+
+    Raises:
+        ValueError: If ``states`` and ``time_array`` differ in length.
     """
     results = {}
-    
+    states = np.asarray(states)
     if states.size == 0:
         print('empty state array')
         return
-    
-    win_len_s = win_len / int(metadata.get('sample_rate', '250'))
+    if len(time_array) != len(states):
+        raise ValueError(f'{len(states)} states but {len(time_array)} timestamps')
+    win_len_s = win_len / float(metadata.get('sample_rate') or 250)
     print(f'using {win_len_s} seconds per window')
-    #ensure states are numpy
-    states = np.array(states)
     #get overall results
     results['overall'] = _subset_report(states, win_len_s = win_len_s, state_mapping = state_mapping)
     #now subset by hour
     if get_by_hour:
-        for hour in np.unique(time_array.hour, sorted = False)[:-1]:
+        # hours in the order they occur (19, 20, ..., 23, 0, 1, ...); the last, usually partial, hour is left out
+        for hour in pd.unique(np.asarray(time_array.hour))[:-1]:
             if hour < 23:
                 next_hour = hour + 1
                 in_hour = ((time_array.hour >= hour) & (time_array.hour < next_hour))
@@ -124,12 +162,20 @@ def generate_sleep_report(states: str, time_array: np.ndarray, get_by_hour = Tru
             print(f'report excel saving failed: {e}')
     return results
 
-def compare_scorers(scorer_a: np.ndarray, scorer_b: np.ndarray, num_classes: int = 5):
-    """
-    compares two sleep state arrays and prints a report.
-    scorer_a: 1D numpy array of states from Scorer A 
-    scorer_b: 1D numpy array of states from Scorer B
-    num_classes: Int (3, 4, or 5) to format the names correctly.
+def compare_scorers(scorer_a: np.ndarray, scorer_b: np.ndarray, num_classes: int | None = None):
+    """Compare two scorings of the same recording and print an agreement report.
+
+    Args:
+        scorer_a: State codes from scorer A.
+        scorer_b: State codes from scorer B (same length).
+        num_classes: None infers the codes from the data; 5 uses 0-4, 4 uses 1-4 and 3
+            uses Wake/NREM/REM (1, 2, 4).
+
+    Returns:
+        ``(accuracy, kappa, confusion matrix)``; matrix rows are scorer A.
+
+    Raises:
+        ValueError: If the arrays differ in length.
     """
     scorer_a = np.array(scorer_a)
     scorer_b = np.array(scorer_b)
@@ -137,7 +183,11 @@ def compare_scorers(scorer_a: np.ndarray, scorer_b: np.ndarray, num_classes: int
     if len(scorer_a) != len(scorer_b):
         raise ValueError(f"Arrays must be the same length! Got {len(scorer_a)} and {len(scorer_b)}.")
 
-    if num_classes == 5:
+    if num_classes is None:  # codes actually present in either array
+        labels = sorted(set(np.unique(scorer_a)) | set(np.unique(scorer_b)))
+        target_names = [DEFAULT_MAPPING.get(int(c), str(c)) for c in labels]
+        num_classes = len(labels)
+    elif num_classes == 5:
         labels = [0, 1, 2, 3, 4]
         target_names = ['Unlabeled', 'Wake', 'NREM', 'IS', 'REM']
     elif num_classes == 4:
@@ -166,9 +216,9 @@ def compare_scorers(scorer_a: np.ndarray, scorer_b: np.ndarray, num_classes: int
     report = classification_report(scorer_a, scorer_b, labels=labels, 
                                    target_names=target_names, zero_division=0)
     
-    print(f"{"="*40}")
+    print('=' * 40)
     print(f" INTER-RATER COMPARISON ({num_classes} CLASSES)")
-    print(f"{"="*40}")
+    print('=' * 40)
     print(f"overall agreement (accuracy): {acc * 100:.2f}%")
     print(f"Cohen's Kappa score:          {kappa:.4f}")
     if kappa > 0.8:
@@ -188,7 +238,7 @@ def compare_scorers(scorer_a: np.ndarray, scorer_b: np.ndarray, num_classes: int
     print(f"{'-'*40}")
     print("CONFUSION MATRIX")
     print(f"{'-'*40}")
-    print(f"rows = scorer A, columns = scorer B\n")
+    print("rows = scorer A, columns = scorer B\n")
     
     # Pretty print confusion matrix
     header = f"{'':<12}" + "".join([f"{name:>10}" for name in target_names])
@@ -229,4 +279,4 @@ if __name__ == "__main__":
         states = pickle.load(f)
         # states = label_microawakenings(states, w_label = 1, nrem_label = 2, max_windows = 3, ma_label=5)
     time_array = get_timearray_for_states(states, win_len = 1000, metadata = meta)
-    generate_sleep_report(states, time_array= time_array, save_excel = path[:-4] + '.csv', metadata = meta)
+    generate_sleep_report(states, time_array= time_array, save_csv = path[:-4] + '.csv', metadata = meta)

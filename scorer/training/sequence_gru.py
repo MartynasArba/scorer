@@ -27,7 +27,12 @@ log = logging.getLogger(__name__)
 
 def predict_gru(model, store: EmbeddingStore, seq_len: int, device, stride: int | None = None,
                 batch_size: int = 256) -> np.ndarray:
-    """per-window probabilities [N, C] averaged over overlapping sequences"""
+    """Return per-window probabilities [N, C] from a GRU head.
+
+    Overlapping sequences (default stride ``seq_len // 2``) are averaged; the last
+    windows of each recording are covered, and recordings shorter than ``seq_len`` are
+    scored as one shorter sequence.
+    """
     import torch
 
     stride = stride or max(1, seq_len // 2)
@@ -62,6 +67,35 @@ def train_gru(train: EmbeddingStore, val: EmbeddingStore | None, scheme: LabelSc
               epochs: int, batch_size: int, lr: float, weight_decay: float, hidden_dim: int, num_layers: int,
               focal_gamma: float, max_unlabeled_fraction: float, grad_clip: float, patience: int, device,
               out_path: Path, meta: dict, seed: int = 0):
+    """Train a ``GRUSequenceHead`` on embedding sequences and save it as ``out_path``.
+
+    Sequences stay inside one recording. Unlabeled windows stay in the sequence and are
+    ignored by the focal loss. The best epoch (validation macro F1, or training loss
+    without ``val``) is restored before saving.
+
+    Args:
+        train: Training embeddings.
+        val: Validation embeddings, or None.
+        scheme: Label scheme.
+        seq_len: Windows per sequence.
+        stride: Step between training sequences.
+        epochs, batch_size, lr, weight_decay: Optimisation settings (AdamW, cosine schedule).
+        hidden_dim, num_layers: GRU size.
+        focal_gamma: Focal-loss gamma.
+        max_unlabeled_fraction: Skip sequences with more unlabeled windows than this.
+        grad_clip: Gradient-norm limit.
+        patience: Early-stopping patience in epochs.
+        device: Training device.
+        out_path: Checkpoint path.
+        meta: Metadata stored in the checkpoint.
+        seed: Shuffling seed.
+
+    Returns:
+        ``(model, info)`` with the best weights loaded.
+
+    Raises:
+        RuntimeError: If no training sequence qualifies.
+    """
     import torch
     from sklearn.metrics import f1_score
 

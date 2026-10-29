@@ -1,5 +1,22 @@
 #custom funcs for reading onebox files 
 # the majority of logic comes from https://github.com/jenniferColonell/SpikeGLX_Datafile_Tools/
+"""
+Fixed in this revision:
+  * downsample_memmap_multichannel stitched chunks by trimming a fixed 300-sample overlap; the
+    output positions drifted from the true ones (the last samples of `np.empty` could stay
+    uninitialised, or a write could overflow), and 300 input samples is shorter than the
+    resample_poly filter for 30 kHz -> 1 kHz (about 303), so chunk joins had small errors.
+    Chunks now start on exact multiples of the decimation factor, the overlap covers the filter,
+    and the result equals resampling the whole recording at once (checked to float precision);
+  * only the channels that are saved are resampled, in float32 (all saved channels in float64
+    before, plus a second full-size copy for gain correction: ~22 GB for a 24-h, 16-channel file);
+  * the true sample rate is used (it was truncated to an int);
+  * the output folder is created if missing; file_converted crashed with a str save_folder;
+  * the quality report also finds csv files directly in the chosen folder (run_conversion writes
+    them there), uses the real sample rate, draws with matplotlib.figure.Figure (safe outside the
+    GUI thread, no pyplot registry leak) and fails clearly when no file is found;
+  * readMeta skips blank lines instead of raising IndexError.
+"""
 
 from pathlib import Path
 import numpy as np
@@ -10,7 +27,7 @@ from fractions import Fraction
 import glob
 import os
 from itertools import islice
-import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
 
 def readMeta(binFullPath: str) -> dict:
     """
@@ -31,7 +48,9 @@ def readMeta(binFullPath: str) -> dict:
             mdatList = f.read().splitlines()
             # convert the list entries into key value pairs
             for m in mdatList:
-                csList = m.split(sep='=')
+                if '=' not in m:
+                    continue
+                csList = m.split(sep='=', maxsplit=1)
                 if csList[0][0] == '~':
                     currKey = csList[0][1:len(csList[0])]
                 else:
@@ -187,89 +206,52 @@ def ExtractDigital(rawData: np.memmap, firstSamp: int, lastSamp: int, dwReq: flo
         digArray[i, :] = bitWiseData[targI, :]
     return(digArray)
 
-def compute_rational_ratio(sr_in: int, sr_out: int, max_den=10_000) -> Fraction:
+def compute_rational_ratio(sr_in: float, sr_out: float, max_den=10_000) -> tuple[int, int]:
     """
-    Compute rational approximation U/D ≈ sr_out / sr_in.
+    rational approximation up/down of sr_out / sr_in (rates may be non-integer, e.g. 30303.03 Hz)
     max_den controls accuracy & speed.
     """
-    if not isinstance(sr_out, int) or not isinstance(sr_in, int):
-        try:
-            sr_in, sr_out = int(sr_in), int(sr_out)
-        except:
-            print('sr_in and sr_out have to be int!')
-    
-    frac = Fraction(sr_out, sr_in).limit_denominator(max_den)
+    frac = (Fraction(sr_out) / Fraction(sr_in)).limit_denominator(max_den)
     return frac.numerator, frac.denominator   # up, down
 
 def downsample_memmap_multichannel(
         data: np.ndarray,
         sr_in=30303,    #original sample rate
         sr_out=1000,    #new sample rate
-        chunk_size=5_000_000,   #chunk size to load data in
+        chunk_size=5_000_000,   #input samples per chunk
         max_den=10_000,     #max denominator in fraction, higher = slower speed/better accuracy
-        verbose=True    #print things?
+        verbose=True,    #print things?
+        channels=None,   #rows to resample (default: all)
+        dtype=np.float32
         ) -> np.ndarray:
     """
-    Downsample multi-channel onebox recordings (np.arrays of channel x time) 
-    using polyphase FIR filtering (scipy.signal.resample_poly)
+    Downsample multi-channel onebox recordings (channels x time, e.g. a memmap) chunk by chunk with
+    polyphase FIR filtering (scipy.signal.resample_poly). The result equals resample_poly on the
+    whole recording: chunks start on multiples of `down`, so every chunk maps to whole output
+    samples, and each chunk is read with an overlap longer than the filter.
     """
-
-    C, T = data.shape
-
-    # Compute rational approximation up/down
     up, down = compute_rational_ratio(sr_in, sr_out, max_den=max_den)
+    rows = list(range(data.shape[0])) if channels is None else list(channels)
+    T = data.shape[1]
+    T_out = -(-T * up // down)  # = len(resample_poly(...)) on the full signal
+    half = -(-10 * max(up, down) // up) + 2  # input samples influenced by the default (Kaiser, 10-zero) filter
+    overlap = -(-half // down) * down
+    chunk = max(down, (int(chunk_size) // down) * down)
     if verbose:
-        print(f"Resampling ratio: sr_out/sr_in ~ {sr_out/sr_in:.8f}")
-        print(f"Using rational up={up}, down={down}  (error={abs((up/down) - (sr_out/sr_in)):.3e})")
-
-    # Output length
-    T_out = int(np.floor(T * (sr_out / sr_in)))
-    if verbose:
-        print(f"Output samples: {T_out:,}")
-        
-    y = np.empty((C, T_out))
-
-    # Overlap region for FIR filter edge safety
-    overlap = 300   # safe for 100–1000 tap FIR
-
-    out_pos = 0
-
-    for start in range(0, T, chunk_size):
-        stop = min(T, start + chunk_size)
-
-        # Add overlap on both sides for edge-safe filtering
-        s = max(0, start - overlap)
-        e = min(T, stop + overlap)
-
+        print(f"Resampling ratio: sr_out/sr_in ~ {sr_out/sr_in:.8f}; up={up}, down={down} "
+              f"(error={abs((up/down) - (sr_out/sr_in)):.3e}); output samples: {T_out:,}")
+    y = np.empty((len(rows), T_out), dtype=dtype)
+    for start in range(0, T, chunk):
+        stop = min(T, start + chunk)
+        s, e = max(0, start - overlap), min(T, stop + overlap)
+        block = np.asarray(data[rows, s:e], dtype=np.float64)
+        ds = resample_poly(block, up=up, down=down, axis=1)
+        s_out = s * up // down          # exact: s is a multiple of down
+        o0 = start * up // down
+        o1 = T_out if stop == T else stop * up // down
+        y[:, o0:o1] = ds[:, o0 - s_out:o1 - s_out]
         if verbose:
-            print(f"Processing time samples {s:,} to {e:,}")
-
-        # Extract chunk
-        chunk = data[:, s:e]   # shape: [C, time]
-
-        # Polyphase resampling
-        chunk_ds = resample_poly(chunk, up=up, down=down, axis=1)
-
-        # Compute corresponding overlap in output domain
-        overlap_out = int(np.ceil(overlap * (sr_out / sr_in)))
-
-        # Remove overlap edges
-        if start == 0:
-            core = chunk_ds[:, :-(overlap_out)] if stop < T else chunk_ds
-        elif stop == T:
-            core = chunk_ds[:, overlap_out:]
-        else:
-            core = chunk_ds[:, overlap_out:-overlap_out]
-
-        L = core.shape[1]
-
-        # Write
-        y[:, out_pos:out_pos + L] = core
-        out_pos += L
-
-    if verbose:
-        print("done")
-
+            print(f"resampled input samples {start:,} to {stop:,}")
     return y
 
 def run_conversion(bin_path: str, project_meta: dict,  
@@ -283,15 +265,15 @@ def run_conversion(bin_path: str, project_meta: dict,
     uses only chanlist first channels
     """
     bin_path = Path(bin_path)
-    print('path read')
-    #read data
     meta = readMeta(Path(bin_path))
-    sr_obx = int(SampRate(meta))
+    if not meta:
+        raise FileNotFoundError(f"no .meta file next to {bin_path}")
+    sr_obx = SampRate(meta)
     raw_data = makeMemMapRaw(Path(bin_path), meta)
     print('data loaded, downsampling...')
-    downsampled = downsample_memmap_multichannel(data = raw_data, sr_in = sr_obx, sr_out = sr_new)
-    #get voltages
-    conv_obx = GainCorrectOBX(downsampled, chanlist, meta)
+    # only the saved channels, float32; gain correction in place (same factor for every analog channel)
+    conv_obx = downsample_memmap_multichannel(data = raw_data, sr_in = sr_obx, sr_out = sr_new, channels = chanlist)
+    conv_obx *= Int2Volts(meta)
 
     n_samples = conv_obx.shape[1]
     first_sample = int(meta['firstSample'])
@@ -305,20 +287,23 @@ def run_conversion(bin_path: str, project_meta: dict,
     print(f'loaded {conv_obx.shape} data points, created time array: {timestamps.shape}')
     
     if not save_folder:
-        save_folder = Path(project_meta.get('project_path', '.')) / 'raw'
+        save_folder = Path(project_meta.get('project_path') or '.') / 'raw'
     else:
         save_folder = Path(save_folder)
+    save_folder.mkdir(parents=True, exist_ok=True)
+    saved = []
     for i in range(4):
         print(f'saving {i+1} / {4} csv')
-        filename = bin_path.stem + f'_box{channel_to_box.get(i,'unknown')}.csv'
+        filename = bin_path.stem + f"_box{channel_to_box.get(i, 'unknown')}.csv"
         save_path = save_folder / filename
         sel_data = conv_obx[i*3:i*3+3, :]
         to_save = pd.DataFrame(sel_data.T, columns = ['f_ecog', 'p_ecog', 'emg'])
         to_save['time'] = timestamps
         to_save.to_csv(save_path, index = False)
+        saved.append(save_path)
         print(f'{i}: channels {i*3}:{i*3+3} saved as {save_path}')
     print('saved!')
-    return
+    return saved
 
 def file_converted(file: str, 
                    save_folder: str = "C:/Users/marty/Projects/scorer/proj_data/raw", 
@@ -328,9 +313,9 @@ def file_converted(file: str,
     converted = True if there are corresponding .csv files
     """
     bin_path = Path(file)
-    
+    save_folder = Path(save_folder)
     for i in range(4):
-        filename = bin_path.stem + f'_box{channel_to_box.get(i,'unknown')}.csv'
+        filename = bin_path.stem + f"_box{channel_to_box.get(i, 'unknown')}.csv"
         save_path = save_folder / filename
         if os.path.exists(save_path):
             return True
@@ -345,13 +330,13 @@ def convert_multiple_recs(folder: str,
     runs conversion obx.bin -> 4 recs .csv for all files in folder
     """
     print(f'starting all file conversion in {folder}')
-    files = glob.glob(folder + '/*/*.obx0.obx.bin')
+    files = sorted(glob.glob(str(folder) + '/*/*.obx0.obx.bin'))
     
     if not save_folder:
-        save_folder = Path(project_meta.get('project_path', '.')) / 'raw'
+        save_folder = Path(project_meta.get('project_path') or '.') / 'raw'
     else:
         save_folder = Path(save_folder)
-    
+    summary = {'converted': [], 'skipped': [], 'failed': {}}
     for file in files:
         if (not file_converted(file, save_folder= save_folder)) or overwrite:
             try:
@@ -360,54 +345,63 @@ def convert_multiple_recs(folder: str,
                                save_folder=save_folder,
                                chanlist = [x for x in range(12)],
                                channel_to_box = {0:1, 1:3, 2:4, 3:2})
+                summary['converted'].append(file)
             except Exception as e:
                 print(f'{file} NOT CONVERTED: {e}')
+                summary['failed'][file] = str(e)
         else:
             print(f'file already converted: {file}')
-    print(f'all files in {folder} converted!!!')
-    return
+            summary['skipped'].append(file)
+    print(f"{folder}: {len(summary['converted'])} converted, {len(summary['skipped'])} already done, "
+          f"{len(summary['failed'])} failed")
+    return summary
 
 def get_folder_quality_report(folder_path: str, 
                               savepath: str = None, 
                               save_fig: str = True, 
-                              overwrite: str = False) -> None:
+                              overwrite: str = False,
+                              sr: float = 1000) -> str:
     """
-    generates a quality report for all .csv files in path
+    generates a quality report for all *box*.csv files in the folder and its sub-folders;
+    returns the path of quality_report.csv
     """
-    if savepath is None:
-        savepath = folder_path
+    folder_path = str(folder_path)
+    savepath = str(savepath) if savepath is not None else folder_path
     res_list = []
-    files = glob.glob(folder_path + '/*/*box*.csv')
+    files = sorted(set(glob.glob(folder_path + '/*box*.csv') + glob.glob(folder_path + '/*/*box*.csv')))
+    if not files:
+        raise FileNotFoundError(f'no *box*.csv files in {folder_path} or its sub-folders')
     for file in files:
         try:
-            metrics, figure = generate_obx_quality_report(file, sample_size = 20, report_interval = 100, sr = 1000)
+            metrics, figure = generate_obx_quality_report(file, sample_size = 20, report_interval = 100, sr = sr,
+                                                          return_figure = save_fig)
         except Exception as e:
-            print(f'{e} when generating plots for {file}')
+            print(f'{e} when generating the report for {file}')
             continue
         metrics['file'] = [file for f in range(len(list(metrics.values())[0]))]
         res_list.append(pd.DataFrame.from_dict(metrics))
         print(f'report generated for {file}')    
-        if save_fig:
+        if save_fig and figure is not None:
             figure_folder = Path(savepath) / 'quality_plots'
-            if not os.path.exists(figure_folder):
-                os.makedirs(figure_folder)
-            if not overwrite:
-                if os.path.exists(str(figure_folder / "".join(Path(file).stem.split('.'))) + '.png'):
-                    print('plot exists, not overwriting')
-                else:
-                    figure.savefig(str(figure_folder / "".join(Path(file).stem.split('.'))) + '.png')
+            os.makedirs(figure_folder, exist_ok=True)
+            fig_path = str(figure_folder / "".join(Path(file).stem.split('.'))) + '.png'
+            if os.path.exists(fig_path) and not overwrite:
+                print('plot exists, not overwriting')
             else:
-                figure.savefig(str(figure_folder / "".join(Path(file).stem.split('.'))) + '.png')
-            plt.close()
-            print('plot saved!')
-    pd.concat(res_list).reset_index(drop = True).to_csv(savepath + '/quality_report.csv')
-    print(f'full report saved in {savepath + '/quality_report.csv'}')
+                figure.savefig(fig_path)
+                print('plot saved!')
+    if not res_list:
+        raise RuntimeError(f'no quality report could be generated for the {len(files)} file(s) in {folder_path}')
+    out = str(Path(savepath) / 'quality_report.csv')
+    pd.concat(res_list).reset_index(drop = True).to_csv(out)
+    print(f'full report saved in {out}')
+    return out
 
 def generate_obx_quality_report(path: str, 
                                 sample_size: int = 20, 
                                 report_interval: int = 100, 
                                 sr: int = 1000, 
-                                return_figure = True) -> tuple[dict, plt.Figure | None]:
+                                return_figure = True) -> tuple[dict, Figure | None]:
     """
     generates a quality report for a raw .csv recording file obtained from obx in earlier steps+
     file has to contain f_ecog, p_ecog, emg channels
@@ -450,14 +444,14 @@ def generate_obx_quality_report(path: str,
             #calculate stds
             for ch, i in zip(channels, range(arr.shape[1])):
                 metrics[f"std_{ch}"].append(arr[:, i].std())
-                metrics[f"linenoise_{ch}"].append(_linenoise_ratio(arr[:, i]))
+                metrics[f"linenoise_{ch}"].append(_linenoise_ratio(arr[:, i], sr = sr))
             chunk_index += 1
     figure = None
     if return_figure:
         figure = quality_plot(metrics, name = path)
     return metrics, figure
 
-def quality_plot(metrics: dict, name: str) -> plt.Figure:
+def quality_plot(metrics: dict, name: str) -> Figure:
     """
     returns figure of quality metrics
     """
@@ -465,7 +459,8 @@ def quality_plot(metrics: dict, name: str) -> plt.Figure:
     num_metrics = len(metrics.keys()) - 1   
     metric_names = list(metrics.keys())
     times = [t[10:16] for t in metrics['time']]
-    fig, axs  = plt.subplots(num_metrics, 1, figsize = (6, num_metrics*2))
+    fig = Figure(figsize = (6, num_metrics*2))
+    axs = fig.subplots(num_metrics, 1)
     for i, ax in enumerate(axs):
         ax.plot(times, metrics[metric_names[i]])
         ax.set(ylabel = metric_names[i])
@@ -475,13 +470,13 @@ def quality_plot(metrics: dict, name: str) -> plt.Figure:
     fig.tight_layout()
     return fig
 
-def _linenoise_ratio(arr: np.ndarray, sr: int = 1000, line_f: float = 50, bw: float = 1) -> float:
+def _linenoise_ratio(arr: np.ndarray, sr: float = 1000, line_f: float = 50, bw: float = 1) -> float:
     """
     gets ratio of powerline noise vs everything else
     assuming noise is constant, should be a good indicator of signal quality
     high ratio = bad
     """
-    f, pxx = welch(arr, fs = sr, axis = 0, nperseg = 2048)
+    f, pxx = welch(arr, fs = sr, axis = 0, nperseg = min(2048, len(arr)))
     #get mask to get line power
     mask = (f >= line_f - bw) & (f <= line_f + bw)
     linepow = pxx[mask].sum(axis = 0)

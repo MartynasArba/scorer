@@ -25,9 +25,38 @@ def train_contrastive(model: ContrastiveModel, stream, mode: str, *, epochs: int
                       sample_rate: float, device: torch.device, out_dir: Path, enc_meta: dict,
                       num_workers: int = 2, patience: int = 5, min_delta: float = 1e-3, snapshot_every: int = 20,
                       aug_cfg: AugmentConfig | None = None, max_batches_per_epoch: int | None = None) -> dict:
-    """
-    mode: "simclr" (two augmented views, NT-Xent) or "supcon" (two views, supervised contrastive).
-    Writes <out_dir>/encoder_best.pt (lowest epoch loss) and <out_dir>/encoder_final.pt.
+    """Pretrain the window encoder with SimCLR or SupCon.
+
+    Each batch is augmented twice. SimCLR pulls the two views of a window together;
+    SupCon pulls together all views of the same class. Training stops early when the
+    epoch loss stops improving.
+
+    Args:
+        model: Encoder plus projection head.
+        stream: ``WindowBatchStream`` of training windows (labels are used by SupCon only).
+        mode: "simclr" or "supcon".
+        epochs: Maximum number of epochs.
+        lr: Adam learning rate.
+        temperature: Contrastive temperature.
+        sample_rate: Sample rate in Hz, for the augmentations.
+        device: Training device.
+        out_dir: Folder for checkpoints.
+        enc_meta: Encoder metadata stored in every checkpoint.
+        num_workers: DataLoader workers.
+        patience: Early-stopping patience in epochs (0 disables).
+        min_delta: Smallest loss decrease that counts as improvement.
+        snapshot_every: Also save ``encoder_epochNNN.pt`` every this many epochs (0 = never).
+        aug_cfg: Augmentation settings.
+        max_batches_per_epoch: Cap per epoch, for quick test runs.
+
+    Returns:
+        ``{"best", "final", "history", "best_epoch", "best_loss"}``. Checkpoints:
+        ``encoder_best.pt`` (lowest epoch loss) and ``encoder_final.pt``.
+
+    Raises:
+        ValueError: For an unknown ``mode``.
+        FloatingPointError: If the loss becomes NaN or infinite.
+        RuntimeError: If the stream yields no batches.
     """
     if mode not in ("simclr", "supcon"):
         raise ValueError(mode)

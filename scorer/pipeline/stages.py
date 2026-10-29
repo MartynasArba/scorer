@@ -34,10 +34,24 @@ STAGE_ORDER = ["inspect", "prepare", "simclr", "supcon", "adversarial", "embed",
                "linear_probe", "evaluate"]
 HEAD_STAGES = ["context_rf", "context_mlp", "gru", "linear_probe"]
 ENCODER_STAGES = ["simclr", "supcon", "adversarial"]
+# stages whose outputs depend on run.mode; their manifest entries and folders are kept per mode
+MODE_SCOPED = {"embed", *HEAD_STAGES, "evaluate", "heads"}
+MODES = ("tuned", "zeroshot")
 
 
 @dataclass
 class RunContext:
+    """Everything a stage needs: the config, the run folder and its manifest.
+
+    The manifest (``manifest.json``) records each finished stage's outputs, so later
+    stages find their inputs there and a run can be resumed in a new session.
+    Mode-dependent stages are stored as ``"<stage>@<mode>"``.
+
+    Attributes:
+        cfg: The loaded config.
+        run_dir: ``<runs_dir>/<run name>``.
+        manifest: Parsed ``manifest.json``.
+    """
     cfg: PipelineConfig
     run_dir: Path
     manifest: dict = field(default_factory=dict)
@@ -45,6 +59,7 @@ class RunContext:
 
     @classmethod
     def open(cls, cfg: PipelineConfig) -> "RunContext":
+        """Create the run folder if needed and load its manifest."""
         run_dir = Path(cfg.run.runs_dir) / cfg.run.name
         run_dir.mkdir(parents=True, exist_ok=True)
         mpath = run_dir / "manifest.json"
@@ -54,10 +69,12 @@ class RunContext:
     # -- shared objects ----------------------------------------------------------------------
     @property
     def scheme(self) -> LabelScheme:
+        """The label scheme named in ``[run]``."""
         return get_scheme(self.cfg.run.label_scheme)
 
     @property
     def device(self):
+        """The torch device (resolved once, on first use)."""
         if self._device is None:
             from scorer.training.common import resolve_device
 
@@ -65,35 +82,80 @@ class RunContext:
         return self._device
 
     def prep_params(self) -> PrepParams:
+        """Return the cache parameters from ``[signal]``."""
         s = self.cfg.signal
         return PrepParams(sample_rate=float(s.sample_rate), win_len=int(s.win_len), channels=tuple(s.channels),
                           lowpass_hz=s.lowpass_hz, clip=float(s.clip), dtype=s.cache_dtype,
                           max_len_mismatch=int(s.max_len_mismatch))
 
     def caches(self, names: list[str]) -> list[DatasetCache]:
+        """Open the prepared caches of ``names``, checking they match the current ``[signal]``.
+
+        Raises:
+            ValueError: If ``names`` is empty (a stage with no datasets configured).
+        """
         if not names:
             raise ValueError("no datasets given for this stage (check the config)")
         return [DatasetCache(self.cfg.cache.root, n, expect=self.prep_params()) for n in names]
 
     # -- manifest ------------------------------------------------------------------------------
+    @property
+    def mode(self) -> str:
+        """The run mode, 'tuned' or 'zeroshot'."""
+        return self.cfg.run.mode
+
+    def key(self, stage: str) -> str:
+        """Return the manifest key: ``embed@zeroshot``, ``context_mlp@tuned``; shared stages keep their name."""
+        return f"{stage}@{self.mode}" if stage in MODE_SCOPED else stage
+
+    def stage_dir(self, stage: str) -> Path:
+        """Return the output folder of a stage; mode-scoped stages get a ``<mode>`` sub-folder."""
+        return self.run_dir / stage / self.mode if stage in MODE_SCOPED else self.run_dir / stage
+
     def record(self, stage: str, **outputs) -> None:
+        """Store a stage's outputs in the manifest with a timestamp and the config digest, and save it."""
+        stage = self.key(stage)
         self.manifest["stages"][stage] = {**outputs, "finished": time.strftime("%Y-%m-%d %H:%M:%S"),
                                           "config_digest": self.cfg.digest()}
         (self.run_dir / "manifest.json").write_text(json.dumps(self.manifest, indent=1, default=str))
 
     def output(self, stage: str, key: str) -> str:
+        """Return output ``key`` of an earlier stage in this mode.
+
+        Raises:
+            RuntimeError: If that stage has not run in this mode (the message says what to run).
+        """
+        stage = self.key(stage)
         entry = self.manifest["stages"].get(stage)
         if not entry or key not in entry:
             raise RuntimeError(f"run '{self.run_dir.name}' has no '{key}' from stage '{stage}' "
-                               f"(run that stage first, or point the config at a checkpoint path)")
+                               f"(run that stage first in run.mode={self.mode!r}, or point the config at a "
+                               f"checkpoint path)")
         return entry[key]
 
     def resolve_encoder(self, ref: str, use: str = "final") -> str | None:
-        """'' -> None | 'simclr'/'supcon'/'adversarial' -> this run's checkpoint | 'auto' | a path"""
+        """Turn an encoder reference from the config into a checkpoint path.
+
+        Args:
+            ref: "" (none: train from scratch), "simclr", "supcon", "adversarial" (this run's
+                output), "auto" (the latest encoder stage this mode may use) or a path.
+            use: "final" or "best" checkpoint of contrastive stages (adversarial always "final").
+
+        Returns:
+            The path, or None for "".
+
+        Raises:
+            RuntimeError: For the adversarial encoder in zero-shot mode, or "auto" with no
+                encoder stage done yet.
+            FileNotFoundError: For a path that does not exist.
+        """
         if not ref:
             return None
+        if ref == "adversarial" and self.mode == "zeroshot":
+            raise RuntimeError("run.mode='zeroshot' must not use the adversarially aligned encoder")
         if ref == "auto":
-            for stage in reversed(ENCODER_STAGES):
+            usable = ENCODER_STAGES if self.mode == "tuned" else [s for s in ENCODER_STAGES if s != "adversarial"]
+            for stage in reversed(usable):
                 if stage in self.manifest["stages"]:
                     key = "final" if stage == "adversarial" else use
                     return self.output(stage, key)
@@ -105,9 +167,11 @@ class RunContext:
         return ref
 
     def encoder_expect(self) -> dict:
+        """Return the sample rate and window length a loaded encoder must match."""
         return {"sample_rate": self.cfg.signal.sample_rate, "win_len": self.cfg.signal.win_len}
 
     def embedding_store(self, names: list[str]):
+        """Load the embeddings of ``names`` made by this mode's ``embed`` stage (encoder digest checked)."""
         from scorer.training.embeddings import EmbeddingStore
 
         emb_root = self.output("embed", "emb_root")
@@ -118,14 +182,19 @@ class RunContext:
         return store
 
     def head_meta(self, datasets: dict) -> dict:
+        """Return the metadata stored with every head.
+
+        It holds the mode, label scheme, encoder path and digest, signal settings and datasets.
+        """
         s = self.cfg.signal
-        return {"label_scheme": self.scheme.name, "class_names": list(self.scheme.class_names),
+        return {"mode": self.mode, "label_scheme": self.scheme.name, "class_names": list(self.scheme.class_names),
                 "encoder_path": self.output("embed", "encoder_path"),
                 "encoder_digest": self.output("embed", "encoder_digest"),
                 "sample_rate": s.sample_rate, "win_len": s.win_len, "lowpass_hz": s.lowpass_hz, "clip": s.clip,
                 "datasets": datasets, "run": self.cfg.run.name}
 
     def referenced_datasets(self) -> list[str]:
+        """Return every dataset an enabled stage uses, without duplicates, in config order."""
         c = self.cfg
         names: list[str] = []
         for sec in (c.simclr, c.supcon):
@@ -144,8 +213,12 @@ class RunContext:
 
 # =============================================================================================
 def stage_inspect(ctx: RunContext) -> None:
-    """recordings, windows and label codes per dataset, BEFORE any training: the first place to
-    look when labels seem mixed up"""
+    """Stage ``inspect``: count recordings, windows and label codes per dataset.
+
+    Runs before any training and writes ``inspect/datasets.json``. Unknown codes and
+    classes with no windows are logged; this is the first place to look when labels
+    seem mixed up.
+    """
     scheme = ctx.scheme
     report = {}
     for name, path in ctx.cfg.datasets.items():
@@ -189,6 +262,10 @@ def stage_inspect(ctx: RunContext) -> None:
 
 
 def stage_prepare(ctx: RunContext, force: bool = False) -> None:
+    """Stage ``prepare``: normalise every referenced dataset into the cache.
+
+    Recordings that are already up to date are skipped unless ``force`` is set.
+    """
     params = ctx.prep_params()
     done = {}
     for name in ctx.referenced_datasets():
@@ -198,6 +275,11 @@ def stage_prepare(ctx: RunContext, force: bool = False) -> None:
 
 
 def _encoder_for_training(ctx: RunContext, init: str, use: str):
+    """Return ``(encoder, init_path)`` for a training stage.
+
+    Loads the checkpoint named by ``init``/``use`` (see ``RunContext.resolve_encoder``),
+    or builds a fresh encoder from ``[signal]`` when ``init`` is empty.
+    """
     from scorer.models.checkpoints import build_encoder, encoder_meta, load_encoder
 
     path = ctx.resolve_encoder(init, use)
@@ -211,6 +293,12 @@ def _encoder_for_training(ctx: RunContext, init: str, use: str):
 
 
 def _contrastive_stage(ctx: RunContext, mode: str) -> None:
+    """Shared body of the ``simclr`` and ``supcon`` stages.
+
+    Continues from the previous stage's projection head when ``init`` names a
+    contrastive stage, as the old pipeline did. Records best/final encoder and
+    projection-head paths.
+    """
     import torch
 
     from scorer.data.datasets import WindowBatchStream
@@ -246,20 +334,29 @@ def _contrastive_stage(ctx: RunContext, mode: str) -> None:
 
 
 def stage_simclr(ctx: RunContext) -> None:
+    """Stage ``simclr``: unsupervised contrastive pretraining."""
     _contrastive_stage(ctx, "simclr")
 
 
 def stage_supcon(ctx: RunContext) -> None:
+    """Stage ``supcon``: supervised contrastive pretraining."""
     _contrastive_stage(ctx, "supcon")
 
 
 def stage_adversarial(ctx: RunContext) -> None:
+    """Stage ``adversarial``: align source and target domains (tuned mode only).
+
+    Raises:
+        RuntimeError: In zero-shot mode.
+    """
     from scorer.data.datasets import WindowBatchStream
     from scorer.models.checkpoints import encoder_meta
     from scorer.training.adversarial import train_adversarial
     from scorer.training.common import set_seed
 
     sec = ctx.cfg.adversarial
+    if ctx.mode == "zeroshot":
+        raise RuntimeError("run.mode='zeroshot' skips domain alignment; use run.mode='tuned' to run 'adversarial'")
     set_seed(ctx.cfg.run.seed)
     encoder, init_path = _encoder_for_training(ctx, sec.init, sec.use)
     src = WindowBatchStream(ctx.caches(sec.source), ctx.scheme, sec.batch_size, sec.buffer_windows,
@@ -276,6 +373,11 @@ def stage_adversarial(ctx: RunContext) -> None:
 
 
 def stage_embed(ctx: RunContext) -> None:
+    """Stage ``embed``: run the chosen encoder over every dataset the heads and ``evaluate`` need.
+
+    Embeddings go to ``embeddings/<encoder digest>/<dataset>``; a warning is logged if the
+    encoder's low-pass differs from the cache's.
+    """
     from scorer.models.checkpoints import load_encoder
     from scorer.training.common import log_memory
     from scorer.training.embeddings import embed_dataset
@@ -302,6 +404,7 @@ def stage_embed(ctx: RunContext) -> None:
 
 
 def _head_datasets(ctx: RunContext) -> set[str]:
+    """Return the training and validation datasets of all enabled heads."""
     c = ctx.cfg
     out = set()
     for head in (c.context_mlp, c.gru, c.linear_probe):
@@ -313,6 +416,7 @@ def _head_datasets(ctx: RunContext) -> set[str]:
 
 
 def stage_context_rf(ctx: RunContext) -> None:
+    """Stage ``context_rf``: fit the random forest and save it as ``heads/<mode>/context_rf.pkl``."""
     from scorer.models.checkpoints import save_rf_bundle
     from scorer.training.context import train_context_rf
 
@@ -322,11 +426,12 @@ def stage_context_rf(ctx: RunContext) -> None:
                           max_features=sec.max_features, class_weight=sec.class_weight or None,
                           max_train_windows=sec.max_train_windows or None, n_jobs=sec.n_jobs, seed=ctx.cfg.run.seed)
     meta = {**ctx.head_meta({"train": sec.train}), "context_k": sec.k, "classes_": [int(c) for c in rf.classes_]}
-    path = save_rf_bundle(ctx.run_dir / "heads" / "context_rf.pkl", rf, meta)
+    path = save_rf_bundle(ctx.stage_dir("heads") / "context_rf.pkl", rf, meta)
     ctx.record("context_rf", head=str(path))
 
 
 def stage_context_mlp(ctx: RunContext) -> None:
+    """Stage ``context_mlp``: train the context MLP and save it with its training history."""
     from scorer.training.common import set_seed
     from scorer.training.context import train_context_mlp
 
@@ -334,18 +439,19 @@ def stage_context_mlp(ctx: RunContext) -> None:
     set_seed(ctx.cfg.run.seed)
     train = ctx.embedding_store(sec.train)
     val = ctx.embedding_store(sec.val) if sec.val else None
-    path = ctx.run_dir / "heads" / "context_mlp.pt"
+    path = ctx.stage_dir("heads") / "context_mlp.pt"
     _, info = train_context_mlp(train, val, ctx.scheme, k=sec.k, epochs=sec.epochs, batch_size=sec.batch_size, lr=sec.lr,
                                 weight_decay=sec.weight_decay, label_smoothing=sec.label_smoothing,
                                 hidden_dim=sec.hidden_dim, num_blocks=sec.num_blocks, dropout=sec.dropout,
                                 class_weighting=sec.class_weighting, device=ctx.device, out_path=path,
                                 meta=ctx.head_meta({"train": sec.train, "val": sec.val}),
                                 max_train_windows=sec.max_train_windows or None, seed=ctx.cfg.run.seed)
-    (ctx.run_dir / "heads" / "context_mlp_history.json").write_text(json.dumps(info["history"], indent=1))
+    (ctx.stage_dir("heads") / "context_mlp_history.json").write_text(json.dumps(info["history"], indent=1))
     ctx.record("context_mlp", head=str(path), best_epoch=info["best_epoch"])
 
 
 def stage_gru(ctx: RunContext) -> None:
+    """Stage ``gru``: train the GRU sequence head."""
     from scorer.training.common import set_seed
     from scorer.training.sequence_gru import train_gru
 
@@ -353,7 +459,7 @@ def stage_gru(ctx: RunContext) -> None:
     set_seed(ctx.cfg.run.seed)
     train = ctx.embedding_store(sec.train)
     val = ctx.embedding_store(sec.val) if sec.val else None
-    path = ctx.run_dir / "heads" / "gru.pt"
+    path = ctx.stage_dir("heads") / "gru.pt"
     _, info = train_gru(train, val, ctx.scheme, seq_len=sec.seq_len, stride=sec.stride, epochs=sec.epochs,
                         batch_size=sec.batch_size, lr=sec.lr, weight_decay=sec.weight_decay, hidden_dim=sec.hidden_dim,
                         num_layers=sec.num_layers, focal_gamma=sec.focal_gamma,
@@ -364,12 +470,13 @@ def stage_gru(ctx: RunContext) -> None:
 
 
 def stage_linear_probe(ctx: RunContext) -> None:
+    """Stage ``linear_probe``: train the linear probe."""
     from scorer.training.context import train_linear_probe
 
     sec = ctx.cfg.linear_probe
     train = ctx.embedding_store(sec.train)
     val = ctx.embedding_store(sec.val) if sec.val else None
-    path = ctx.run_dir / "heads" / "linear_probe.pt"
+    path = ctx.stage_dir("heads") / "linear_probe.pt"
     _, info = train_linear_probe(train, val, ctx.scheme, epochs=sec.epochs, batch_size=sec.batch_size, lr=sec.lr,
                                  weight_decay=sec.weight_decay, class_weighting=sec.class_weighting, device=ctx.device,
                                  out_path=path, meta=ctx.head_meta({"train": sec.train, "val": sec.val}),
@@ -378,6 +485,15 @@ def stage_linear_probe(ctx: RunContext) -> None:
 
 
 def stage_evaluate(ctx: RunContext) -> None:
+    """Stage ``evaluate``: score every evaluation dataset with every listed head.
+
+    Per head and dataset it writes ``metrics.json`` (post-processed and argmax-only),
+    ``per_recording.csv``, ``predictions.npz``, a confusion matrix and hypnograms; per
+    mode it writes ``summary.csv`` and optional embedding PCA plots.
+
+    Raises:
+        RuntimeError: If a head was trained on different embeddings or class names.
+    """
     from scorer.evaluation.metrics import (compute_metrics, per_recording_metrics, save_confusion_png,
                                            save_embedding_pca_png, save_hypnogram_png, text_report, write_csv,
                                            write_json)
@@ -386,7 +502,7 @@ def stage_evaluate(ctx: RunContext) -> None:
 
     sec = ctx.cfg.evaluate
     scheme = ctx.scheme
-    out_root = ctx.run_dir / "evaluate"
+    out_root = ctx.stage_dir("evaluate")
     summary = []
     stores = {name: ctx.embedding_store([name]) for name in sec.datasets}
     for head_name in sec.heads:
@@ -408,7 +524,8 @@ def stage_evaluate(ctx: RunContext) -> None:
             m = compute_metrics(store.classes, pred, scheme)
             write_json({"postprocessed": m, "argmax_only": m_raw,
                         "postprocess": {"smooth_sigma": sec.smooth_sigma, "heuristics": sec.heuristics},
-                        "head": head_path, "encoder_digest": head.meta.get("encoder_digest")}, out / "metrics.json")
+                        "head": head_path, "encoder_digest": head.meta.get("encoder_digest"),
+                        "mode": ctx.mode, "encoder_stage": ctx.output("embed", "encoder_stage")}, out / "metrics.json")
             write_csv(per_recording_metrics(store.classes, pred, store.spans), out / "per_recording.csv")
             np.savez_compressed(out / "predictions.npz", probs=probs.astype(np.float16), pred=pred,
                                 true=store.classes, rec_start=store.rec_start, rec_end=store.rec_end)
@@ -422,7 +539,7 @@ def stage_evaluate(ctx: RunContext) -> None:
                      head_name, ds, m.get("accuracy", float("nan")), m.get("macro_f1", float("nan")),
                      m.get("kappa", float("nan")), m_raw.get("accuracy", float("nan")),
                      text_report(store.classes, pred, scheme))
-            summary.append({"head": head_name, "dataset": ds, "accuracy": m.get("accuracy"),
+            summary.append({"mode": ctx.mode, "head": head_name, "dataset": ds, "accuracy": m.get("accuracy"),
                             "macro_f1": m.get("macro_f1"), "kappa": m.get("kappa"),
                             "accuracy_argmax_only": m_raw.get("accuracy"), "scored_windows": m.get("n_scored")})
     if sec.pca:
@@ -450,9 +567,10 @@ STAGES: dict[str, Callable[[RunContext], None]] = {
 
 
 def enabled_stages(cfg: PipelineConfig) -> list[str]:
-    """the default 'all' sequence: every stage whose section is enabled"""
+    """Return the default stage list: inspect, prepare, enabled encoder stages, embed, enabled heads, evaluate."""
     out = ["inspect", "prepare"]
-    out += [s for s in ENCODER_STAGES if getattr(cfg, s).enabled]
+    out += [s for s in ENCODER_STAGES if getattr(cfg, s).enabled
+            and not (s == "adversarial" and cfg.run.mode == "zeroshot")]
     out.append("embed")
     out += [s for s in HEAD_STAGES if getattr(cfg, s).enabled]
     out.append("evaluate")

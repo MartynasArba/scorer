@@ -18,10 +18,27 @@ from scorer.models.grl import grad_reverse
 
 
 class SCDSSleepCNN(nn.Module):
+    """Single-channel dual-stream CNN that turns a 4-s window into a 512-d embedding.
+
+    The time stream (4 conv blocks, wide first kernel for delta) gives 256 features; the
+    frequency stream (3 conv blocks on the log-power spectrum) gives another 256. The
+    two are concatenated. The state dict matches the old ``sleep_cnn.SCDSSleepCNN``, so
+    old weights load unchanged.
+
+    Args:
+        num_classes: Outputs of ``state_classifier`` (used by adversarial training only).
+        sampling_rate: Sample rate in Hz; sets the default window length (4 s).
+        win_len: Window length in samples; defaults to ``round(4 * sampling_rate)``.
+        in_channel: Which input channel to encode when batches carry several.
+
+    Attributes:
+        embedding_dim: Size of the output embedding (512).
+    """
     embedding_dim = 512
 
     def __init__(self, num_classes: int = 3, sampling_rate: float = 128, win_len: int | None = None,
                  in_channel: int = 0):
+        """Build both streams and the adversarial heads; see the class docstring for arguments."""
         super().__init__()
         self.num_classes = num_classes
         self.sampling_rate = sampling_rate
@@ -54,7 +71,11 @@ class SCDSSleepCNN(nn.Module):
         self.register_buffer("hann_window", torch.hann_window(self.window_size))
 
     def _freqtransform(self, x: torch.Tensor) -> torch.Tensor:
-        """log-power spectrum of the Hann-windowed signal, DC bin dropped"""
+        """Return the log-power spectrum ``log1p(|rfft(x * hann)|^2)`` without the DC bin.
+
+        The stored Hann window is used when the length matches; otherwise a temporary one
+        is made, so the state dict never changes during ``forward``.
+        """
         t = x.shape[-1]
         window = self.hann_window if self.hann_window.shape[0] == t else torch.hann_window(t, device=x.device, dtype=x.dtype)
         spec = torch.fft.rfft(x * window, dim=-1, norm="ortho")
@@ -62,7 +83,7 @@ class SCDSSleepCNN(nn.Module):
         return torch.log1p(power[..., 1:])
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """x [B, C, T] -> embedding [B, 512]"""
+        """Encode windows ``x`` [B, C, T] into embeddings [B, 512]."""
         x = x[:, self.in_channel : self.in_channel + 1, :]
         feat_time = self.time_conv(x).squeeze(-1)
         feat_freq = self.freq_flatten(self.freq_conv(self._freqtransform(x)))
@@ -71,5 +92,14 @@ class SCDSSleepCNN(nn.Module):
     get_features = forward
 
     def forward_domain(self, x: torch.Tensor, alpha: float = 1.0) -> tuple[torch.Tensor, torch.Tensor]:
+        """Encode ``x`` and predict its domain through gradient reversal.
+
+        Args:
+            x: Windows [B, C, T].
+            alpha: Strength of the reversed gradient reaching the encoder.
+
+        Returns:
+            ``(embeddings [B, 512], domain logits [B, 1])``.
+        """
         features = self.forward(x)
         return features, self.domain_classifier(grad_reverse(features, alpha))

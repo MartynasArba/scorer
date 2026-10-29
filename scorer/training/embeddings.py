@@ -30,6 +30,27 @@ log = logging.getLogger(__name__)
 
 def embed_dataset(encoder, cache: DatasetCache, out_root: str | Path, encoder_meta: dict, device,
                   batch_size: int = 2048, dtype: str = "float16", force: bool = False) -> Path:
+    """Run the encoder over every window of a prepared dataset and store the embeddings.
+
+    Windows are streamed recording by recording, one batch at a time; each batch's
+    output moves to the CPU at once, so GPU memory never holds more than one batch.
+    The result is ``<out_root>/<dataset>/embeddings.npy`` [N, D] plus ``index.json`` with
+    recording boundaries and the encoder digest.
+
+    Args:
+        encoder: Trained encoder (``get_features`` is used if present).
+        cache: Prepared dataset.
+        out_root: Root folder for embeddings.
+        encoder_meta: Encoder metadata; its "digest" decides whether existing output is
+            up to date.
+        device: Device to run the encoder on.
+        batch_size: Windows per forward pass.
+        dtype: Storage dtype of the embeddings.
+        force: Recompute even if up to date.
+
+    Returns:
+        The dataset's embedding folder.
+    """
     import torch
 
     out_dir = Path(out_root) / cache.name
@@ -72,6 +93,14 @@ def embed_dataset(encoder, cache: DatasetCache, out_root: str | Path, encoder_me
 
 @dataclass
 class RecordingSpan:
+    """Where one recording sits inside an ``EmbeddingStore``.
+
+    Attributes:
+        dataset: Dataset name.
+        name: Recording name.
+        start: First row (inclusive).
+        end: Last row (exclusive).
+    """
     dataset: str
     name: str
     start: int
@@ -79,9 +108,24 @@ class RecordingSpan:
 
 
 class EmbeddingStore:
-    """embeddings [N, D] + classes [N] + recording spans for one or several datasets"""
+    """Embeddings [N, D], class labels [N] and recording boundaries for one or more datasets.
+
+    Heads read from here. Context windows and sequences are built on demand by index and
+    never cross a recording boundary. Unlabeled windows stay in the store as context;
+    they are only left out of losses and metrics.
+
+    Args:
+        parts: One embedding array per dataset (in memory or memory-mapped).
+        classes: Class index per row (``IGNORE`` for unlabeled).
+        spans: Recording boundaries in store row numbers.
+        encoder_digest: Digest of the encoder that produced the embeddings.
+
+    Raises:
+        RuntimeError: If labels and embeddings differ in length.
+    """
 
     def __init__(self, parts: list[np.ndarray], classes: np.ndarray, spans: list[RecordingSpan], encoder_digest: str | None):
+        """Index the rows by recording; see the class docstring."""
         self.parts = parts
         self.part_offsets = np.cumsum([0] + [len(p) for p in parts])
         self.classes = classes.astype(np.int64)
@@ -100,6 +144,21 @@ class EmbeddingStore:
     @classmethod
     def load(cls, emb_root: str | Path, caches: Sequence[DatasetCache], scheme: LabelScheme,
              in_memory: bool = True, expect_digest: str | None = None, unlabeled_as_wake: bool = False) -> "EmbeddingStore":
+        """Load the embeddings of several datasets into one store.
+
+        Args:
+            emb_root: Root folder written by ``embed_dataset``.
+            caches: Prepared datasets, for labels and recording order.
+            scheme: Label scheme.
+            in_memory: Read into RAM (default) instead of memory-mapping.
+            expect_digest: Required encoder digest, or None to accept any (but one) encoder.
+            unlabeled_as_wake: See ``LabelScheme.to_class``.
+
+        Raises:
+            FileNotFoundError: If a dataset has not been embedded.
+            RuntimeError: If the encoder digest differs from ``expect_digest`` or between
+                datasets, or a recording's size differs from the cache.
+        """
         parts, classes, spans = [], [], []
         offset = 0
         digest = None
@@ -129,13 +188,16 @@ class EmbeddingStore:
 
     # ---- basic access -------------------------------------------------------------------------
     def __len__(self) -> int:
+        """Total number of rows (windows)."""
         return int(self.part_offsets[-1])
 
     @property
     def dim(self) -> int:
+        """Embedding size D."""
         return int(self.parts[0].shape[1])
 
     def rows(self, idx: np.ndarray) -> np.ndarray:
+        """Return float32 embeddings for the given row indices, shape [len(idx), D]."""
         idx = np.asarray(idx, dtype=np.int64)
         if len(self.parts) == 1:
             return np.asarray(self.parts[0][idx], dtype=np.float32)
@@ -147,25 +209,40 @@ class EmbeddingStore:
         return out
 
     def labeled_indices(self) -> np.ndarray:
+        """Return the row indices that have a class label."""
         return np.flatnonzero(self.classes != IGNORE)
 
     # ---- context windows ----------------------------------------------------------------------
     def context_indices(self, centers: np.ndarray, k: int) -> np.ndarray:
-        """[B] -> [B, 2k+1] neighbour indices, edge-replicated inside the centre's recording"""
+        """Return the neighbour rows of each centre, shape [B, 2k + 1].
+
+        Neighbours outside the centre's recording are replaced by the recording's first or
+        last row (edge replication), so context never mixes recordings.
+        """
         centers = np.asarray(centers, dtype=np.int64)
         offs = np.arange(-k, k + 1, dtype=np.int64)
         r = self.rec_id[centers]
         return np.clip(centers[:, None] + offs[None, :], self.rec_start[r][:, None], self.rec_end[r][:, None] - 1)
 
     def context_features(self, centers: np.ndarray, k: int) -> np.ndarray:
-        """[B] -> float32 [B, (2k+1) * D], ordered t-k ... t ... t+k (same layout as the old create_context_features)"""
+        """Return flattened context vectors [B, (2k + 1) * D] ordered t-k ... t ... t+k.
+
+        Same layout as the old ``create_context_features``, so old MLP/RF heads still apply.
+        """
         idx = self.context_indices(centers, k)
         return self.rows(idx.reshape(-1)).reshape(len(centers), -1)
 
     # ---- sequences ----------------------------------------------------------------------------
     def sequence_starts(self, seq_len: int, stride: int, max_unlabeled_fraction: float = 1.0,
                         cover_tail: bool = True) -> np.ndarray:
-        """start indices of [seq_len] runs inside single recordings"""
+        """Return the start rows of all ``seq_len``-long runs that stay inside one recording.
+
+        Args:
+            seq_len: Run length in windows. Recordings shorter than this are skipped (logged).
+            stride: Step between starts.
+            max_unlabeled_fraction: Drop runs with a larger share of unlabeled windows.
+            cover_tail: Add a final start so the last windows of each recording are covered.
+        """
         starts = []
         short = 0
         for s, e in zip(self.rec_start, self.rec_end):
@@ -187,11 +264,13 @@ class EmbeddingStore:
         return starts
 
     def sequences(self, starts: np.ndarray, seq_len: int) -> tuple[np.ndarray, np.ndarray]:
+        """Return ``(x [S, seq_len, D], classes [S, seq_len])`` for the given start rows."""
         idx = np.asarray(starts)[:, None] + np.arange(seq_len)[None, :]
         x = self.rows(idx.reshape(-1)).reshape(len(starts), seq_len, -1)
         return x, self.classes[idx]
 
     def describe(self, scheme: LabelScheme) -> str:
+        """Return a one-line summary: recordings, windows and counts per class."""
         counts = np.bincount(np.where(self.classes == IGNORE, scheme.n_classes, self.classes),
                              minlength=scheme.n_classes + 1)
         parts = ", ".join(f"{n}={counts[i]}" for i, n in enumerate(scheme.class_names))

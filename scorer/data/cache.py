@@ -35,6 +35,20 @@ CACHE_FORMAT = "scorer-cache-v1"
 
 @dataclass(frozen=True)
 class PrepParams:
+    """Settings that decide how recordings are prepared; part of every cache's identity.
+
+    Changing any field changes ``digest()``, and ``DatasetCache`` then refuses the old
+    cache until ``prepare`` is re-run.
+
+    Attributes:
+        sample_rate: Sample rate of the source data in Hz (used by the low-pass filter).
+        win_len: Expected samples per window; a mismatch stops ``prepare`` with an error.
+        channels: Channel indices to keep from the source arrays.
+        lowpass_hz: Low-pass cut-off applied before normalising, or None for no filter.
+        clip: Normalised values are clipped to ``[-clip, clip]``.
+        dtype: Storage dtype of ``X.npy`` ("float16" halves disk and RAM use).
+        max_len_mismatch: Largest allowed difference in windows between X and y files.
+    """
     sample_rate: float
     win_len: int
     channels: tuple[int, ...]
@@ -44,17 +58,37 @@ class PrepParams:
     max_len_mismatch: int = 1
 
     def to_dict(self) -> dict:
+        """Return the parameters as a JSON-safe dict."""
         d = dict(self.__dict__)
         d["channels"] = list(self.channels)
         return d
 
     def digest(self) -> str:
+        """Return a 12-character hash of the parameters, used to detect stale caches."""
         return hashlib.sha1(json.dumps(self.to_dict(), sort_keys=True).encode()).hexdigest()[:12]
 
 
 def prepare_dataset(source_root: str | Path, cache_root: str | Path, name: str, params: PrepParams,
                     force: bool = False, seed: int = 0) -> Path:
-    """normalise all recordings under source_root into cache_root/name. Idempotent per recording."""
+    """Normalise every recording under ``source_root`` and store it in ``cache_root/name``.
+
+    Recordings whose ``meta.json`` already carries the same parameter digest are skipped,
+    so an interrupted run resumes where it stopped.
+
+    Args:
+        source_root: Folder searched for recordings (see ``discover_recordings``).
+        cache_root: Root of all caches.
+        name: Dataset name; becomes the sub-folder.
+        params: Preparation settings.
+        force: Re-prepare every recording even if it is up to date.
+        seed: Base seed for the random subsample used to estimate normalisation statistics.
+
+    Returns:
+        The dataset's cache folder.
+
+    Raises:
+        ValueError: If a recording's window length differs from ``params.win_len``.
+    """
     out_dir = Path(cache_root) / name
     out_dir.mkdir(parents=True, exist_ok=True)
     recordings = discover_recordings(source_root)
@@ -114,6 +148,15 @@ def prepare_dataset(source_root: str | Path, cache_root: str | Path, name: str, 
 
 @dataclass
 class CachedRecording:
+    """One prepared recording inside a dataset cache.
+
+    Attributes:
+        dataset: Name of the dataset it belongs to.
+        name: Recording name (folder name).
+        path: Folder holding ``X.npy``, ``y.npy`` and ``meta.json``.
+        n_windows: Number of windows.
+        labeled: False if the source had no label file; its labels are then all ``IGNORE``.
+    """
     dataset: str
     name: str
     path: Path
@@ -121,12 +164,24 @@ class CachedRecording:
     labeled: bool
 
     def x(self, mmap: bool = True) -> np.ndarray:
+        """Load the normalised windows, shape [N, C, T].
+
+        Args:
+            mmap: Memory-map the file (default) so nothing is read until indexed.
+        """
         return np.load(self.path / "X.npy", mmap_mode="r" if mmap else None)
 
     def raw_labels(self) -> np.ndarray:
+        """Load the raw label codes as int64, shape [N]."""
         return np.load(self.path / "y.npy").astype(np.int64)
 
     def classes(self, scheme: LabelScheme, unlabeled_as_wake: bool = False) -> np.ndarray:
+        """Return class indices for ``scheme`` (all ``IGNORE`` if the recording is unlabeled).
+
+        Args:
+            scheme: Label scheme to map raw codes with.
+            unlabeled_as_wake: See ``LabelScheme.to_class``.
+        """
         raw = self.raw_labels()
         if not self.labeled:
             return np.full(len(raw), IGNORE, dtype=np.int64)
@@ -134,9 +189,20 @@ class CachedRecording:
 
 
 class DatasetCache:
-    """read-only view of one prepared dataset"""
+    """Read-only view of one prepared dataset.
+
+    Args:
+        cache_root: Root of all caches.
+        name: Dataset name.
+        expect: If given, the cache must have been prepared with exactly these parameters.
+
+    Raises:
+        FileNotFoundError: If the dataset has not been prepared.
+        RuntimeError: If ``expect`` differs from the parameters the cache was built with.
+    """
 
     def __init__(self, cache_root: str | Path, name: str, expect: PrepParams | None = None):
+        """Open the dataset's index and check its parameters; see the class docstring."""
         self.name = name
         self.root = Path(cache_root) / name
         index_path = self.root / "index.json"
@@ -156,7 +222,9 @@ class DatasetCache:
 
     @property
     def n_windows(self) -> int:
+        """Total number of windows over all recordings."""
         return sum(r.n_windows for r in self.recordings)
 
     def __repr__(self) -> str:
+        """Return a short summary, e.g. ``DatasetCache('oxford', 12 recordings, 40000 windows)``."""
         return f"DatasetCache({self.name!r}, {len(self.recordings)} recordings, {self.n_windows} windows)"

@@ -16,6 +16,20 @@ import torch
 
 @dataclass
 class AugmentConfig:
+    """Probabilities and ranges for ``batch_augment``. Frequencies are in Hz.
+
+    Attributes:
+        noise_p, noise_sd: Chance and SD of additive Gaussian noise.
+        scale_p, scale_log10_range: Chance of amplitude scaling; factors are drawn
+            log-uniformly from 10^[-r, r] per channel.
+        dc_p, dc_range: Chance and range of a constant offset.
+        freq_mask_p: Chance of a spectral mask (random low-pass or band-stop).
+        protect_band_hz: Band that is never masked (theta, 6-9 Hz).
+        min_lowpass_hz: Lowest random low-pass cut-off.
+        bandstop_width_hz: Width of the random band-stop.
+        shift_p, max_shift_frac: Chance and size (fraction of the window) of a circular shift.
+        channel_dropout_p: Chance of replacing channel 1 with faint noise (multi-channel only).
+    """
     noise_p: float = 0.7
     noise_sd: float = 0.01
     scale_p: float = 0.7
@@ -32,13 +46,20 @@ class AugmentConfig:
 
 
 def batch_augment(x: torch.Tensor, sample_rate: float, cfg: AugmentConfig | None = None) -> torch.Tensor:
-    """x [B, C, T] -> augmented copy (independent random draws per sample)"""
+    """Return an augmented copy of a batch on its device; every window gets its own draws.
+
+    Args:
+        x: Batch [B, C, T].
+        sample_rate: Sample rate in Hz, used to convert the Hz settings to FFT bins.
+        cfg: Augmentation settings; defaults to ``AugmentConfig()``.
+    """
     cfg = cfg or AugmentConfig()
     x = x.clone()
     bsz, n_ch, t = x.shape
     dev = x.device
 
     def coin(p):
+        """Return a [B, 1, 1] float mask that is 1 with probability ``p``."""
         return (torch.rand(bsz, 1, 1, device=dev) < p).float()
 
     x = x + coin(cfg.noise_p) * torch.randn_like(x) * cfg.noise_sd

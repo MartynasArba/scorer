@@ -45,6 +45,7 @@ _OPTIONAL_KEYS = ("hann_window",)
 
 
 def file_digest(path: str | Path) -> str:
+    """Return a 16-character SHA-1 of a file's bytes; ties heads to the exact encoder file."""
     h = hashlib.sha1()
     with open(path, "rb") as f:
         for block in iter(lambda: f.read(1 << 20), b""):
@@ -53,10 +54,23 @@ def file_digest(path: str | Path) -> str:
 
 
 def now() -> str:
+    """Return the local time as an ISO string (seconds)."""
     return _dt.datetime.now().isoformat(timespec="seconds")
 
 
 def save_checkpoint(path: str | Path, model: nn.Module | dict, kind: str, meta: dict) -> Path:
+    """Save weights with their metadata in the self-describing format.
+
+    Args:
+        path: Output file; parent folders are created.
+        model: Module or state dict; tensors are moved to the CPU.
+        kind: "encoder", "context_mlp", "gru", "linear_probe", ...
+        meta: Everything needed to use the weights (see the module docstring); a
+            "saved" timestamp is added.
+
+    Returns:
+        ``path``.
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     state = model.state_dict() if isinstance(model, nn.Module) else model
@@ -67,7 +81,17 @@ def save_checkpoint(path: str | Path, model: nn.Module | dict, kind: str, meta: 
 
 
 def read_checkpoint(path: str | Path) -> tuple[dict, dict, str | None, bool]:
-    """returns (state_dict, meta, kind, is_legacy)"""
+    """Read a checkpoint in either format.
+
+    Returns:
+        ``(state_dict, meta, kind, is_legacy)``. Old raw state dicts give empty meta,
+        ``kind=None`` and ``is_legacy=True``.
+
+    Raises:
+        FileNotFoundError: If the file does not exist.
+        RuntimeError: For a pickled module (with the one-line conversion to run) or any
+            other unrecognised content.
+    """
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(path)
@@ -86,6 +110,19 @@ def read_checkpoint(path: str | Path) -> tuple[dict, dict, str | None, bool]:
 
 
 def strict_load(model: nn.Module, state: dict, ignore_unexpected: tuple[str, ...] = (), source: str = "") -> None:
+    """Load ``state`` into ``model`` and fail on any key mismatch.
+
+    Args:
+        model: Target module.
+        state: State dict to load.
+        ignore_unexpected: Key prefixes that may be present but unused, e.g.
+            "projection_head.".
+        source: File name for the error message.
+
+    Raises:
+        RuntimeError: If keys are missing (other than deterministic buffers such as
+            ``hann_window``) or unexpected.
+    """
     missing, unexpected = model.load_state_dict(state, strict=False)
     missing = [k for k in missing if not k.endswith(_OPTIONAL_KEYS)]
     unexpected = [k for k in unexpected if not k.startswith(ignore_unexpected)]
@@ -97,6 +134,11 @@ def strict_load(model: nn.Module, state: dict, ignore_unexpected: tuple[str, ...
 
 
 def build_encoder(meta: dict) -> nn.Module:
+    """Create an untrained encoder from checkpoint metadata ("arch", "sample_rate", "win_len", ...).
+
+    Raises:
+        KeyError: For an unknown architecture.
+    """
     arch = meta.get("arch", "SCDSSleepCNN")
     n_classes = len(meta.get("class_names", ("Wake", "NREM", "REM")))
     if arch == "SCDSSleepCNN":
@@ -111,7 +153,9 @@ def build_encoder(meta: dict) -> nn.Module:
 
 
 def encoder_meta(cfg_signal: Any, scheme, arch: str = "SCDSSleepCNN", **extra) -> dict:
-    """meta for a freshly built encoder, from the [signal] config section"""
+    """Build the metadata for a new encoder from the ``[signal]`` config section and the
+    label scheme; extra keyword arguments are added as is.
+    """
     return {
         "arch": arch,
         "sample_rate": float(cfg_signal.sample_rate),
@@ -127,10 +171,24 @@ def encoder_meta(cfg_signal: Any, scheme, arch: str = "SCDSSleepCNN", **extra) -
 
 def load_encoder(path: str | Path, device: str | torch.device = "cpu", expect: dict | None = None,
                  legacy_meta: dict | None = None) -> tuple[nn.Module, dict]:
-    """
-    load an encoder checkpoint (new or old format) in eval mode.
-    expect: e.g. {"sample_rate": 128, "win_len": 512} -> raise if the checkpoint disagrees.
-    legacy_meta: facts about OLD raw state dicts that cannot be inferred (arch, sample_rate, lowpass_hz).
+    """Load an encoder checkpoint (new or old format) in eval mode.
+
+    Args:
+        path: Checkpoint file. Wrapper checkpoints (SupCon, old context models) are
+            accepted; only their ``encoder.*`` part is used.
+        device: Device to move the model to.
+        expect: Values the checkpoint must agree with, e.g.
+            ``{"sample_rate": 128, "win_len": 512}``.
+        legacy_meta: Facts about old raw state dicts that cannot be inferred
+            (arch, sample_rate, lowpass_hz). Without it, old checkpoints get the window
+            length from the Hann buffer and the low-pass the old code really applied.
+
+    Returns:
+        ``(model, meta)``; meta also carries the file path and digest.
+
+    Raises:
+        RuntimeError: If the file is a head checkpoint, disagrees with ``expect``, or
+            does not match the architecture.
     """
     state, meta, kind, legacy = read_checkpoint(path)
     if kind not in (None, "encoder"):
@@ -163,6 +221,7 @@ def load_encoder(path: str | Path, device: str | torch.device = "cpu", expect: d
 
 
 def save_rf_bundle(path: str | Path, model, meta: dict) -> Path:
+    """Pickle a random-forest head together with its metadata; returns ``path``."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "wb") as f:
@@ -172,7 +231,14 @@ def save_rf_bundle(path: str | Path, model, meta: dict) -> Path:
 
 
 def load_rf_bundle(path: str | Path, legacy_meta: dict | None = None) -> tuple[Any, dict]:
-    """pickle files are code: only load bundles you created yourself"""
+    """Load a random-forest head and its metadata.
+
+    Old bare pickles are accepted with assumed metadata (context k=1, 3-state scheme).
+    Pickle files can run code when loaded: only load bundles you created.
+
+    Returns:
+        ``(model, meta)``.
+    """
     with open(path, "rb") as f:
         obj = pickle.load(f)
     if isinstance(obj, dict) and obj.get("format") == RF_FORMAT:

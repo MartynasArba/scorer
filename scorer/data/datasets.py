@@ -34,12 +34,25 @@ BALANCE_MODES = ("none", "undersample", "oversample")
 
 @dataclass
 class WindowSource:
+    """One cached recording plus its per-window class labels for the current scheme.
+
+    Attributes:
+        recording: The cached recording (windows are read lazily from its memory map).
+        classes: int8 class index per window; ``IGNORE`` for unlabeled windows.
+    """
     recording: CachedRecording
     classes: np.ndarray  # int8 class index per window, IGNORE for unlabeled
 
 
 def build_sources(caches: Sequence[DatasetCache], scheme: LabelScheme,
                   unlabeled_as_wake: bool = False) -> list[WindowSource]:
+    """Wrap every recording of ``caches`` as a ``WindowSource`` with labels mapped by ``scheme``.
+
+    Args:
+        caches: Prepared datasets to draw from.
+        scheme: Label scheme that turns raw codes into class indices.
+        unlabeled_as_wake: See ``LabelScheme.to_class``.
+    """
     sources = []
     for cache in caches:
         for rec in cache.recordings:
@@ -49,7 +62,26 @@ def build_sources(caches: Sequence[DatasetCache], scheme: LabelScheme,
 
 def epoch_selection(sources: Sequence[WindowSource], n_classes: int, balance: str, drop_unlabeled: bool,
                     seed: int, epoch: int) -> list[np.ndarray]:
-    """local window indices to use from every source in this epoch (sorted, may repeat when oversampling)"""
+    """Choose which windows of every source are used in one epoch.
+
+    Args:
+        sources: Recordings with their class labels.
+        n_classes: Number of classes in the scheme.
+        balance: "none" keeps every window; "undersample" draws the size of the
+            smallest class from each class; "oversample" draws the size of the largest,
+            with replacement.
+        drop_unlabeled: With ``balance="none"``, drop ``IGNORE`` windows.
+        seed: Run seed.
+        epoch: Epoch number; balanced selections differ per epoch but are reproducible.
+
+    Returns:
+        One sorted array of local window indices per source (indices may repeat when
+        oversampling).
+
+    Raises:
+        ValueError: If ``balance`` is not one of ``BALANCE_MODES``.
+        RuntimeError: If balancing is requested but no window has a label.
+    """
     if balance not in BALANCE_MODES:
         raise ValueError(f"balance must be one of {BALANCE_MODES}, got {balance!r}")
     if balance == "none":
@@ -81,10 +113,21 @@ def epoch_selection(sources: Sequence[WindowSource], n_classes: int, balance: st
 
 
 def legacy_loader_augment(x: np.ndarray, y: np.ndarray, wake_index: int | None, rng: np.random.Generator) -> np.ndarray:
-    """
-    vectorised port of BufferedSleepDataset._augment (applied per window on the CPU):
-    noise (p=.7, sd .01), amplitude scale 0.5-1.5 (p=.5), circular shift <=2% (p=.5),
-    large noise on Wake windows (p=.1, sd .5)
+    """Apply the old loader's CPU augmentations to a batch (vectorised port of
+    ``BufferedSleepDataset._augment``).
+
+    Per window: Gaussian noise (p=0.7, sd 0.01); amplitude scale 0.5-1.5 (p=0.5);
+    circular shift up to 2% of the window (p=0.5); strong noise on Wake windows
+    (p=0.1, sd 0.5).
+
+    Args:
+        x: Batch [B, C, T].
+        y: Class index per window [B].
+        wake_index: Class index of Wake, or None to skip the Wake-noise step.
+        rng: Random generator (seeded per worker and epoch).
+
+    Returns:
+        Augmented float32 copy of ``x``.
     """
     n, c, t = x.shape
     x = x.astype(np.float32, copy=True)
@@ -106,11 +149,23 @@ def legacy_loader_augment(x: np.ndarray, y: np.ndarray, wake_index: int | None, 
 def iter_window_batches(sources: Sequence[WindowSource], selection: Sequence[np.ndarray], batch_size: int,
                         buffer_windows: int, seed: int, epoch: int, worker_id: int = 0, num_workers: int = 1,
                         drop_last: bool = True) -> Iterator[tuple[np.ndarray, np.ndarray]]:
-    """
-    yields (x [B, C, T] in cache dtype, y [B] int64) batches.
-    Recording order: one permutation per epoch shared by all workers, then sharded by worker.
-    Within a worker: fill a RAM buffer up to `buffer_windows`, shuffle it, emit full batches,
-    carry the remainder into the next buffer.
+    """Yield shuffled batches ``(x [B, C, T], y [B] int64)`` for one worker and one epoch.
+
+    The recording order is one permutation per epoch, shared by all workers and then
+    sharded, so each recording is read by exactly one worker. Inside a worker, windows
+    fill a RAM buffer of ``buffer_windows``; the buffer is shuffled, full batches are
+    emitted, and the remainder is carried into the next buffer.
+
+    Args:
+        sources: Recordings with labels.
+        selection: Windows to use per source (from ``epoch_selection``).
+        batch_size: Windows per batch.
+        buffer_windows: Shuffle-buffer size in windows; bounds RAM per worker.
+        seed: Run seed.
+        epoch: Epoch number.
+        worker_id: Index of this DataLoader worker.
+        num_workers: Total number of workers.
+        drop_last: Drop the final partial batch (avoids tiny BatchNorm batches).
     """
     order = np.random.default_rng([seed, epoch, 11]).permutation(len(sources))
     shard = order[worker_id::num_workers]
@@ -120,6 +175,7 @@ def iter_window_batches(sources: Sequence[WindowSource], selection: Sequence[np.
     buf_n = 0
 
     def flush(final: bool):
+        """Shuffle the buffer and yield its full batches; keep or (if final) emit the rest."""
         nonlocal buf_x, buf_y, buf_n
         if buf_n == 0:
             return
@@ -161,15 +217,33 @@ try:  # torch wrapper (the numpy core above is importable without torch)
     from torch.utils.data import IterableDataset, get_worker_info
 
     class WindowBatchStream(IterableDataset):
-        """
-        IterableDataset yielding (x float32 [B, C, T], y int64 [B]) batches.
-        Call set_epoch(e) before each epoch; wrap with DataLoader(ds, batch_size=None, num_workers=...).
+        """Torch ``IterableDataset`` that yields whole batches ``(x float32 [B, C, T], y int64 [B])``.
+
+        Use it with ``DataLoader(ds, batch_size=None, num_workers=...)`` and call
+        ``set_epoch(e)`` before each epoch.
+
+        Args:
+            caches: Prepared datasets to stream.
+            scheme: Label scheme.
+            batch_size: Windows per batch.
+            buffer_windows: Shuffle-buffer size per worker (at least ``batch_size``).
+            balance: Class balancing mode, see ``epoch_selection``.
+            drop_unlabeled: Skip windows without a label.
+            seed: Run seed.
+            drop_last: Drop the final partial batch.
+            loader_augment: Apply ``legacy_loader_augment`` on the CPU.
+            unlabeled_as_wake: See ``LabelScheme.to_class``.
+
+        Raises:
+            ValueError: If balancing is requested with ``drop_unlabeled=False``.
+            RuntimeError: If ``drop_unlabeled`` is set but no window has a label.
         """
 
         def __init__(self, caches: Sequence[DatasetCache], scheme: LabelScheme, batch_size: int,
                      buffer_windows: int = 100_000, balance: str = "none", drop_unlabeled: bool = True,
                      seed: int = 0, drop_last: bool = True, loader_augment: bool = False,
                      unlabeled_as_wake: bool = False):
+            """Collect the sources and check the settings; see the class docstring."""
             super().__init__()
             self.sources = build_sources(caches, scheme, unlabeled_as_wake)
             self.scheme = scheme
@@ -189,16 +263,20 @@ try:  # torch wrapper (the numpy core above is importable without torch)
             self._len = sum(len(i) for i in self._selection(0)) // self.batch_size
 
         def set_epoch(self, epoch: int) -> None:
+            """Select the epoch whose window selection and shuffling the next iteration uses."""
             self.epoch = int(epoch)
 
         def _selection(self, epoch: int) -> list[np.ndarray]:
+            """Return the window selection for ``epoch``."""
             return epoch_selection(self.sources, self.scheme.n_classes, self.balance, self.drop_unlabeled,
                                    self.seed, epoch)
 
         def __len__(self) -> int:  # approximate number of batches per epoch (informational)
+            """Approximate number of batches per epoch (for progress logs only)."""
             return self._len
 
         def class_distribution(self, epoch: int = 0) -> dict[str, int]:
+            """Count windows per class (and 'unlabeled') in the selection of ``epoch``."""
             sel = self._selection(epoch)
             counts = np.zeros(self.scheme.n_classes + 1, dtype=np.int64)
             for s, ix in zip(self.sources, sel):
@@ -210,6 +288,7 @@ try:  # torch wrapper (the numpy core above is importable without torch)
             return out
 
         def __iter__(self):
+            """Yield the batches of the current epoch for this DataLoader worker."""
             info = get_worker_info()
             wid, nw = (info.id, info.num_workers) if info is not None else (0, 1)
             selection = self._selection(self.epoch)

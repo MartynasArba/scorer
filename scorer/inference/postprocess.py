@@ -13,13 +13,18 @@ from scorer.data.labels import LabelScheme
 
 
 def smooth_probs(probs: np.ndarray, sigma: float) -> np.ndarray:
+    """Smooth probabilities [N, C] along time with a Gaussian of ``sigma`` windows (0 or None: unchanged)."""
     if not sigma or sigma <= 0 or len(probs) < 2:
         return probs
     return gaussian_filter1d(probs, sigma=sigma, axis=0, mode="nearest")
 
 
 def _single_window_cleanup(states: np.ndarray, wake: int, passes: int = 2) -> np.ndarray:
-    """an isolated non-Wake window between two identical neighbours takes their state (micro-arousals kept)"""
+    """Replace isolated single windows by the state of their two (equal) neighbours.
+
+    Wake windows are never replaced, so single-window micro-arousals survive. Runs
+    ``passes`` times.
+    """
     s = states.copy()
     for _ in range(passes):
         for i in range(1, len(s) - 1):
@@ -29,8 +34,12 @@ def _single_window_cleanup(states: np.ndarray, wake: int, passes: int = 2) -> np
 
 
 def heuristics_full(states: np.ndarray, scheme: LabelScheme) -> np.ndarray:
-    """port of scoring.apply_heuristics: forbid Wake->REM (the whole REM run after Wake becomes Wake,
-    because the rule is applied left to right), then single-window cleanup twice"""
+    """Apply the old ``apply_heuristics`` rules to a class sequence.
+
+    1. Wake -> REM is not allowed: a REM window right after Wake becomes Wake. Because
+       the rule runs left to right, a whole REM run that starts after Wake becomes Wake.
+    2. Single-window cleanup, twice (see ``_single_window_cleanup``).
+    """
     wake, rem = scheme.index_of("Wake"), scheme.index_of("REM")
     s = np.asarray(states).copy()
     if len(s) < 3:
@@ -42,7 +51,7 @@ def heuristics_full(states: np.ndarray, scheme: LabelScheme) -> np.ndarray:
 
 
 def heuristics_lite(states: np.ndarray, scheme: LabelScheme) -> np.ndarray:
-    """port of apply_heuristics_lite: single-window cleanup only"""
+    """Apply only the single-window cleanup (port of ``apply_heuristics_lite``)."""
     s = np.asarray(states)
     if len(s) < 3:
         return s.copy()
@@ -51,7 +60,22 @@ def heuristics_lite(states: np.ndarray, scheme: LabelScheme) -> np.ndarray:
 
 def predict_classes(probs: np.ndarray, bounds: list[tuple[int, int]], scheme: LabelScheme,
                     smooth_sigma: float = 0.0, heuristics: str = "none") -> np.ndarray:
-    """probabilities [N, C] -> classes [N], smoothing + heuristics inside each (start, end) recording span"""
+    """Turn probabilities into classes, recording by recording.
+
+    Args:
+        probs: Probabilities [N, C].
+        bounds: ``(start, end)`` row range of every recording; smoothing and
+            heuristics never cross these boundaries.
+        scheme: Label scheme (to find Wake and REM).
+        smooth_sigma: Gaussian smoothing in windows (0 = off).
+        heuristics: "none", "lite" or "full".
+
+    Returns:
+        int64 classes [N].
+
+    Raises:
+        ValueError: For an unknown ``heuristics`` value.
+    """
     if heuristics not in ("none", "lite", "full"):
         raise ValueError(f"heuristics must be none|lite|full, got {heuristics!r}")
     out = np.empty(len(probs), dtype=np.int64)

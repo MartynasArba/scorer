@@ -16,6 +16,7 @@ from scorer.data.signal import robust_normalize
 
 
 def _plt():
+    """Import pyplot with the Agg backend unless a backend is already set."""
     import matplotlib
 
     matplotlib.use("Agg", force=False)
@@ -25,6 +26,7 @@ def _plt():
 
 
 def _finish(fig, path, show):
+    """Lay out ``fig``, save it to ``path`` (if given), show it if asked, close it, and return ``path``."""
     plt = _plt()
     fig.tight_layout()
     if path is not None:
@@ -37,7 +39,16 @@ def _finish(fig, path, show):
 
 
 def plot_embeddings(x_good: np.ndarray, x_bad: np.ndarray, encoder_path, path=None, device="cpu", show=False):
-    """PCA of encoder embeddings of two window sets (normalised, [N, C, T])"""
+    """Plot a 2-D PCA of encoder embeddings for a reference and an out-of-domain window set.
+
+    Args:
+        x_good: Normalised reference windows [N, C, T].
+        x_bad: Normalised out-of-domain windows [N, C, T].
+        encoder_path: Encoder checkpoint.
+        path: PNG to write, or None.
+        device: Device for the encoder.
+        show: Also open an interactive window.
+    """
     import torch
     from sklearn.decomposition import PCA
 
@@ -57,7 +68,7 @@ def plot_embeddings(x_good: np.ndarray, x_bad: np.ndarray, encoder_path, path=No
 
 
 def plot_domain_diagnostics(clean: np.ndarray, ood: np.ndarray, fs: float, path=None, show=False):
-    """amplitude density and Welch PSD of two 1D signals"""
+    """Plot amplitude histograms and Welch power spectra of a reference and an OOD signal (1-D)."""
     plt = _plt()
     clean, ood = np.ravel(clean), np.ravel(ood)
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
@@ -77,7 +88,7 @@ def plot_domain_diagnostics(clean: np.ndarray, ood: np.ndarray, fs: float, path=
 
 
 def check_tensors(raw: np.ndarray, processed: np.ndarray, path=None, show=False):
-    """per-window SD of raw vs processed [N, C, T] + loudest / quietest window"""
+    """Plot per-window SD of raw vs processed windows [N, C, T], plus the loudest and quietest window."""
     plt = _plt()
     raw_sd, proc_sd = raw[:, 0].std(-1), processed[:, 0].std(-1)
     worst, best = int(np.argmax(raw_sd)), int(np.argmin(raw_sd))
@@ -95,7 +106,7 @@ def check_tensors(raw: np.ndarray, processed: np.ndarray, path=None, show=False)
 
 
 def theta_delta_ratio(x: np.ndarray, fs: float) -> np.ndarray:
-    """per-window theta (6-9 Hz) / delta (1-4 Hz) power. x: [N, T]"""
+    """Return per-window theta (6-9 Hz) / delta (1-4 Hz) power for windows ``x`` [N, T]."""
     f, p = welch(x, fs=fs, nperseg=min(x.shape[-1], int(fs)), axis=-1)
     d = p[..., (f >= 1) & (f <= 4)].sum(-1)
     t = p[..., (f >= 6) & (f <= 9)].sum(-1)
@@ -104,7 +115,14 @@ def theta_delta_ratio(x: np.ndarray, fs: float) -> np.ndarray:
 
 def compare_ood(ood_file, reference_file, fs: float, out_dir, encoder_paths=(), lowpass_hz: float | None = 49.0,
                 channel: int = 0, device="cpu", show=False) -> dict:
-    """port of compare_ood: two raw X files -> figures + clipping / kurtosis numbers"""
+    """Compare an out-of-domain recording with a reference recording.
+
+    Both raw X files are normalised the way ``prepare`` does it. Writes PCA plots (one per
+    encoder), window-SD, amplitude/PSD and theta/delta figures to ``out_dir``.
+
+    Returns:
+        ``{"stats": clipping %, kurtosis and median theta/delta for both, "files": paths}``.
+    """
     out_dir = Path(out_dir)
     load = lambda f: to_windows_channels_time(load_array(Path(f)), f)[:, channel:channel + 1].astype(np.float32)  # noqa
     ref_raw, ood_raw = load(reference_file), load(ood_file)
@@ -135,7 +153,16 @@ def compare_ood(ood_file, reference_file, fs: float, out_dir, encoder_paths=(), 
 
 
 def plot_trace(cache_recording, scheme, index: int | None = None, path=None, show=False, seed: int = 0):
-    """one prepared window with its label (sanity check that X and y line up)"""
+    """Plot one prepared window with its label; a quick check that X and y line up.
+
+    Args:
+        cache_recording: A ``CachedRecording``.
+        scheme: Label scheme for the title.
+        index: Window to show; None picks a random one (seeded).
+        path: PNG to write, or None.
+        show: Also open an interactive window.
+        seed: Seed for the random pick.
+    """
     rng = np.random.default_rng(seed)
     x = cache_recording.x()
     cls = cache_recording.classes(scheme)

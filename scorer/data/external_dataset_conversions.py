@@ -8,6 +8,13 @@ Fixes vs. the previous version (re-run the conversion, then `prepare --force-pre
     'sleep' (e.g. "REM sleep", "paradoxical sleep") became NREM. Matching is now ordered
     NREM-patterns -> REM -> Wake -> generic sleep, and every distinct annotation string is
     logged with the code it received (check this table once!). An explicit label_map overrides.
+  * Oxford .hyp: the time on each row is where that bout ENDS, not where it starts. Reading it
+    as a start time gave every bout the label of the bout before it (checked on oxford_test:
+    accuracy 6% as converted, 93% with labels moved one bout later; Wake-labelled windows had
+    the most delta power). hyp_to_tensor now reads bout ends (time_column="end").
+  * Re-running the conversion no longer duplicates recordings: scan_and_move replaced every
+    existing folder name with "<name>0", "<name>1", ... so each run added another copy.
+    It now overwrites files of the same name and warns about folders this run did not write.
   * MSSV events.tsv: the duration assert indexed a ROW (states[1]) instead of the duration column.
   * X and y lengths are reconciled (trimmed to the shorter, logged) instead of crashing on
     reshape or silently misaligning; tensors are saved on the CPU.
@@ -33,6 +40,11 @@ EPOCH_S = 4.0
 # shared helpers
 # ---------------------------------------------------------------------------------------------
 def _window_and_align(signal_1d: torch.Tensor, y: torch.Tensor, win: int, name: str) -> tuple[torch.Tensor, torch.Tensor]:
+    """Cut a 1-D signal into windows of ``win`` samples and align it with its labels.
+
+    If the number of windows and labels differ, both are trimmed to the shorter and a
+    warning names the recording. Returns CPU tensors ``(x [N, 1, win], y [N] int64)``.
+    """
     n_x = signal_1d.numel() // win
     n = min(n_x, int(y.numel()))
     if n_x != y.numel():
@@ -41,7 +53,7 @@ def _window_and_align(signal_1d: torch.Tensor, y: torch.Tensor, win: int, name: 
 
 
 def _resample_filter(x: torch.Tensor, fs_in: float, fs_out: float, device: str) -> torch.Tensor:
-    """x [C, T] -> resampled + 0.5-49 Hz band-passed [C, T']"""
+    """Resample ``x`` [C, T] from ``fs_in`` to ``fs_out`` and band-pass it to 0.5-49 Hz."""
     from torchaudio.functional import resample
 
     from scorer.data.preprocessing import bandpass_filter
@@ -54,10 +66,18 @@ def _resample_filter(x: torch.Tensor, fs_in: float, fs_out: float, device: str) 
 # MLS-Net (https://doi.org/10.3390/bios14080406)
 # ---------------------------------------------------------------------------------------------
 def load_mlsnet_npz(path, new_sr: float = 128.0, device: str = "cuda", n_rows: int = 7):
-    """
-    x: obj['x'][:, :, 0:2000] are 4-s ECoG epochs at 500 Hz. The stream is cut into `n_rows`
-    contiguous rows before resampling (as before; the row count's meaning is not documented -
-    check it). Labels 0=NREM, 1=REM, 2=Wake -> raw codes 2, 4, 1.
+    """Convert the MLS-Net validation file to windows at ``new_sr``.
+
+    ``obj['x'][:, :, 0:2000]`` holds 4-s ECoG epochs at 500 Hz. The stream is cut into
+    ``n_rows`` contiguous rows before resampling, as in the original script (the meaning
+    of the row count is not documented; check it). Labels 0 NREM, 1 REM, 2 Wake become
+    raw codes 2, 4, 1.
+
+    Returns:
+        ``(x [N, 1, win], y [N])`` CPU tensors.
+
+    Raises:
+        ValueError: If the samples cannot be split evenly into ``n_rows`` rows.
     """
     obj = np.load(path)
     x = obj["x"][:, :, 0:2000]
@@ -79,6 +99,7 @@ def load_mlsnet_npz(path, new_sr: float = 128.0, device: str = "cuda", n_rows: i
 # MSSV (OpenNeuro ds006366)
 # ---------------------------------------------------------------------------------------------
 def parse_channel_tsv(path) -> dict:
+    """Read a BIDS ``channels.tsv`` into ``{column name: list of values}``."""
     with open(path) as f:
         lines = [line.rstrip("\n").split("\t") for line in f if line.strip()]
     header = lines[0]
@@ -86,7 +107,12 @@ def parse_channel_tsv(path) -> dict:
 
 
 def parse_state_tsv(path) -> np.ndarray:
-    """onset, duration, stage. All epochs must be 4 s except possibly the last; onsets start at 0."""
+    """Read an MSSV ``events.tsv`` and return the stage code of every 4-s epoch.
+
+    Raises:
+        ValueError: If any epoch other than the last is not 4 s long, the first onset is
+            not 0, or the onsets are not contiguous 4-s steps.
+    """
     states = np.loadtxt(path, skiprows=1, delimiter="\t", ndmin=2)
     durations = states[:, 1]
     if np.any(durations[:-1] != EPOCH_S):
@@ -99,7 +125,19 @@ def parse_state_tsv(path) -> np.ndarray:
 
 
 def parse_edf(edf_path, channel_names: list[str] | None = None):
-    """returns ([T, C] tensor of EEG channels, sample rate)"""
+    """Read selected channels from an EDF file.
+
+    Args:
+        edf_path: EDF file.
+        channel_names: Substrings to match channel labels; None picks every channel
+            whose label contains "eeg".
+
+    Returns:
+        ``(signals [T, C] float32 tensor, sample rate in Hz)``.
+
+    Raises:
+        ValueError: If no channel matches or the chosen channels have different rates.
+    """
     from pyedflib import highlevel
 
     signals, headers, _ = highlevel.read_edf(str(edf_path))
@@ -118,6 +156,7 @@ def parse_edf(edf_path, channel_names: list[str] | None = None):
 
 
 def parse_mssv_paths(dir_path) -> dict:
+    """Sort the files of one MSSV ``eeg`` folder into EDF, events, channels and unknown lists."""
     paths = {"eeg_paths": [], "state_paths": [], "channel_paths": [], "unknown_paths": []}
     for p in sorted(glob.glob(f"{dir_path}/*")):
         if p.endswith(".edf"):
@@ -132,7 +171,15 @@ def parse_mssv_paths(dir_path) -> dict:
 
 
 def load_mssv_rec(dir_path, new_sr: float = 128.0, device: str = "cuda") -> None:
-    """MSSV stages: 1 Wake, 2 NREM, 3 REM, 4 artifact -> raw codes 1, 2, 4, 0. Saves one folder per run x channel."""
+    """Convert one MSSV ``eeg`` folder; writes one sub-folder per run and channel.
+
+    MSSV stages 1 Wake, 2 NREM, 3 REM, 4 artifact become raw codes 1, 2, 4, 0.
+    Events and EDF files are paired by sort order; a warning is logged if their names
+    do not match.
+
+    Raises:
+        RuntimeError: If the folder has different numbers of event and EDF files.
+    """
     paths = parse_mssv_paths(dir_path)
     if len(paths["state_paths"]) != len(paths["eeg_paths"]):
         raise RuntimeError(f"{dir_path}: {len(paths['state_paths'])} event files vs {len(paths['eeg_paths'])} EDFs")
@@ -171,6 +218,12 @@ _WAKE_PAT = re.compile(r"\b(wake|awake|w)\b")
 
 
 def annotation_to_code(text: str, label_map: dict[str, int] | None = None) -> int:
+    """Map one Oxford hypnogram annotation string to a raw code.
+
+    Matching order: an explicit ``label_map`` entry, then NREM patterns, REM, Wake, and
+    finally a generic "sleep" (NREM). Anything else is 0 (unlabeled). The order matters:
+    "REM sleep" must become REM, not NREM.
+    """
     t = text.strip().lower()
     if label_map and text.strip() in label_map:
         return int(label_map[text.strip()])
@@ -185,8 +238,31 @@ def annotation_to_code(text: str, label_map: dict[str, int] | None = None) -> in
     return 0
 
 
-def hyp_to_tensor(hypnogram_path, label_map: dict[str, int] | None = None) -> tuple[torch.Tensor, dict]:
-    """returns (raw codes per 4-s epoch, {annotation string: (code, n_segments)})"""
+def hyp_to_tensor(hypnogram_path, label_map: dict[str, int] | None = None,
+                  time_column: str = "end") -> tuple[torch.Tensor, dict]:
+    """Convert an Oxford ``.hyp`` file to one raw code per 4-s epoch.
+
+    Epoch i starts at 4 * i seconds (the old ``linspace`` version drifted late) and gets the
+    state of the bout that contains its start.
+
+    Args:
+        hypnogram_path: The ``.hyp`` file (``Duration_sec`` header, then label / time rows).
+        label_map: Explicit annotation -> raw code overrides.
+        time_column: What the time on each row means. "end" (the Oxford files): the bout
+            with that label ends there, so row k covers [time[k-1], time[k]) and the first
+            row starts at 0. "start": the bout starts there (the old reading, which shifted
+            every label one bout early on oxford_test).
+
+    Returns:
+        ``(codes, table)``: a long tensor of raw codes and
+        ``{annotation string: (code, number of segments)}`` for checking the mapping.
+
+    Raises:
+        ValueError: If the ``Duration_sec`` header is missing, times are unsorted, or
+            ``time_column`` is not "end" or "start".
+    """
+    if time_column not in ("end", "start"):
+        raise ValueError(f"time_column must be 'end' or 'start', got {time_column!r}")
     duration = None
     with open(hypnogram_path) as f:
         row = [v for v in re.split(r"[\t ]+", f.readline().strip()) if v]
@@ -200,9 +276,18 @@ def hyp_to_tensor(hypnogram_path, label_map: dict[str, int] | None = None) -> tu
         raise ValueError(f"{hypnogram_path}: onsets are not sorted")
     n_epochs = int(duration // EPOCH_S)
     starts = np.arange(n_epochs) * EPOCH_S  # FIX: was np.linspace(0, duration, n) -> drifting epochs
-    seg = np.searchsorted(onsets, starts, side="right") - 1
+    if time_column == "end":
+        # first bout whose end lies after the epoch start; epochs after the last end stay unlabeled
+        seg = np.searchsorted(onsets, starts, side="right")
+        valid = seg < len(onsets)
+        if abs(onsets[-1] - duration) > EPOCH_S:
+            log.warning("%s: last bout ends at %.1f s but Duration_sec is %.1f s; check time_column",
+                        Path(hypnogram_path).name, onsets[-1], duration)
+    else:
+        seg = np.searchsorted(onsets, starts, side="right") - 1
+        valid = seg >= 0
     codes_per_segment = np.array([annotation_to_code(a, label_map) for a in annotations])
-    codes = np.where(seg >= 0, codes_per_segment[np.clip(seg, 0, None)], 0)
+    codes = np.where(valid, codes_per_segment[np.clip(seg, 0, len(onsets) - 1)], 0)
     table = {}
     for a, c in zip(annotations, codes_per_segment):
         code, n = table.get(str(a), (int(c), 0))
@@ -212,6 +297,12 @@ def hyp_to_tensor(hypnogram_path, label_map: dict[str, int] | None = None) -> tu
 
 def load_oxford_rec(edf_path, hypnogram_path, new_sr: float = 128.0, device: str = "cuda",
                     channels: list[str] | None = None, label_map: dict[str, int] | None = None) -> dict:
+    """Convert one Oxford recording (EDF + hypnogram); writes one sub-folder per channel.
+
+    Returns:
+        The annotation table from ``hyp_to_tensor``, so the caller can log every string
+        and the code it received.
+    """
     edf_path, hypnogram_path = Path(edf_path), Path(hypnogram_path)
     y, table = hyp_to_tensor(hypnogram_path, label_map)
     log.info("%s annotation -> code: %s", hypnogram_path.name, table)
@@ -228,7 +319,14 @@ def load_oxford_rec(edf_path, hypnogram_path, new_sr: float = 128.0, device: str
 
 
 def _pair_by_stem(edf_paths, hyp_paths) -> list[tuple[str, str]]:
-    """pair EDF and hypnogram files by recording name; falls back to sort order (old behaviour) with a warning"""
+    """Pair EDF files with hypnograms by recording name.
+
+    Falls back to sort order (the old behaviour) with a warning listing the pairs if any
+    EDF has zero or several name matches.
+
+    Raises:
+        RuntimeError: If the two lists have different lengths.
+    """
     if len(edf_paths) != len(hyp_paths):
         raise RuntimeError(f"{len(edf_paths)} EDF files but {len(hyp_paths)} hypnograms")
     pairs = []
@@ -243,19 +341,35 @@ def _pair_by_stem(edf_paths, hyp_paths) -> list[tuple[str, str]]:
     return pairs
 
 
-def scan_and_move(initial_dir, dest_dir=".") -> None:
+def scan_and_move(initial_dir, dest_dir=".") -> set[str]:
+    """Move every ``.pt`` file under ``initial_dir`` to ``dest_dir/<recording>/``.
+
+    A file with the same name from an earlier run is replaced, so re-running a conversion
+    updates the recordings instead of adding "<name>0", "<name>1" copies. Folders in
+    ``dest_dir`` that this call did not write (for example from an older converter) are
+    listed in a warning: delete them, or the pipeline will treat them as extra recordings.
+
+    Returns:
+        The names of the recording folders written.
+    """
     dest_dir = Path(dest_dir)
     files = [Path(f) for f in Path(initial_dir).rglob("*.pt")]
+    written, replaced = set(), 0
     for file in files:
         rec_id = file.parent.stem
         target = dest_dir / rec_id / file.name
-        i = 0
-        while target.exists():
-            target = dest_dir / f"{rec_id}{i}" / file.name
-            i += 1
+        replaced += target.exists()
         target.parent.mkdir(parents=True, exist_ok=True)
         os.replace(file, target)
-    log.info("moved %d files from %s to %s", len(files), initial_dir, dest_dir)
+        written.add(rec_id)
+    log.info("moved %d files from %s to %s (%d replaced files from an earlier run)", len(files), initial_dir,
+             dest_dir, replaced)
+    existing = dest_dir.iterdir() if dest_dir.exists() else []
+    stale = sorted(d.name for d in existing if d.is_dir() and d.name not in written)
+    if written and stale:
+        log.warning("%s: %d folders were not written by this run and will be read as extra recordings "
+                    "(older conversions?) - delete them: %s", dest_dir, len(stale), stale[:20])
+    return written
 
 
 # ---------------------------------------------------------------------------------------------
@@ -270,6 +384,15 @@ OXFORD_SETS = [  # (sub-folder, hypnogram glob suffix, EDF channel names, output
 
 def run(raw_root: str = RAW_ROOT, new_sr: float = 128.0, device: str = "cuda", out_name: str = "128HZ_CONVERTED",
         label_map: dict[str, int] | None = None) -> None:
+    """Convert MLS-Net, MSSV and the four Oxford sets, then gather the outputs.
+
+    Args:
+        raw_root: Folder that holds the downloaded datasets.
+        new_sr: Output sample rate in Hz.
+        device: Device for resampling and filtering.
+        out_name: Output folder name under ``raw_root``.
+        label_map: Explicit Oxford annotation -> raw code overrides.
+    """
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
     raw_root = Path(raw_root)
     out_root = raw_root / out_name

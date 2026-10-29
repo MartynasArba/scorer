@@ -19,7 +19,17 @@ BANDS = {"delta": (0.5, 4.0), "sigma": (10.0, 15.0), "theta": (5.0, 9.0), "gamma
 
 
 def welch_batched(windows, fs: float, nperseg: int | None = None, device: str = "cpu"):
-    """windows [N, T] -> (freqs [F], psd [N, F]); mean |STFT|^2 with 50 % overlap (torch, CPU or CUDA)"""
+    """Welch power spectra of many windows at once (torch, CPU or CUDA).
+
+    Args:
+        windows: Signals [N, T].
+        fs: Sample rate in Hz.
+        nperseg: Segment length; defaults to 1 s.
+        device: Torch device.
+
+    Returns:
+        ``(freqs [F], psd [N, F])`` as numpy arrays (Hann window, 50% overlap).
+    """
     import torch
 
     x = torch.as_tensor(np.asarray(windows), dtype=torch.float32, device=device)
@@ -33,6 +43,7 @@ def welch_batched(windows, fs: float, nperseg: int | None = None, device: str = 
 
 
 def band_powers(windows: np.ndarray, fs: float, bands: dict = BANDS, device: str = "cpu") -> dict[str, np.ndarray]:
+    """Return summed Welch power per band, ``{band name: [N]}``; bands are capped at Nyquist."""
     freqs, psd = welch_batched(windows, fs, device=device)
     hi = fs / 2
     return {name: psd[:, (freqs >= lo) & (freqs <= min(up, hi))].sum(1) for name, (lo, up) in bands.items()}
@@ -40,7 +51,11 @@ def band_powers(windows: np.ndarray, fs: float, bands: dict = BANDS, device: str
 
 def extract_spectral_features(folder, fs: float, channel: int = 0, lowpass_hz: float | None = 49.0,
                               device: str = "cpu") -> np.ndarray:
-    """one recording folder -> array [n_bands, N] in BANDS order (as the old function returned)"""
+    """Return band powers of one recording folder as [n_bands, N] in ``BANDS`` order.
+
+    The first recording found is loaded, normalised like ``prepare`` and analysed on
+    ``channel``. Same output layout as the old function.
+    """
     recs = discover_recordings(folder)
     x, _ = load_recording(recs[0], [channel])
     x, _ = robust_normalize(x, fs, lowpass_hz)
@@ -49,7 +64,12 @@ def extract_spectral_features(folder, fs: float, channel: int = 0, lowpass_hz: f
 
 
 def compute_all_spectral_features(meta_csv, out_dir, fs: float, lowpass_hz: float | None = 49.0, device: str = "cpu"):
-    """CSV with proj_dir + channel_selected ('f'/'p') -> <out_dir>/<recording>_spectral_features.npy"""
+    """Save band powers for every project listed in a metadata CSV.
+
+    The CSV needs "proj_dir" and "channel_selected" ("f" = channel 0, "p" = channel 1).
+    The newest folder under each project's ``processed/`` is used, and the result is
+    written to ``<out_dir>/<project>_spectral_features.npy``.
+    """
     import pandas as pd
 
     from scorer.inference.scoring import _legacy_folder_key

@@ -4,6 +4,9 @@
 
 [run]
 name = "128hz"                                   # outputs go to <runs_dir>/<name>/; same name = resume
+mode = "tuned"            # tuned: align to the target's unlabeled inputs (labels never read), then score
+                          # zeroshot: skip alignment; heads use the SupCon encoder. Both modes share
+                          # prepare/simclr/supcon in this run folder; embed/heads/evaluate are kept per mode.
 runs_dir = 'C:\Users\marty\Projects\scorer\runs'
 seed = 0
 device = "auto"                                  # auto | cuda | cpu
@@ -51,7 +54,7 @@ temperature = 0.2
 
 [adversarial]
 source = ["mssv"]
-target = ["oxford_test"]  # WARNING: also evaluated below -> not zero-shot. Prefer an unlabeled set you don't report on.
+target = ["oxford_test"]  # only its inputs are used; scores on it are "tuned" (semi-zero-shot) - see run.mode
 init = "supcon"
 epochs = 10
 batch_size = 1024

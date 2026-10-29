@@ -26,6 +26,14 @@ FS, WIN = 128, 512
 
 
 def synth_recording(rng, n: int, with_unlabeled: bool, with_rem: bool = True):
+    """Make one synthetic recording whose classes have distinct spectra.
+
+    Wake is 20-40 Hz, NREM 1-3 Hz and REM 6-8 Hz, in bouts of 5-30 windows, with a random
+    gain. Optionally 5% of windows are unlabeled and REM can be left out.
+
+    Returns:
+        ``(x [n, 1, 512] float32, y [n] raw codes)``.
+    """
     t = np.arange(WIN) / FS
     states = []
     cur = 1
@@ -46,6 +54,7 @@ def synth_recording(rng, n: int, with_unlabeled: bool, with_rem: bool = True):
 
 
 def write_dataset(root: Path, name: str, n_recs: int, rng, with_unlabeled: bool, use_pt: bool, no_rem_first=False):
+    """Write ``n_recs`` synthetic recordings to ``root/name/rec<i>_ch0`` as .pt or .npy files."""
     for r in range(n_recs):
         d = root / name / f"rec{r}_ch0"
         d.mkdir(parents=True, exist_ok=True)
@@ -61,6 +70,7 @@ def write_dataset(root: Path, name: str, n_recs: int, rng, with_unlabeled: bool,
 
 
 def numpy_checks(tmp: Path) -> None:
+    """Check labels, cache, batching, balancing, context, RF and metrics without torch."""
     from scorer.data.cache import DatasetCache, PrepParams, prepare_dataset
     from scorer.data.datasets import build_sources, epoch_selection, iter_window_batches
     from scorer.data.labels import IGNORE, THREE_STATE
@@ -102,6 +112,7 @@ def numpy_checks(tmp: Path) -> None:
 
     # context never crosses recordings
     def fake_store(cache):
+        """Build an EmbeddingStore from simple spectral features of a cache (stands in for an encoder)."""
         feats, cls, spans, off = [], [], [], 0
         for r in cache.recordings:
             x = np.asarray(r.x(), dtype=np.float32)[:, 0]
@@ -128,6 +139,7 @@ def numpy_checks(tmp: Path) -> None:
 
 
 def torch_pipeline(tmp: Path) -> None:
+    """Run every pipeline stage in both modes on a small synthetic config, then score with ``SleepScorer``."""
     from scorer.pipeline.run import main
 
     rng = np.random.default_rng(1)
@@ -200,13 +212,18 @@ datasets = ["val"]
 heads = ["context_mlp", "context_rf", "gru", "linear_probe"]
 """)
     assert main(["--config", str(cfg)]) == 0, "pipeline failed (see log above)"
-    summary = (tmp / "runs" / "smoke" / "evaluate" / "summary.csv").read_text()
-    print(summary)
+    print((tmp / "runs" / "smoke" / "evaluate" / "tuned" / "summary.csv").read_text())
+    # zero-shot mode on the same run: reuses simclr/supcon, never touches the adversarial encoder
+    assert main(["--config", str(cfg), "--set", "run.mode=zeroshot", "--stages", "embed", "context_mlp", "evaluate",
+                 "--set", 'evaluate.heads=["context_mlp"]']) == 0, "zero-shot run failed"
+    print((tmp / "runs" / "smoke" / "evaluate" / "zeroshot" / "summary.csv").read_text())
 
     from scorer.inference.scoring import SleepScorer
 
     man = json.loads((tmp / "runs" / "smoke" / "manifest.json").read_text())
-    scorer = SleepScorer(man["stages"]["embed"]["encoder_path"], man["stages"]["context_mlp"]["head"], device="cpu")
+    assert man["stages"]["embed@zeroshot"]["encoder_stage"] == "supcon", man["stages"]["embed@zeroshot"]
+    scorer = SleepScorer(man["stages"]["embed@tuned"]["encoder_path"], man["stages"]["context_mlp@tuned"]["head"],
+                         device="cpu")
     res = scorer.score_folder(tmp / "raw_pt" / "val" / "rec0_ch0", heuristics="lite")
     assert set(np.unique(res.gui_codes)) <= {1, 2, 4}, np.unique(res.gui_codes)
     print("[torch pipeline] OK; scorer API produced", len(res.gui_codes), "GUI codes")

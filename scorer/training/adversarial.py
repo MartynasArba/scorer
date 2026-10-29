@@ -26,6 +26,10 @@ log = logging.getLogger(__name__)
 
 
 def alpha_schedule(step: int, total: int, warmup_fraction: float) -> float:
+    """Return the gradient-reversal strength for a training step.
+
+    Zero during the first ``warmup_fraction`` of training, then rising linearly to 1.
+    """
     p = step / max(total, 1)
     return 0.0 if p < warmup_fraction else (p - warmup_fraction) / (1.0 - warmup_fraction)
 
@@ -34,6 +38,34 @@ def train_adversarial(encoder: nn.Module, source_stream, target_stream, *, epoch
                       out_dir: Path, enc_meta: dict, lr_encoder: float = 2e-6, lr_freq_flatten: float = 1e-5,
                       lr_heads: float = 1e-3, warmup_fraction: float = 0.2, num_workers: int = 2,
                       max_batches_per_epoch: int | None = None) -> dict:
+    """Fine-tune the encoder so source and target embeddings become indistinguishable (DANN).
+
+    A state classifier is trained on the labeled source; a domain classifier behind
+    gradient reversal tries to tell source from target, and the encoder learns to
+    defeat it. Target labels are never read. Domain accuracy near 0.5 means the domains
+    are aligned.
+
+    Args:
+        encoder: ``SCDSSleepCNN`` with ``state_classifier`` and ``domain_classifier``.
+        source_stream: Labeled source windows.
+        target_stream: Target windows (labels ignored).
+        epochs: Number of epochs.
+        device: Training device.
+        out_dir: Folder for ``encoder_final.pt``.
+        enc_meta: Encoder metadata stored in the checkpoint.
+        lr_encoder: Learning rate of the conv streams (small, to keep pretraining).
+        lr_freq_flatten: Learning rate of the frequency projection.
+        lr_heads: Learning rate of both classifiers.
+        warmup_fraction: Share of steps before gradient reversal starts.
+        num_workers: DataLoader workers per stream.
+        max_batches_per_epoch: Cap per epoch, for quick test runs.
+
+    Returns:
+        ``{"final": checkpoint path, "history": per-epoch stats}``.
+
+    Raises:
+        RuntimeError: If either stream yields no batches.
+    """
     out_dir = Path(out_dir)
     encoder.to(device).train()
     optimizer = optim.Adam([
@@ -52,8 +84,9 @@ def train_adversarial(encoder: nn.Module, source_stream, target_stream, *, epoch
     if max_batches_per_epoch:
         steps_per_epoch = min(steps_per_epoch, max_batches_per_epoch)
     total = max(1, epochs * steps_per_epoch)
-    log.info("adversarial: %d epochs x ~%d steps; source %s / target %s", epochs, steps_per_epoch,
-             source_stream.class_distribution(0), target_stream.class_distribution(0))
+    # the target's labels are never used (not even logged): only its inputs enter the domain loss
+    log.info("adversarial: %d epochs x ~%d steps; source %s / target ~%d batches (labels unused)", epochs,
+             steps_per_epoch, source_stream.class_distribution(0), len(target_stream))
     history = []
     step = 0
     for epoch in range(epochs):

@@ -24,6 +24,18 @@ from scorer.pipeline.stages import STAGE_ORDER, STAGES, RunContext, enabled_stag
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the pipeline from the command line; see the module docstring for examples.
+
+    Copies the config (as given and as resolved) into the run folder, logs the system
+    and config warnings, then runs the chosen stages in pipeline order, freeing GPU
+    memory after each.
+
+    Args:
+        argv: Arguments without the program name; None reads ``sys.argv``.
+
+    Returns:
+        0 on success, 1 if a stage failed (the traceback is in ``pipeline.log``).
+    """
     ap = argparse.ArgumentParser(prog="python -m scorer.pipeline.run", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--config", required=True, help="TOML config file")
@@ -80,6 +92,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _log_system(logger) -> None:
+    """Log Python, torch and GPU versions and the working directory (first lines of every run log)."""
     import os
     import platform
 

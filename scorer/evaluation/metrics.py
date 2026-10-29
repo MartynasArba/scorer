@@ -23,6 +23,7 @@ log = logging.getLogger(__name__)
 
 
 def _plt():
+    """Import pyplot with the non-interactive Agg backend (no windows, safe without a display)."""
     import matplotlib
 
     matplotlib.use("Agg", force=False)
@@ -32,6 +33,20 @@ def _plt():
 
 
 def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray, scheme: LabelScheme) -> dict:
+    """Score predictions against true labels; ``IGNORE`` windows are left out.
+
+    All metrics use ``labels=range(n_classes)``, so a class missing from the data still
+    has its own row and column.
+
+    Returns:
+        A dict with "n_scored", "n_ignored", "accuracy", "macro_f1", "kappa",
+        "per_class" (precision, recall, f1, support), "confusion" (rows true, columns
+        predicted), "class_names" and "predicted_distribution". Only the two counts if
+        nothing is scored.
+
+    Raises:
+        ValueError: If the two arrays differ in shape.
+    """
     y_true, y_pred = np.asarray(y_true), np.asarray(y_pred)
     if y_true.shape != y_pred.shape:
         raise ValueError(f"y_true {y_true.shape} and y_pred {y_pred.shape} differ")
@@ -56,12 +71,22 @@ def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray, scheme: LabelScheme)
 
 
 def text_report(y_true: np.ndarray, y_pred: np.ndarray, scheme: LabelScheme) -> str:
+    """Return sklearn's classification report for the labeled windows, with the scheme's class names."""
     m = np.asarray(y_true) != IGNORE
     return classification_report(np.asarray(y_true)[m], np.asarray(y_pred)[m], labels=list(range(scheme.n_classes)),
                                  target_names=list(scheme.class_names), digits=4, zero_division=0)
 
 
 def per_recording_metrics(y_true: np.ndarray, y_pred: np.ndarray, spans) -> list[dict]:
+    """Return accuracy and kappa per recording.
+
+    Args:
+        y_true, y_pred: Class indices for the whole store.
+        spans: ``RecordingSpan`` list giving each recording's rows.
+
+    Returns:
+        One dict per recording; NaN where a recording has no labeled windows.
+    """
     rows = []
     for sp in spans:
         yt, yp = y_true[sp.start:sp.end], y_pred[sp.start:sp.end]
@@ -75,11 +100,13 @@ def per_recording_metrics(y_true: np.ndarray, y_pred: np.ndarray, spans) -> list
 
 
 def write_json(obj, path: str | Path) -> None:
+    """Write ``obj`` as indented JSON, creating parent folders; numpy numbers become floats."""
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     Path(path).write_text(json.dumps(obj, indent=1, default=float))
 
 
 def write_csv(rows: list[dict], path: str | Path) -> None:
+    """Write a list of dicts as CSV with the first row's keys as header (nothing for an empty list)."""
     if not rows:
         return
     Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -90,6 +117,7 @@ def write_csv(rows: list[dict], path: str | Path) -> None:
 
 
 def save_confusion_png(metrics: dict, path: str | Path, title: str) -> None:
+    """Save a row-normalised confusion matrix with counts and the headline metrics in the title."""
     plt = _plt()
     cm = np.asarray(metrics["confusion"], dtype=float)
     names = metrics["class_names"]
@@ -113,6 +141,7 @@ def save_confusion_png(metrics: dict, path: str | Path, title: str) -> None:
 
 def save_hypnogram_png(y_true: np.ndarray, y_pred: np.ndarray, class_names, path: str | Path, title: str,
                        max_windows: int = 900) -> None:
+    """Save true and predicted hypnograms of the first ``max_windows`` windows as step plots."""
     plt = _plt()
     n = min(max_windows, len(y_true))
     t = np.arange(n)
@@ -132,6 +161,7 @@ def save_hypnogram_png(y_true: np.ndarray, y_pred: np.ndarray, class_names, path
 
 def save_embedding_pca_png(emb: np.ndarray, classes: np.ndarray, class_names, path: str | Path, title: str,
                            sample: int = 3000, seed: int = 0) -> None:
+    """Save a 2-D PCA scatter of up to ``sample`` labeled embeddings, coloured by class."""
     from sklearn.decomposition import PCA
 
     plt = _plt()

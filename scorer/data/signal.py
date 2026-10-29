@@ -18,17 +18,31 @@ LEGACY_FS = 250.0
 
 
 def legacy_equivalent_lowpass(fs: float, nominal_hz: float = 49.0) -> float:
-    """cut-off the old code effectively applied when fed data sampled at `fs`"""
+    """Return the cut-off the old code actually applied to data sampled at ``fs``.
+
+    The old code assumed 250 Hz, so its nominal 49 Hz filter cut at 49 * fs / 250 on
+    other rates (25.1 Hz at 128 Hz). Use this to reproduce old results exactly.
+    """
     return min(nominal_hz, LEGACY_FS / 2.0 - 1.0) * fs / LEGACY_FS
 
 
 def lowpass_windows(
     x: np.ndarray, fs: float, cutoff_hz: float | None, order: int = 4, chunk_windows: int = 8192
 ) -> np.ndarray:
-    """
-    zero-phase Butterworth low-pass applied independently to every window (last axis),
-    exactly like the old clean_signal (filtfilt per window, default odd padding).
-    x: [N, C, T] float. returns float32 array of the same shape.
+    """Zero-phase Butterworth low-pass applied to every window separately (last axis).
+
+    Matches the old ``clean_signal`` (``filtfilt`` per window with default padding), but
+    filters in float64 on chunks of ``chunk_windows`` to bound memory.
+
+    Args:
+        x: Windows [N, C, T].
+        fs: Sample rate in Hz.
+        cutoff_hz: Cut-off in Hz; None or <= 0 skips filtering. Capped at Nyquist - 1.
+        order: Filter order.
+        chunk_windows: Windows filtered per step.
+
+    Returns:
+        float32 array of the same shape.
     """
     x = np.asarray(x)
     if cutoff_hz is None or cutoff_hz <= 0:
@@ -45,7 +59,16 @@ def lowpass_windows(
 def robust_stats(
     x: np.ndarray, max_samples: int = 100_000, seed: int = 0
 ) -> tuple[np.ndarray, np.ndarray]:
-    """per-channel median and IQR-based sd (iqr / 1.349) from a random subsample. x: [N, C, T]"""
+    """Estimate per-channel median and robust SD (IQR / 1.349) of a recording.
+
+    Args:
+        x: Windows [N, C, T].
+        max_samples: Random samples per channel used when the recording is larger.
+        seed: Seed for that subsample, so caches are reproducible.
+
+    Returns:
+        ``(medians, sds)``, each float64 [C]; SDs are at least 1e-8.
+    """
     n, c, t = x.shape
     total = n * t
     rng = np.random.default_rng(seed)
@@ -73,11 +96,27 @@ def robust_normalize(
     max_stat_samples: int = 100_000,
     seed: int = 0,
 ) -> tuple[np.ndarray, dict]:
-    """
-    median/IQR normalisation per channel over a whole recording, then clipping.
-    Mirrors the old pipeline: low-pass -> stats -> (x - median) / sd -> optional GUI scale
-    -> clip -> low-pass again (removes the square edges created by clipping).
-    returns (float32 [N, C, T], stats dict)
+    """Normalise a whole recording per channel, as the old pipeline did.
+
+    Steps: low-pass, median/IQR statistics, ``(x - median) / sd``, optional legacy GUI
+    scaling, clipping to ``[-clip, clip]``, then low-pass again to round off the edges
+    that clipping creates.
+
+    Args:
+        x: Windows [N, C, T].
+        fs: Sample rate in Hz.
+        lowpass_hz: Low-pass cut-off, or None for no filtering.
+        clip: Clip limit in robust SDs.
+        scale: Legacy GUI display gain (1.0 = off).
+        scale_offset: Offset added together with ``scale``.
+        max_stat_samples: Samples per channel used for the statistics.
+        seed: Seed for the statistics subsample.
+
+    Returns:
+        ``(x_norm, stats)``: float32 [N, C, T] and a dict with median, sd and settings.
+
+    Raises:
+        ValueError: If ``x`` is not 3-D.
     """
     if x.ndim != 3:
         raise ValueError(f"expected [windows, channels, time], got shape {x.shape}")
@@ -92,3 +131,27 @@ def robust_normalize(
     x = lowpass_windows(x, fs, lowpass_hz)
     stats = {"median": med.tolist(), "sd": sd.tolist(), "lowpass_hz": lowpass_hz, "clip": clip, "fs": fs}
     return x, stats
+
+
+def resample_windows(x: np.ndarray, fs_in: float, fs_out: float, win_out: int) -> np.ndarray:
+    """Resample contiguous windows [N, C, T_in] to [N, C, win_out].
+
+    The windows are joined into one signal, resampled with a polyphase filter and cut
+    again. This avoids the edge artefacts of resampling each window separately. The
+    rate ratio is approximated with a denominator of at most 1000; a short tail is
+    padded with the last value.
+    """
+    from fractions import Fraction
+
+    from scipy.signal import resample_poly
+
+    n, c, _ = x.shape
+    ratio = Fraction(float(fs_out) / float(fs_in)).limit_denominator(1000)
+    out = np.empty((n, c, win_out), dtype=np.float32)
+    for ch in range(c):
+        y = resample_poly(x[:, ch, :].reshape(-1).astype(np.float64), ratio.numerator, ratio.denominator)
+        need = n * win_out
+        if len(y) < need:
+            y = np.pad(y, (0, need - len(y)), mode="edge")
+        out[:, ch, :] = y[:need].reshape(n, win_out)
+    return out
